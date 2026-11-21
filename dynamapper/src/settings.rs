@@ -154,7 +154,8 @@ pub struct SectWorldRendering {
     /// by every render style.
     pub cave_surroundings: crate::world::caves::CaveSurroundings,
     /// What the mobiles show between two frames of their animations: each frame until the next, as the clients do,
-    /// or the two crossfaded (render/mobiles/in_between.rs).
+    /// or the two crossfaded (render/mobiles/in_between.rs), with one or three frames made by RIFE between each two
+    /// in the RIFE modes (render/mobiles/rife_in_betweens.rs).
     pub mobile_in_between_frames: crate::render::mobiles::in_between::MobileInBetweenFrames,
     /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
     /// (world/mobile_motion.rs).

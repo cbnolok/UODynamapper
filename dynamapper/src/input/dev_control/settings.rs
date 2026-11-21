@@ -264,6 +264,8 @@ mod tests {
             ControlSetting::CaveSurroundings(CaveSurroundings::Black));
         assert_eq!(ControlSetting::parse("mobile_in_between_frames", json!("off")).unwrap(),
             ControlSetting::MobileInBetweenFrames(MobileInBetweenFrames::Off));
+        assert_eq!(ControlSetting::parse("mobile_in_between_frames", json!("rife_x4")).unwrap(),
+            ControlSetting::MobileInBetweenFrames(MobileInBetweenFrames::RifeX4));
         assert_eq!(ControlSetting::parse("mobile_stop", json!("at_once")).unwrap(),
             ControlSetting::MobileStop(MobileStop::AtOnce));
         assert_eq!(ControlSetting::parse("light_cover", json!("clients")).unwrap(),

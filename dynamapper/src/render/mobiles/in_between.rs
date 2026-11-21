@@ -2,7 +2,8 @@
 //! between them, so an animation of 8 to 12 frames a second does not step on a faster display. The CPU picks the two
 //! frames and the weight of the next for each mobile frame drawn (`layer_frames`); the art sprite shader samples both
 //! and blends them (art/mobile_frames.wesl), so an in-between costs no pixels composed or uploaded at any refresh
-//! rate. The packages are untouched: the in-betweens come from the frames alone.
+//! rate. The packages are untouched: the in-betweens come from the frames alone. The RIFE modes add frames made by
+//! the RIFE network between each two (rife_in_betweens.rs), and crossfade the clip of both alike.
 
 use bevy::prelude::*;
 use bytemuck::{Pod, Zeroable};
@@ -21,15 +22,30 @@ pub enum MobileInBetweenFrames {
     /// The two frames blended by the time between them.
     #[default]
     Crossfade,
+    /// One frame made by RIFE between each two, at the middle; the shorter frames crossfade.
+    RifeX2,
+    /// Three frames made by RIFE between each two, at the quarters; the shorter frames crossfade.
+    RifeX4,
 }
 
 impl MobileInBetweenFrames {
-    pub const ALL: [Self; 2] = [Self::Off, Self::Crossfade];
+    pub const ALL: [Self; 4] = [Self::Off, Self::Crossfade, Self::RifeX2, Self::RifeX4];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Off",
             Self::Crossfade => "Crossfade",
+            Self::RifeX2 => "RIFE x2",
+            Self::RifeX4 => "RIFE x4",
+        }
+    }
+
+    /// The frames a RIFE mode shows for each of a clip's, its own and the in-betweens after it.
+    pub fn rife_factor(self) -> Option<u32> {
+        match self {
+            Self::Off | Self::Crossfade => None,
+            Self::RifeX2 => Some(2),
+            Self::RifeX4 => Some(4),
         }
     }
 }
@@ -177,7 +193,7 @@ mod tests {
             placement: placement(width as f32, height as f32, anchor_x, anchor_y),
         };
         Clip { frames: vec![frame(10, 3, 3, 2.0, 3.0), frame(40, 4, 4, 0.0, 2.0)], mirrored: false,
-            frame_secs: CLASSIC_FRAME_SECS }
+            frame_secs: CLASSIC_FRAME_SECS, stored: 0 }
     }
 
     #[test]
@@ -221,7 +237,7 @@ mod tests {
         assert_eq!((Vec2::from_array(first.crossfade.frame_uv_min), Vec2::from_array(first.crossfade.frame_uv_max)),
             clip.frames[0].rect.uv());
         // A clip of one frame shows it alone.
-        let single = Clip { frames: vec![clip.frames[0]], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let single = Clip { frames: vec![clip.frames[0]], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
         let pick = FramePick { index: 0, next: 0, t: 0.5 };
         assert_eq!(layer_frames(MobileInBetweenFrames::Crossfade, &single, pick).unwrap(), alone(&clip.frames[0]));
     }

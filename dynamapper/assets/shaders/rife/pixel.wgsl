@@ -15,6 +15,10 @@ const STATE_FEATURES: u32 = 5u;
 const STATE_FEATURE_CHANNELS: u32 = 8u;
 const STATE_CHANNELS: u32 = 13u;
 const CORNERS: u32 = 4u;
+// The blend's warp takes each frame's nearest pixel at the flow instead of grid_sample's bilinear mix of four: the
+// flow is the network's all the same, and an in-between of sprites keeps their crisp pixels and edges. False gives
+// Practical-RIFE's blend, as the reference comparison needs (rife/tests.rs).
+override NEAREST_FINAL_WARP: bool = true;
 
 struct Pixel {
     width: u32,
@@ -73,6 +77,23 @@ fn warp_taps(x: u32, y: u32, flow: vec2<f32>) -> Bilinear {
         vec4<u32>(y0 * pixel.width + x0, y0 * pixel.width + x1, y1 * pixel.width + x0, y1 * pixel.width + x1),
         vec4<f32>((1.0 - fraction.x) * (1.0 - fraction.y), fraction.x * (1.0 - fraction.y),
             (1.0 - fraction.x) * fraction.y, fraction.x * fraction.y));
+}
+
+// The frame pixel nearest a pixel moved by a flow, as one tap of weight 1 (grid_sample nearest, border padding,
+// align_corners=True; round() and PyTorch's nearbyint both round half to even).
+fn nearest_taps(x: u32, y: u32, flow: vec2<f32>) -> Bilinear {
+    let size = vec2<f32>(f32(pixel.width), f32(pixel.height));
+    let position = round(clamp(vec2<f32>(f32(x), f32(y)) + flow, vec2<f32>(0.0), size - 1.0));
+    let index = u32(position.y) * pixel.width + u32(position.x);
+    return Bilinear(vec4<u32>(index), vec4<f32>(1.0, 0.0, 0.0, 0.0));
+}
+
+// The taps of the blend's warp (NEAREST_FINAL_WARP).
+fn final_warp_taps(x: u32, y: u32, flow: vec2<f32>) -> Bilinear {
+    if (NEAREST_FINAL_WARP) {
+        return nearest_taps(x, y, flow);
+    }
+    return warp_taps(x, y, flow);
 }
 
 fn sample_image(channel: u32, taps: Bilinear) -> f32 {
@@ -195,7 +216,8 @@ fn upsample(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// warp(img0, flow t->0) * mask + warp(img1, flow t->1) * (1 - mask), all seven channels.
+// warp(img0, flow t->0) * mask + warp(img1, flow t->1) * (1 - mask), all seven channels, the warp nearest or
+// bilinear (NEAREST_FINAL_WARP).
 @compute @workgroup_size(THREADS)
 fn merge(@builtin(global_invocation_id) id: vec3<u32>) {
     let plane = pixel.width * pixel.height;
@@ -205,8 +227,8 @@ fn merge(@builtin(global_invocation_id) id: vec3<u32>) {
     let x = id.x % pixel.width;
     let y = id.x / pixel.width;
     let flow = flow_at(id.x);
-    let taps0 = warp_taps(x, y, flow.xy);
-    let taps1 = warp_taps(x, y, flow.zw);
+    let taps0 = final_warp_taps(x, y, flow.xy);
+    let taps1 = final_warp_taps(x, y, flow.zw);
     let mask = 1.0 / (1.0 + exp(-state[STATE_MASK * plane + id.x]));
     for (var c = 0u; c < IMAGE_CHANNELS; c++) {
         merged[c * plane + id.x] = sample_image(c, taps0) * mask + sample_image(IMAGE_CHANNELS + c, taps1) * (1.0 - mask);

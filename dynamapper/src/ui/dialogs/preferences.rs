@@ -649,7 +649,9 @@ pub fn sys_render_preferences_dialog(
                                             "What the mobiles show between two frames of their animations. Off: each frame \
                                              until the next, as the clients show them. Crossfade: the two frames blended by \
                                              the time between them, smoother on a fast display, with a faint double image \
-                                             of what moves.",
+                                             of what moves. RIFE x2 and x4: one or three frames made by the RIFE network \
+                                             between each two, on the GPU when an animation first shows, crossfaded as \
+                                             well; until they are made, the animation crossfades.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

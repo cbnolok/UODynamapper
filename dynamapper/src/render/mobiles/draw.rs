@@ -17,10 +17,11 @@ use crate::render::statics::static_placement::{apply_cc_static_world_anchor_tran
 use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
 use crate::world::mobile_motion::MobileMotion;
-use super::clips::{AnimSource, ClipKey, MobileClips};
+use super::clips::{AnimSource, AtlasEntry, ClipKey, MobileClips};
 use super::frame_atlas::MobileFrameAtlas;
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
 use super::placement::mobile_card_bounds;
+use super::rife_in_betweens::MobileInBetweens;
 use super::{MobileClipChoice, MountedCycle};
 
 /// The most frames drawn at once: a mount and its rider for each mobile, here the player alone.
@@ -84,7 +85,7 @@ pub fn sys_setup_mobile_draw(
         return;
     }
     let Some(art_assets) = art_assets else { return };
-    let atlas = MobileFrameAtlas::<ClipKey>::new(&mut images);
+    let atlas = MobileFrameAtlas::<AtlasEntry>::new(&mut images);
     let instances = storage_buffers.add(ShaderBuffer::from(vec![MobileSpriteInstance::zeroed(); MAX_MOBILE_INSTANCES as usize]));
     let mut copy = |handle: &Handle<ArtSpriteMaterial>| {
         let mut material = materials.get(handle).expect("the statics' sprite materials exist").clone();
@@ -170,8 +171,9 @@ pub fn sys_draw_mobiles(
     time: Res<Time>,
     mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice)>,
     draw_assets: Option<ResMut<MobileDrawAssets>>,
-    atlas: Option<ResMut<MobileFrameAtlas<ClipKey>>>,
+    atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
+    mut in_betweens: ResMut<MobileInBetweens>,
     packages: Res<super::MobileAnimPackages>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -186,7 +188,8 @@ pub fn sys_draw_mobiles(
         .filter(|_| settings.world_rendering.enable_static_art_local_lights)
         .map(|lights| (lights, scene_state.map_id));
     let in_between_mode = settings.world_rendering.mobile_in_between_frames;
-    clips.place_decoded(&mut atlas, now);
+    let evicted = clips.place_decoded(&mut atlas, now);
+    in_betweens.forget(&evicted);
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
     for (transform, motion, appearance, choice) in mobiles_q.iter() {
@@ -216,6 +219,13 @@ pub fn sys_draw_mobiles(
                 break;
             }
             let Some(clip) = clips.get_or_load(drawn.key, &packages.0) else { continue };
+            // With a RIFE mode, the clip's sequence with its in-betweens once they are made, mirrored as the clip;
+            // the clip's own page stays in use, as the sequence's frames come from it.
+            let mirrored = clip.mirrored;
+            if let Some(frame) = clip.frames.first() {
+                atlas.touch(frame.rect.layer, now);
+            }
+            let clip = in_betweens.shown(drawn.key, clip, in_between_mode, now).unwrap_or(clip);
             if drawn.is_mount && choice.mounted_cycle == Some(MountedCycle::MountClip) {
                 cycle_secs = Some(clip.cycle_secs());
             }
@@ -226,7 +236,7 @@ pub fn sys_draw_mobiles(
             let Some(frames) = pick.and_then(|pick| layer_frames(in_between_mode, clip, pick)) else { continue };
             atlas.touch(frames.layer, now);
             // Both frames of an in-between come from the clip, so they share its mirroring.
-            instances.push(mobile_instance(transform.translation, frames, clip.mirrored, drawn.offset_px,
+            instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
                 drawn.tie_level, source, local_lights));
         }
     }
