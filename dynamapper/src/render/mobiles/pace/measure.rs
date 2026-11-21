@@ -1,7 +1,8 @@
-//! Writes the strides table, `assets/data/mobile_strides.txt`, from the Classic and Enhanced animation packages: the
-//! stride of every body's walk and run clips, peace and war (where the animation sequence gives war moves of their own),
-//! and of an Enhanced mount's mounted moves, with the RIFE flow on the GPU. The table is keyed by body and action, so a
-//! war mode reads its own moves without a new table.
+//! Measures the strides of the mobiles' walk and run clips with the RIFE flow on the GPU and stores them in the
+//! animation packages (`metadata/strides.bin`, `udd_assets::animation::mobile_strides`): every body's walk and run
+//! clips, peace and war (where the animation sequence gives war moves of their own), and an Enhanced mount's mounted
+//! moves. The strides are keyed by body and action, so a war mode reads its own moves without new strides, and each
+//! carries the hash of the frames measured, so the app takes it only for those frames.
 //!
 //! For each pair of frames of a clip (the last with the first too), RIFE's flow at t = 0.5 gives each pixel of the
 //! in-between its motion from the first frame to the second (the flow to the second minus the flow to the first).
@@ -12,41 +13,55 @@
 //! (south, south-west, west) measure well, toward and away from the camera the feet barely move on screen. The median
 //! of those that measured is the stride, even when they disagree (the run-time clamp to half and twice the clip's own
 //! cycle bounds a poor measurement); a clip with fewer than [`MIN_FACINGS`] of them, or whose stride is not positive or
-//! shorter than [`MIN_STRIDE_TILES`], gets none (its clip keeps its own timing). The report lists each facing's stride
-//! and their spread for inspection. The method was chosen on a PyTorch prototype of the same steps.
+//! shorter than [`MIN_STRIDE_TILES`], gets none (its clip keeps its own timing). The method was chosen on a PyTorch
+//! prototype of the same steps.
 //!
-//! Run, with the packages' folder (holding `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp`) and optionally a folder
-//! for the per-facing report:
-//!
-//! ```sh
-//! MOBILE_STRIDE_PACKAGES=/path/to/uddp MOBILE_STRIDE_REPORT=/path/to/report \
-//!     cargo test -p dynamapper -- --ignored --exact render::mobiles::pace::measure::write_the_stride_table --nocapture
-//! ```
+//! Run as `dynamapper measure-strides changed|full` (`just measure-mobile-strides`, [`USAGE`]): changed hashes every
+//! clip and measures only those whose frames are new or changed since their stride was measured, keeping the others
+//! and dropping the strides of clips gone; full measures every clip again.
 
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::Write as _;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use bevy::math::IVec2;
-use udd_assets::animation::mobile_anim_cc::{self as anim_cc, MobileAnimCcPackage};
-use udd_assets::animation::mobile_anim_ec::{self as anim_ec, MobileAnimEcPackage};
-use crate::render::mobiles::clips::{decode_clip, AnimPackages, AnimSource, ClipKey, DecodedClip};
+use color_eyre::eyre::{self, WrapErr};
+use udd_assets::animation::mobile_anim_cc::MobileAnimCcPackage;
+use udd_assets::animation::mobile_anim_ec::MobileAnimEcPackage;
+use udd_assets::animation::mobile_strides::{
+    format_stride_table, plan_strides, sort_stride_records, stride_clip_hashes, stride_table_fields,
+    write_package_strides, MobileAnimClips, MobileClip, MobileStrideRecord, StrideSource, STRIDE_FACINGS,
+    STRIDE_FACING_COUNT,
+};
 use crate::render::mobiles::rife::{RifeModel, RifeWorkspace, RIFE_FLOW_CHANNELS, RIFE_IMAGE_CHANNELS,
     RIFE_SIZE_MULTIPLE};
-use crate::render::mobiles::placement::FramePlacement;
 use crate::world::mobile_motion::direction_of_step;
-use super::{stride_line, BUNDLED_STRIDES_NAME};
 
-const PACKAGES_VARIABLE: &str = "MOBILE_STRIDE_PACKAGES";
-const REPORT_VARIABLE: &str = "MOBILE_STRIDE_REPORT";
+/// The command line's first argument that runs the measurement instead of the app.
+pub const COMMAND: &str = "measure-strides";
+pub const USAGE: &str = "\
+usage: dynamapper measure-strides <changed|full> [--source cc|ec] [--packages DIR] [--output DIR] [--report DIR]
+  changed          measure the clips whose frames are new or changed since their stride; keep the rest
+  full             measure every clip again
+  --source cc|ec   only the Classic (mobile_anim_cc.uddp) or the Enhanced (mobile_anim_ec.uddp) package
+  --packages DIR   the folder of the packages (default: udd_path of the app's settings)
+  --output DIR     write the packages there (default: in place, through a .partial file beside each)
+  --report DIR     write each package's strides there as a text table, mobile_strides_<cc|ec>.tsv";
+const MODE_CHANGED: &str = "changed";
+const MODE_FULL: &str = "full";
+const OPTION_SOURCE: &str = "--source";
+const OPTION_PACKAGES: &str = "--packages";
+const OPTION_OUTPUT: &str = "--output";
+const OPTION_REPORT: &str = "--report";
 const CLASSIC_PACKAGE: &str = "mobile_anim_cc.uddp";
 const ENHANCED_PACKAGE: &str = "mobile_anim_ec.uddp";
-const REPORT_FILE: &str = "mobile_strides_report.tsv";
+const REPORT_PREFIX: &str = "mobile_strides_";
+const REPORT_EXTENSION: &str = "tsv";
+/// Clips between progress lines.
+const PROGRESS_EVERY: usize = 500;
+const MILLIS_PER_SEC: f32 = 1000.0;
 
-/// The facings measured: south, south-west and west, across the screen.
-const SIDE_FACINGS: [u8; 3] = [4, 5, 6];
 /// Facings that must measure for a stride.
 const MIN_FACINGS: usize = 2;
 /// The shortest stride taken. Bodies without planted feet (floating, slithering) measure from a few thousandths to a
@@ -82,18 +97,18 @@ struct Gpu {
     queue: wgpu::Queue,
 }
 
-fn gpu() -> Gpu {
+fn gpu() -> eyre::Result<Gpu> {
     bevy::tasks::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()
-        }).await.expect("a GPU adapter");
+        }).await.wrap_err("no GPU adapter")?;
         let info = adapter.get_info();
         println!("adapter: {} ({:?}, {})", info.name, info.backend, info.driver_info);
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
             required_limits: adapter.limits(), ..Default::default()
-        }).await.expect("a GPU device");
-        Gpu { device, queue }
+        }).await.wrap_err("no GPU device")?;
+        Ok(Gpu { device, queue })
     })
 }
 
@@ -126,6 +141,12 @@ struct Measurer {
 }
 
 impl Measurer {
+    fn new() -> eyre::Result<Self> {
+        let gpu = gpu()?;
+        let model = RifeModel::new(&gpu.device).map_err(|error| eyre::eyre!("RIFE: {error}"))?;
+        Ok(Self { gpu, model, workspaces: Vec::new() })
+    }
+
     /// The workspace of frames of this size, kept by its padded size.
     fn workspace(&mut self, width: u32, height: u32) -> &RifeWorkspace {
         let (width, height) = (width.div_ceil(RIFE_SIZE_MULTIPLE) * RIFE_SIZE_MULTIPLE,
@@ -147,18 +168,16 @@ impl Measurer {
 
     /// The body's travel over one cycle of `clip`, in screen pixels along `(ux, uy)` in the clip's stored frames;
     /// none when an in-between shows no body.
-    fn travel_px(&mut self, clip: &DecodedClip, ux: f32, uy: f32) -> Option<f32> {
+    fn travel_px(&mut self, clip: &MobileClip, ux: f32, uy: f32) -> Option<f32> {
         let frames = &clip.frames;
         let count = frames.len();
         if count < 2 {
             return None;
         }
-        let edges = |near: fn(&FramePlacement) -> f32| frames.iter()
-            .map(move |frame| near(&frame.placement).round() as i32);
-        let left = edges(|p| -p.anchor_x).min()? - CANVAS_MARGIN;
-        let top = edges(|p| -p.anchor_y).min()? - CANVAS_MARGIN;
-        let right = edges(|p| p.width - p.anchor_x).max()? + CANVAS_MARGIN;
-        let bottom = edges(|p| p.height - p.anchor_y).max()? + CANVAS_MARGIN;
+        let left = frames.iter().map(|frame| -frame.anchor_x).min()? - CANVAS_MARGIN;
+        let top = frames.iter().map(|frame| -frame.anchor_y).min()? - CANVAS_MARGIN;
+        let right = frames.iter().map(|frame| i32::from(frame.width) - frame.anchor_x).max()? + CANVAS_MARGIN;
+        let bottom = frames.iter().map(|frame| i32::from(frame.height) - frame.anchor_y).max()? + CANVAS_MARGIN;
         let (width, height) = {
             let workspace = self.workspace((right - left) as u32, (bottom - top) as u32);
             workspace.size()
@@ -177,10 +196,9 @@ impl Measurer {
                     row[..(right - left) as usize].fill(BACKDROP_GREY);
                 }
             }
-            let p = frame.placement;
-            let (frame_width, frame_height) = (p.width as usize, p.height as usize);
-            let x0 = (-p.anchor_x.round() as i32 - left) as usize;
-            let y0 = (-p.anchor_y.round() as i32 - top) as usize;
+            let (frame_width, frame_height) = (usize::from(frame.width), usize::from(frame.height));
+            let x0 = (-frame.anchor_x - left) as usize;
+            let y0 = (-frame.anchor_y - top) as usize;
             for y in 0..frame_height {
                 for x in 0..frame_width {
                     let texel = &frame.rgba[(y * frame_width + x) * RGBA_BYTES..][..RGBA_BYTES];
@@ -253,16 +271,16 @@ impl Measurer {
 
 /// A clip's measurement: the stride of each side facing that measured, and the verdict.
 struct Measurement {
-    facings: [Option<f32>; SIDE_FACINGS.len()],
-    /// How far the facings' strides spread (largest minus smallest) as a fraction of their median, for the report.
+    facings: [Option<f32>; STRIDE_FACING_COUNT],
+    /// How far the facings' strides spread (largest minus smallest) as a fraction of their median, for the log.
     spread: Option<f32>,
     stride: Result<f32, &'static str>,
 }
 
-fn measure(measurer: &mut Measurer, clips: &[Option<DecodedClip>; SIDE_FACINGS.len()]) -> Measurement {
-    let facings: [Option<f32>; SIDE_FACINGS.len()] = std::array::from_fn(|index| {
+fn measure(measurer: &mut Measurer, clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> Measurement {
+    let facings: [Option<f32>; STRIDE_FACING_COUNT] = std::array::from_fn(|index| {
         let clip = clips[index].as_ref()?;
-        let (mut ux, uy, px_per_tile) = travel_direction(SIDE_FACINGS[index]);
+        let (mut ux, uy, px_per_tile) = travel_direction(STRIDE_FACINGS[index]);
         if clip.mirrored {
             ux = -ux;
         }
@@ -284,136 +302,184 @@ fn measure(measurer: &mut Measurer, clips: &[Option<DecodedClip>; SIDE_FACINGS.l
     Measurement { facings, spread, stride }
 }
 
-/// A hash of the clips' frames: bodies and actions showing the same frames share one measurement.
-fn frames_hash(clips: &[Option<DecodedClip>]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    for clip in clips {
-        match clip {
-            Some(clip) => {
-                clip.mirrored.hash(&mut hasher);
-                for frame in &clip.frames {
-                    let p = frame.placement;
-                    [p.width, p.height, p.anchor_x, p.anchor_y].map(f32::to_bits).hash(&mut hasher);
-                    frame.rgba.hash(&mut hasher);
-                }
-            }
-            None => 0u8.hash(&mut hasher),
-        }
-    }
-    hasher.finish()
+/// What the command line asks for.
+#[derive(Debug, PartialEq)]
+struct Options {
+    /// Measure every clip again, not only the changed and new ones.
+    everything: bool,
+    sources: Vec<StrideSource>,
+    /// `None`: the app's settings say.
+    packages: Option<PathBuf>,
+    output: Option<PathBuf>,
+    report: Option<PathBuf>,
 }
 
-/// The clips to measure: each server body and the actions of its walk and run (and, Enhanced, of its moves as a
-/// mount), as the runtime asks for them.
-fn classic_clips(package: &MobileAnimCcPackage) -> Vec<(u32, u16)> {
-    let bodies: BTreeSet<u16> = package.animations().iter().map(|record| record.body_id)
-        .chain(package.body_resolve().iter().map(|record| record.body_id))
-        .chain(package.body_types().iter().map(|record| record.body_id))
-        .collect();
-    let mut clips = BTreeSet::new();
-    for body in bodies {
-        // A body with Enhanced frames has the animation sequence's war moves too.
-        let sequence = package.body_type_record(package.frames_body(body).type_body_id);
-        for movement in [anim_cc::MOVE_WALK, anim_cc::MOVE_RUN] {
-            let war = sequence.and_then(|record| record.move_action(anim_cc::GROUP_WAR, movement));
-            for action in [package.movement_action(body, movement, false), war].into_iter().flatten() {
-                clips.insert((u32::from(body), action));
+fn parse_options(args: &[String]) -> eyre::Result<Options> {
+    let mut args = args.iter();
+    let everything = match args.next().map(String::as_str) {
+        Some(MODE_CHANGED) => false,
+        Some(MODE_FULL) => true,
+        Some(other) => eyre::bail!("unknown mode `{other}`"),
+        None => eyre::bail!("no mode"),
+    };
+    let mut options = Options { everything, sources: StrideSource::ALL.to_vec(), packages: None, output: None,
+        report: None };
+    while let Some(option) = args.next() {
+        let mut value = || args.next().ok_or_else(|| eyre::eyre!("{option} needs a value"));
+        match option.as_str() {
+            OPTION_SOURCE => {
+                let token = value()?;
+                options.sources = vec![StrideSource::from_token(token)
+                    .ok_or_else(|| eyre::eyre!("unknown source `{token}`"))?];
             }
+            OPTION_PACKAGES => options.packages = Some(PathBuf::from(value()?)),
+            OPTION_OUTPUT => options.output = Some(PathBuf::from(value()?)),
+            OPTION_REPORT => options.report = Some(PathBuf::from(value()?)),
+            other => eyre::bail!("unknown option `{other}`"),
         }
     }
-    clips.into_iter().collect()
+    Ok(options)
 }
 
-fn enhanced_clips(package: &MobileAnimEcPackage) -> Vec<(u32, u16)> {
-    let mut clips = BTreeSet::new();
-    for body in package.bodies() {
-        for movement in [anim_ec::MOVE_WALK, anim_ec::MOVE_RUN] {
-            let actions = [body.move_action(anim_ec::GROUP_PEACE, movement), body.move_action(anim_ec::GROUP_WAR, movement),
-                body.mount_move_action(movement)];
-            for action in actions.into_iter().flatten() {
-                clips.insert((body.body_id, action));
-            }
+/// Runs `dynamapper measure-strides` with the arguments after the command.
+pub fn run(args: &[String]) -> ExitCode {
+    let options = match parse_options(args) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}\n{USAGE}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match measure_packages(&options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("measure-strides: {error:?}");
+            ExitCode::FAILURE
         }
     }
-    clips.into_iter().collect()
 }
 
-const SOURCE_NAMES: [(AnimSource, &str); 2] = [(AnimSource::Classic, "Classic"), (AnimSource::Enhanced, "Enhanced")];
-
-#[test]
-#[ignore = "requires a GPU adapter and the animation packages in MOBILE_STRIDE_PACKAGES; run explicitly to write \
-            assets/data/mobile_strides.txt"]
-fn write_the_stride_table() {
-    let folder = std::path::PathBuf::from(std::env::var_os(PACKAGES_VARIABLE)
-        .unwrap_or_else(|| panic!("set {PACKAGES_VARIABLE} to the folder of the animation packages")));
+fn measure_packages(options: &Options) -> eyre::Result<()> {
     let started = Instant::now();
-    let classic = Arc::new(MobileAnimCcPackage::load(folder.join(CLASSIC_PACKAGE)).unwrap());
-    let enhanced = Arc::new(MobileAnimEcPackage::load(folder.join(ENHANCED_PACKAGE)).unwrap());
-    let packages = AnimPackages { classic: Some(classic.clone()), enhanced: Some(enhanced.clone()) };
-    let gpu = gpu();
-    let model = RifeModel::new(&gpu.device).unwrap();
-    let mut measurer = Measurer { gpu, model, workspaces: Vec::new() };
-
-    let mut table = String::new();
-    let mut report = String::from("source\tbody\taction\tsouth\tsouth-west\twest\tspread\tstride\tverdict\n");
-    let mut summary = Vec::new();
-    for (source, name) in SOURCE_NAMES {
-        let source_started = Instant::now();
-        let clips = match source {
-            AnimSource::Classic => classic_clips(&classic),
-            AnimSource::Enhanced => enhanced_clips(&enhanced),
+    let folder = match &options.packages {
+        Some(folder) => folder.clone(),
+        None => PathBuf::from(crate::settings::load_from_files()?.runtime_assets.udd_path),
+    };
+    let mut measurer = None;
+    for &source in &options.sources {
+        let name = match source {
+            StrideSource::Classic => CLASSIC_PACKAGE,
+            StrideSource::Enhanced => ENHANCED_PACKAGE,
         };
-        let mut measured: HashMap<u64, Measurement> = HashMap::new();
-        let (mut with_stride, mut rejected, mut without_frames) = (0, 0, 0);
-        for &(body, action) in &clips {
-            let decoded: [Option<DecodedClip>; SIDE_FACINGS.len()] = std::array::from_fn(|index| {
-                decode_clip(&packages, ClipKey { source, body, action, direction: SIDE_FACINGS[index] })
-            });
-            if decoded.iter().all(Option::is_none) {
-                without_frames += 1;
-                continue;
-            }
-            let measurement = measured.entry(frames_hash(&decoded))
-                .or_insert_with(|| measure(&mut measurer, &decoded));
-            let facings = measurement.facings.map(|tiles| tiles.map_or("-".to_string(), |tiles| format!("{tiles:.3}")));
-            let (stride, verdict) = match measurement.stride {
-                Ok(tiles) => {
-                    with_stride += 1;
-                    writeln!(table, "{}", stride_line(source, body, action, tiles)).unwrap();
-                    (format!("{tiles:.3}"), "ok")
-                }
-                Err(reason) => {
-                    rejected += 1;
-                    ("-".to_string(), reason)
-                }
-            };
-            let spread = measurement.spread.map_or("-".to_string(), |spread| format!("{spread:.2}"));
-            let row = format!("{name}\t{body}\t{action}\t{}\t{spread}\t{stride}\t{verdict}", facings.join("\t"));
-            println!("{row}");
-            writeln!(report, "{row}").unwrap();
+        let path = folder.join(name);
+        if !path.is_file() {
+            println!("{}: no {}, skipped", source.label(), path.display());
+            continue;
         }
-        let line = format!("{name}: {} clips: {with_stride} with a stride, {rejected} rejected, {without_frames} \
-            without frames; {} distinct frame sets measured in {:.0} s", clips.len(), measured.len(),
-            source_started.elapsed().as_secs_f32());
-        println!("{line}");
-        summary.push(line);
+        let output = options.output.as_ref().map_or_else(|| path.clone(), |folder| folder.join(name));
+        let loading = Instant::now();
+        match source {
+            StrideSource::Classic => measure_package(MobileAnimCcPackage::load(&path)?, &path, &output, loading,
+                options, &mut measurer),
+            StrideSource::Enhanced => measure_package(MobileAnimEcPackage::load(&path)?, &path, &output, loading,
+                options, &mut measurer),
+        }.wrap_err_with(|| format!("measure the strides of {}", path.display()))?;
     }
+    println!("done in {:.1} s", started.elapsed().as_secs_f32());
+    Ok(())
+}
 
-    let header = format!("# The strides of the mobiles' walk and run clips, in tiles per cycle (render/mobiles/pace.rs):\n\
-        # a line per clip, `source body action tiles`, source `cc` (Classic) or `ec` (Enhanced), the server body and the\n\
-        # action the clients' tables give for the movement. Measured with RIFE flow on the frames by\n\
-        # render/mobiles/pace/measure.rs, which says how; regenerate with\n\
-        #   {PACKAGES_VARIABLE}=<folder of {CLASSIC_PACKAGE} and {ENHANCED_PACKAGE}> \\\n\
-        #     cargo test -p dynamapper -- --ignored --exact render::mobiles::pace::measure::write_the_stride_table\n\
-        # {}\n", summary.join("\n# "));
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_STRIDES_NAME);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, header + &table).unwrap();
-    println!("wrote {} in {:.0} s", path.display(), started.elapsed().as_secs_f32());
-    if let Some(report_dir) = std::env::var_os(REPORT_VARIABLE).map(std::path::PathBuf::from) {
-        std::fs::create_dir_all(&report_dir).unwrap();
-        std::fs::write(report_dir.join(REPORT_FILE), report).unwrap();
+/// Measures the strides of `package`, read from `path`, and writes them to `output` with the package.
+fn measure_package<P: MobileAnimClips + Sync>(package: P, path: &Path, output: &Path, loading: Instant,
+    options: &Options, measurer: &mut Option<Measurer>) -> eyre::Result<()> {
+    let source = package.stride_source();
+    let label = source.label();
+    let load_secs = loading.elapsed().as_secs_f32();
+
+    let hashing = Instant::now();
+    let clips = package.stride_clips();
+    let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get());
+    let slowest = Mutex::new((Duration::ZERO, 0));
+    let hashes = stride_clip_hashes(&package, &clips, threads, |done, index, took| {
+        let mut slowest = slowest.lock().unwrap();
+        if took > slowest.0 {
+            *slowest = (took, index);
+        }
+        if done % PROGRESS_EVERY == 0 {
+            println!("{label}: hashed {done} of {} clips", clips.len());
+        }
+    });
+    let current = clips.iter().zip(hashes)
+        .map(|(&(body, action), hash)| Ok((body, action, hash.wrap_err_with(|| format!("body {body} action {action}"))?)))
+        .collect::<eyre::Result<Vec<_>>>()?;
+    let hash_secs = hashing.elapsed().as_secs_f32();
+    let (slowest_took, slowest_index) = slowest.into_inner().unwrap();
+
+    let existing = package.stride_records().to_vec();
+    let plan = plan_strides(&current, &existing, options.everything);
+    // Clips sharing their frames share a measurement: those kept give theirs to the changed and new.
+    let mut known: HashMap<u64, ([Option<f32>; STRIDE_FACING_COUNT], Option<f32>)> = plan.unchanged.iter()
+        .map(|record| (record.clip_hash, (record.facing_tiles, record.stride_tiles))).collect();
+    let measuring = Instant::now();
+    let (mut measured, mut shared) = (0, 0);
+    let mut records = plan.unchanged.clone();
+    for &(body, action, clip_hash) in &plan.to_measure {
+        let (facing_tiles, stride_tiles) = match known.get(&clip_hash) {
+            Some(&known) => {
+                shared += 1;
+                known
+            }
+            None => {
+                let measurer = match measurer {
+                    Some(measurer) => measurer,
+                    None => measurer.insert(Measurer::new()?),
+                };
+                let measurement = measure(measurer, &package.side_clips(body, action)?);
+                measured += 1;
+                let record = MobileStrideRecord { body_id: body, action_id: action, clip_hash,
+                    stride_tiles: measurement.stride.ok(), facing_tiles: measurement.facings };
+                let spread = measurement.spread.map_or("-".to_string(), |spread| format!("{spread:.2}"));
+                let verdict = measurement.stride.err().unwrap_or("ok");
+                println!("{}\t{spread}\t{verdict}", stride_table_fields(source, &record));
+                known.insert(clip_hash, (record.facing_tiles, record.stride_tiles));
+                (record.facing_tiles, record.stride_tiles)
+            }
+        };
+        records.push(MobileStrideRecord { body_id: body, action_id: action, clip_hash, stride_tiles, facing_tiles });
     }
+    let measure_secs = measuring.elapsed().as_secs_f32();
+    sort_stride_records(&mut records);
+    let with_stride = records.iter().filter(|record| record.stride_tiles.is_some()).count();
+    let summary = format!("{label}: {} clips, {} without frames; {} unchanged, {} changed, {} new, {} removed; \
+        {measured} measured, {shared} sharing the frames of another; {with_stride} with a stride, {} without",
+        clips.len(), plan.without_frames, plan.unchanged.len(), plan.changed, plan.new, plan.removed.len(),
+        records.len() - with_stride);
+    let (slowest_body, slowest_action) = clips.get(slowest_index).copied().unwrap_or_default();
+    let timing = format!("{label}: loaded in {load_secs:.1} s, hashed in {hash_secs:.1} s on {threads} threads \
+        (slowest: body {slowest_body} action {slowest_action}, {:.1} ms), measured in {measure_secs:.1} s",
+        slowest_took.as_secs_f32() * MILLIS_PER_SEC);
+    println!("{summary}\n{timing}");
+
+    if let Some(folder) = &options.report {
+        std::fs::create_dir_all(folder).wrap_err_with(|| format!("create {}", folder.display()))?;
+        let report = folder.join(format!("{REPORT_PREFIX}{}.{REPORT_EXTENSION}", source.token()));
+        let comments = [format!("The strides of {}, in tiles per cycle (dynamapper {COMMAND}).", path.display()),
+            summary];
+        std::fs::write(&report, format_stride_table(source, &records, &comments))
+            .wrap_err_with(|| format!("write {}", report.display()))?;
+    }
+    drop(package);
+    if records == existing && output == path {
+        println!("{label}: the strides are unchanged; {} is left as it is", path.display());
+        return Ok(());
+    }
+    if let Some(folder) = output.parent() {
+        std::fs::create_dir_all(folder).wrap_err_with(|| format!("create {}", folder.display()))?;
+    }
+    let writing = Instant::now();
+    write_package_strides(path, output, &records)?;
+    println!("{label}: wrote {} in {:.1} s", output.display(), writing.elapsed().as_secs_f32());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -435,5 +501,17 @@ mod tests {
         let mut values = [4.0, 1.0, 3.0, 2.0];
         assert!((percentile(&mut values, 10.0) - 1.3).abs() < 1e-6);
         assert!((percentile(&mut values, 50.0) - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_command_line_reads_a_mode_and_options() {
+        let args = |line: &str| line.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let options = parse_options(&args("changed --source ec --packages /p --report /r")).unwrap();
+        assert_eq!(options, Options { everything: false, sources: vec![StrideSource::Enhanced],
+            packages: Some("/p".into()), output: None, report: Some("/r".into()) });
+        assert_eq!(parse_options(&args("full")).unwrap().sources, StrideSource::ALL.to_vec());
+        for bad in ["", "some", "full --source kr", "full --output", "full --colour red"] {
+            assert!(parse_options(&args(bad)).is_err(), "{bad}");
+        }
     }
 }

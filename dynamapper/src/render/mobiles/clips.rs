@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use bevy::prelude::*;
-use udd_assets::animation::mobile_anim_cc::{classic_stored_direction, MobileAnimCcPackage};
+use udd_assets::animation::mobile_anim_cc::MobileAnimCcPackage;
 use udd_assets::animation::mobile_anim_ec::MobileAnimEcPackage;
+use udd_assets::animation::mobile_strides::MobileAnimClips;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use super::frame_atlas::{AtlasRect, MobileFrameAtlas};
 use super::placement::FramePlacement;
@@ -217,70 +218,34 @@ impl MobileClips {
     }
 }
 
+/// The clip of `key` as its package gives it (`MobileAnimClips::clip`: the client's frames, anchors and mirroring),
+/// timed by its fps.
 pub(super) fn decode_clip(packages: &AnimPackages, key: ClipKey) -> Option<DecodedClip> {
-    match key.source {
-        AnimSource::Classic => decode_classic_clip(packages.classic.as_deref()?, key),
-        AnimSource::Enhanced => decode_enhanced_clip(packages.enhanced.as_deref()?, key),
-    }
-}
-
-/// A Classic clip: the client stores five directions and mirrors the other three (`classic_stored_direction`). A
-/// frame's anchor is its centre x from the left and its centre y from the bottom (ClassicUO: the frame's top at the
-/// anchor minus its height and centre y).
-fn decode_classic_clip(package: &MobileAnimCcPackage, key: ClipKey) -> Option<DecodedClip> {
-    let body = u16::try_from(key.body).ok()?;
-    let (stored_direction, mirrored) = classic_stored_direction(key.direction)?;
-    let animation = package.server_body_animation(body, key.action, stored_direction)?;
-    let frames = package.animation_frames(animation).iter().filter(|frame| frame.width > 0 && frame.height > 0)
-        .map(|frame| {
-            let rgba = package.read_frame_rgba(frame)
-                .map_err(|error| warn!("Mobile clip {key:?}: {error:#}")).ok()?;
-            Some(DecodedFrame {
-                placement: FramePlacement {
-                    width: f32::from(frame.width),
-                    height: f32::from(frame.height),
-                    anchor_x: f32::from(frame.center_x),
-                    anchor_y: f32::from(frame.height) + f32::from(frame.center_y),
-                },
-                rgba: Arc::from(rgba),
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored, frame_secs: frame_secs_at(animation.fps),
-        stored: u32::from(stored_direction) })
+    let clip = match key.source {
+        AnimSource::Classic => packages.classic.as_deref()?.clip(key.body, key.action, key.direction),
+        AnimSource::Enhanced => packages.enhanced.as_deref()?.clip(key.body, key.action, key.direction),
+    };
+    let clip = clip.map_err(|error| warn!("Mobile clip {key:?}: {error:#}")).ok()??;
+    Some(DecodedClip {
+        frames: clip.frames.into_iter().map(|frame| DecodedFrame {
+            placement: FramePlacement {
+                width: f32::from(frame.width),
+                height: f32::from(frame.height),
+                anchor_x: frame.anchor_x as f32,
+                anchor_y: frame.anchor_y as f32,
+            },
+            rgba: Arc::from(frame.rgba),
+        }).collect(),
+        mirrored: clip.mirrored,
+        frame_secs: frame_secs_at(clip.fps),
+        stored: clip.stored,
+    })
 }
 
 /// The time per frame at `fps` frames a second; `CLASSIC_FRAME_SECS` without an fps (Classic MUL bodies, and
 /// animations no sequence times).
 fn frame_secs_at(fps: f32) -> f32 {
     if fps > 0.0 { fps.recip() } else { CLASSIC_FRAME_SECS }
-}
-
-/// An Enhanced clip: the package holds every direction, a mirrored one sharing the frames of its stored twin. A
-/// frame's anchor is its centre from its top-left corner; the frames shown are those the sequence does not skip.
-fn decode_enhanced_clip(package: &MobileAnimEcPackage, key: ClipKey) -> Option<DecodedClip> {
-    const FLYING_ANIMATIONS: bool = true;
-    let resolved = package.resolve_animation(key.body, key.action, key.direction, FLYING_ANIMATIONS)?;
-    let record = resolved.record;
-    let frames = package.animation_frames(record).iter().enumerate()
-        .filter(|(index, frame)| !record.is_frame_skipped(*index as u32) && frame.width > 0 && frame.height > 0)
-        .map(|(_, frame)| {
-            let rgba = package.read_frame_rgba(frame)
-                .map_err(|error| warn!("Mobile clip {key:?}: {error:#}")).ok()?;
-            Some(DecodedFrame {
-                placement: FramePlacement {
-                    width: f32::from(frame.width),
-                    height: f32::from(frame.height),
-                    anchor_x: f32::from(frame.center_x),
-                    anchor_y: f32::from(frame.center_y),
-                },
-                rgba: Arc::from(rgba),
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let frame_secs = frame_secs_at(resolved.fps);
-    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored: record.is_mirrored(), frame_secs,
-        stored: record.frame_start })
 }
 
 #[cfg(test)]

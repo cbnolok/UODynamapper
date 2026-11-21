@@ -91,17 +91,37 @@ remark, 2026-11-21, on body 1409, which the installed clients don't have), and t
 stored frames (the package fills the gap with empty placeholders); the app drops empty frames, so neither the
 in-betweens nor the stride sum see them.
 
-The table is `dynamapper/assets/data/mobile_strides.txt`, bundled into the binary (`render/mobiles/pace.rs`), written
-by the GPU port of the prototype, the ignored test `render::mobiles::pace::measure::write_the_stride_table` (command
-in the module doc and the table's header; about 40 minutes for both packages on a Radeon 880M). It is keyed by source,
-body and action: walk and run of the peace and war groups and, Enhanced, the mounts' mounted moves, so a war mode
-needs no new table. The stride is the median of the side facings that measured (at least two), even when they
+The strides live in the animation packages, `metadata/strides.bin` of `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp`
+(layout in [UDDP_FORMATS.md](../dev_wiki/UDDP_FORMATS.md); reader in `udd_assets::animation::mobile_strides`), so the
+udd tools see them too. A record is keyed by body and action: walk and run of the peace and war groups and, Enhanced,
+the mounts' mounted moves, so a war mode needs no new strides. Each carries the XXH64 of the frames it was measured
+on: for the side facings 4, 5, 6 in order, presence, mirroring, and each kept frame's size, anchor and RGBA (skipped and
+empty frames dropped; the fps is not hashed). A stride never applies to other frames: the app (`render/mobiles/pace.rs`)
+hashes a clip's side facings on the background pool the first time it asks for its stride and keeps the client timing
+until the hash matches, for good when it doesn't (one debug log per clip). The check costs 5–30 ms of one worker per
+clip, once a session, nearly all of it reading the atlas pages (the hash itself is under 2 ms on a 17 MB clip). A
+package without the entry loads fine and keeps the client timing for every clip.
+
+The GPU port of the prototype writes them: `dynamapper measure-strides changed|full` (`just measure-mobile-strides`;
+`--source cc|ec`, `--packages DIR` defaulting to the app's `udd_path`, `--output DIR`, `--report DIR`). It hashes every
+clip on all threads (13 s for both packages), then measures on the GPU only what it must: `changed` the clips with new
+or other frames than their stride's (a clip sharing the frames of a kept one takes its measurement), dropping the
+strides of clips gone; `full` everything again (about 40 minutes on a Radeon 880M). It rewrites a package only when
+its strides changed, copying the other entries as stored (3 s for the 2.7 GB Enhanced package, warm cache), and prints
+what it measured, unchanged, changed, new, removed and rejected. By hand, `udd-cli tool strides export|import|status`
+writes a package's strides as a tab-separated table (`source body action south south-west west stride hash`), imports
+one (rows whose hash no longer matches the frames are skipped; rows without a hash need `--trust-unhashed`), and lists
+the stale ones. A repack with `udd-cli pack-mobile-anims` / `pack-ec-mobile-anims` keeps the strides of the package it
+replaces (or of `--strides-from`) whose frames still hash the same; changed and new clips get none until measured.
+The first strides, measured into the table that was bundled in the binary until 2026-11-21, were moved into the
+packages with `strides import --trust-unhashed` from the measurement report, hashed on the packages they were measured
+on, without measuring again. The stride is the median of the side facings that measured (at least two), even when they
 disagree: the clamp bounds a poor number, and rejecting a spread over 60% of the median turned away the clips the
-user judged from the prototype videos (Enhanced wyrm 46, stygian 826) and most Enhanced creatures. The report lists
-each facing and the spread for inspection. A clip whose median is not positive or under a quarter tile has no entry
-and keeps the client timing: bodies without planted feet (gazers, slimes, wisps) and the smallest creatures measure a
-few hundredths of a tile, and the clamp would play them at twice their speed. The 2026-11-21 table paces 882 of 1914
-Classic clips with frames and 1627 of 4125 Enhanced ones. Riders never use a stride of their own: the mount's clip is
+user judged from the prototype videos (Enhanced wyrm 46, stygian 826) and most Enhanced creatures. Each record keeps
+each facing's stride, and the generator prints their spread for inspection. A clip whose median is not positive or
+under a quarter tile is recorded without a stride and keeps the client timing: bodies without planted feet (gazers,
+slimes, wisps) and the smallest creatures measure a few hundredths of a tile, and the clamp would play them at twice
+their speed. The 2026-11-21 strides pace 882 of 1914 Classic clips with frames and 1627 of 4125 Enhanced ones. Riders never use a stride of their own: the mount's clip is
 paced from the mount's stride and the rider shows the same point of that cycle, with the by-eye Enhanced mounted
 cycles as the fallback. The cycle position is a phase accumulator (`MobileCycleClock`), so a cycle length that changes
 mid-walk doesn't make the frame jump.

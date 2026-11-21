@@ -87,7 +87,7 @@ impl Plugin for MobileSpritesPlugin {
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
             .init_resource::<rife_in_betweens::MobileInBetweens>()
-            .insert_resource(MobileStrides::bundled())
+            .init_resource::<MobileStrides>()
             .add_systems(Update, (
                 sys_sync_player_appearance,
                 sys_choose_mobile_clips,
@@ -148,7 +148,7 @@ fn sys_sync_player_appearance(
 /// is missing.
 fn sys_choose_mobile_clips(
     packages: Res<MobileAnimPackages>,
-    strides: Res<MobileStrides>,
+    mut strides: ResMut<MobileStrides>,
     settings: Res<Settings>,
     art_source: Option<Res<StaticArtSourceState>>,
     mut mobiles_q: Query<(&MobileMotion, &MobileAppearance, &mut MobileClipChoice)>,
@@ -157,8 +157,12 @@ fn sys_choose_mobile_clips(
         Some(ClientTextureSource::Ec) => AnimSource::Enhanced,
         _ => AnimSource::Classic,
     };
+    if packages.is_changed() {
+        *strides = MobileStrides::new(&packages.0);
+    }
     let packages = &packages.0;
-    let strides = (settings.world_rendering.mobile_walk_pace == MobileWalkPace::MatchTheGround).then_some(&*strides);
+    let mut strides = (settings.world_rendering.mobile_walk_pace == MobileWalkPace::MatchTheGround)
+        .then_some(&mut *strides);
     let source = match preferred {
         AnimSource::Enhanced if packages.enhanced.is_some() => Some(AnimSource::Enhanced),
         AnimSource::Classic if packages.classic.is_some() => Some(AnimSource::Classic),
@@ -169,9 +173,9 @@ fn sys_choose_mobile_clips(
     for (motion, appearance, mut choice) in mobiles_q.iter_mut() {
         let chosen = match source {
             Some(AnimSource::Classic) => packages.classic.as_deref()
-                .map(|package| classic_choice(package, strides, appearance, motion)),
+                .map(|package| classic_choice(package, strides.as_deref_mut(), appearance, motion)),
             Some(AnimSource::Enhanced) => packages.enhanced.as_deref()
-                .map(|package| enhanced_choice(package, strides, appearance, motion)),
+                .map(|package| enhanced_choice(package, strides.as_deref_mut(), appearance, motion)),
             None => None,
         }
         .unwrap_or_default();
@@ -185,7 +189,7 @@ fn sys_choose_mobile_clips(
 
 /// The ground pace of `action` of `body` from `source` on the move, when `strides` (the setting on) has its stride: at
 /// the step time of the movement, mounted or not.
-fn ground_stride(strides: Option<&MobileStrides>, source: AnimSource, body: u32, action: Option<u16>,
+fn ground_stride(strides: Option<&mut MobileStrides>, source: AnimSource, body: u32, action: Option<u16>,
     motion: &MobileMotion, mounted: bool) -> Option<GroundStride> {
     if motion.movement == Movement::Stand {
         return None;
@@ -214,7 +218,7 @@ fn enhanced_movement(movement: Movement) -> u8 {
 /// `GetGroupForAnimation` for the rest): the body's own, or its mounted ones on a mount,
 /// which moves with its own; the rider sits the mount's offset lower (ClassicUO `Mounts`, `MobileView`). Matched to
 /// the ground (`strides`), the mount's stride, or the body's on foot, paces the cycle.
-fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&MobileStrides>, appearance: &MobileAppearance,
+fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&mut MobileStrides>, appearance: &MobileAppearance,
     motion: &MobileMotion) -> MobileClipChoice {
     let movement = classic_movement(motion.movement);
     let body = u16::try_from(appearance.body).ok();
@@ -244,7 +248,7 @@ fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&MobileStrides>
 /// mounted or peace move; the layers sit where `mobile_layer_offsets` puts them. A rider and its mount share one cycle
 /// ([`MobileCycle`]), not the client's two clocks. Matched to the ground (`strides`), the mount's stride, or the
 /// body's on foot, paces the cycle.
-fn enhanced_choice(package: &MobileAnimEcPackage, strides: Option<&MobileStrides>, appearance: &MobileAppearance,
+fn enhanced_choice(package: &MobileAnimEcPackage, strides: Option<&mut MobileStrides>, appearance: &MobileAppearance,
     motion: &MobileMotion) -> MobileClipChoice {
     const FLYING_ANIMATIONS: bool = true;
     let movement = enhanced_movement(motion.movement);

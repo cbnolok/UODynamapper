@@ -1,15 +1,17 @@
 //! How fast a mobile's walk and run cycles play. The clients play a clip at its own frame time, whatever the speed of
 //! the steps, so a big Enhanced creature walking a tile in 0.4 s skates. Matched to the ground, a cycle lasts the time
 //! the steps take to cover the clip's stride: how far the body's planted feet travel in one cycle of the clip, measured
-//! offline on the frames (`measure`, the table in `assets/data/mobile_strides.txt`).
+//! offline on the frames (`measure`) and stored in the animation packages with the hash of the frames measured.
 
-#[cfg(test)]
-mod measure;
+pub mod measure;
 
-use std::collections::HashMap;
+use std::collections::hash_map::{Entry, HashMap};
+use std::sync::Arc;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use super::clips::AnimSource;
+use udd_assets::animation::mobile_strides::MobileAnimClips;
+use crate::app::background::{background_pool, Priority, Task, TaskPoll};
+use super::clips::{AnimPackages, AnimSource};
 
 /// How a mobile's walk and run cycles are paced. Kept in the app-written world rendering settings as
 /// `world_rendering.mobile_walk_pace`.
@@ -81,76 +83,84 @@ impl MobileCycleClock {
     }
 }
 
-/// The bundled table of strides, written by `measure`.
-const BUNDLED_STRIDES: &str = include_str!("../../../assets/data/mobile_strides.txt");
-const BUNDLED_STRIDES_NAME: &str = "assets/data/mobile_strides.txt";
-/// The table's names of the sources.
-const CLASSIC_TOKEN: &str = "cc";
-const ENHANCED_TOKEN: &str = "ec";
-const COMMENT_PREFIX: char = '#';
-
-/// The measured strides, in tiles per cycle, of the walk and run clips (and an Enhanced mount's mounted moves) by
-/// source, server body and the action the client tables give for the movement.
-#[derive(Resource, Debug, Default)]
+/// The measured strides of the walk and run clips (and an Enhanced mount's mounted moves), by source, server body and
+/// the action the client tables give for the movement, from the animation packages (`metadata/strides.bin`). A stride
+/// is used only once the clip's frames are checked to hash as those it was measured on: the first time a clip asks,
+/// its side facings hash on the background pool, and it keeps the clients' timing until they match.
+#[derive(Resource, Default)]
 pub struct MobileStrides {
-    strides: HashMap<(AnimSource, u32, u16), f32>,
+    packages: AnimPackages,
+    checks: HashMap<(AnimSource, u32, u16), StrideCheck>,
+}
+
+/// Where the check of a clip's frames against its stride stands.
+enum StrideCheck {
+    Hashing { stride_tiles: f32, clip_hash: u64, task: Task<Option<u64>> },
+    Matches(f32),
+    /// The frames are not those measured, or do not read: the clip keeps the clients' timing.
+    Differs,
+}
+
+impl StrideCheck {
+    /// The check once the frames hash `hash_now` (`None` without frames, or when they do not read).
+    fn settle(key: (AnimSource, u32, u16), stride_tiles: f32, clip_hash: u64, hash_now: Option<u64>) -> Self {
+        if hash_now == Some(clip_hash) {
+            return Self::Matches(stride_tiles);
+        }
+        let (source, body, action) = key;
+        debug!("The {source:?} frames of action {action} of body {body} are not those its stride was measured on \
+            (hash {hash_now:x?}, measured {clip_hash:016x}): the clip keeps the clients' timing until the strides are \
+            measured again.");
+        Self::Differs
+    }
 }
 
 impl MobileStrides {
-    /// Reads a table: a line per clip, `source body action tiles` (source `cc` or `ec`), `#` comments and blank lines
-    /// aside. Errors name the line.
-    pub fn parse(name: &str, text: &str) -> Result<Self, String> {
-        let mut strides = HashMap::new();
-        for (index, line) in text.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with(COMMENT_PREFIX) {
-                continue;
+    /// The strides of `packages`, none checked yet.
+    pub fn new(packages: &AnimPackages) -> Self {
+        Self { packages: packages.clone(), checks: HashMap::new() }
+    }
+
+    /// The stride of `action` of server `body` from `source`, in tiles per cycle, once its frames are checked.
+    pub fn get(&mut self, source: AnimSource, body: u32, action: u16) -> Option<f32> {
+        let key = (source, body, action);
+        let check = match self.checks.entry(key) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let check = match source {
+                    AnimSource::Classic => start_check(self.packages.classic.as_ref()?, body, action),
+                    AnimSource::Enhanced => start_check(self.packages.enhanced.as_ref()?, body, action),
+                }?;
+                entry.insert(check)
             }
-            let error = |what: &str| format!("{name}:{}: {what}: {line:?}", index + 1);
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            let [source, body, action, tiles] = fields[..] else {
-                return Err(error("expected `source body action tiles`"));
+        };
+        if let StrideCheck::Hashing { stride_tiles, clip_hash, task } = check {
+            let hash_now = match task.poll() {
+                TaskPoll::Pending => return None,
+                TaskPoll::Ready(hash_now) => hash_now,
+                TaskPoll::Failed => None,
             };
-            let source = match source {
-                CLASSIC_TOKEN => AnimSource::Classic,
-                ENHANCED_TOKEN => AnimSource::Enhanced,
-                _ => return Err(error(&format!("the source is `{CLASSIC_TOKEN}` or `{ENHANCED_TOKEN}`"))),
-            };
-            let body = body.parse().map_err(|_| error("the body is not a number"))?;
-            let action = action.parse().map_err(|_| error("the action is not a number"))?;
-            let tiles: f32 = tiles.parse().map_err(|_| error("the stride is not a number"))?;
-            if !(tiles.is_finite() && tiles > 0.0) {
-                return Err(error("the stride is not positive"));
-            }
-            if strides.insert((source, body, action), tiles).is_some() {
-                return Err(error("a second stride for this clip"));
-            }
+            *check = StrideCheck::settle(key, *stride_tiles, *clip_hash, hash_now);
         }
-        Ok(Self { strides })
-    }
-
-    /// The bundled table; an unreadable one is logged and leaves every clip at its own timing.
-    pub fn bundled() -> Self {
-        Self::parse(BUNDLED_STRIDES_NAME, BUNDLED_STRIDES).unwrap_or_else(|error| {
-            error!("The mobiles' strides do not read, so their walks keep the clients' timing: {error}");
-            Self::default()
-        })
-    }
-
-    /// The stride of `action` of server `body` from `source`, in tiles per cycle.
-    pub fn get(&self, source: AnimSource, body: u32, action: u16) -> Option<f32> {
-        self.strides.get(&(source, body, action)).copied()
+        match check {
+            StrideCheck::Matches(tiles) => Some(*tiles),
+            _ => None,
+        }
     }
 }
 
-/// The table line of a stride, as [`MobileStrides::parse`] reads it.
-#[cfg(test)]
-fn stride_line(source: AnimSource, body: u32, action: u16, tiles: f32) -> String {
-    let source = match source {
-        AnimSource::Classic => CLASSIC_TOKEN,
-        AnimSource::Enhanced => ENHANCED_TOKEN,
-    };
-    format!("{source} {body} {action} {tiles:.2}")
+/// The check of the stride `package` has for `action` of `body`, its hashing started; none without a stride.
+fn start_check<P: MobileAnimClips + Send + Sync + 'static>(package: &Arc<P>, body: u32, action: u16)
+    -> Option<StrideCheck> {
+    let record = package.stride_record(body, action)?;
+    let stride_tiles = record.stride_tiles?;
+    let package = package.clone();
+    let task = background_pool().spawn(Priority::Visible, "mobile stride check", move || {
+        package.stride_clip_hash(body, action)
+            .map_err(|error| warn!("The frames of action {action} of body {body} do not read: {error:#}"))
+            .ok().flatten()
+    });
+    Some(StrideCheck::Hashing { stride_tiles, clip_hash: record.clip_hash, task })
 }
 
 #[cfg(test)]
@@ -178,24 +188,34 @@ mod tests {
         assert!((clock.advance(0.1, 1.0) - 0.1).abs() < 1e-6);
     }
 
+    /// A stride is used only for the frames it was measured on: a clip whose frames hash otherwise, or do not read,
+    /// keeps the clients' timing, and so does one still hashing, until it matches.
     #[test]
-    fn a_stride_table_reads_its_lines_and_refuses_bad_ones() {
-        let text = format!("# a comment\n\n{}\n{}\n", stride_line(AnimSource::Classic, 200, 0, 1.854),
-            stride_line(AnimSource::Enhanced, 200, 9, 2.5));
-        let table = MobileStrides::parse("test", &text).unwrap();
-        assert_eq!(table.strides.len(), 2);
-        assert_eq!(table.get(AnimSource::Classic, 200, 0), Some(1.85));
-        assert_eq!(table.get(AnimSource::Enhanced, 200, 9), Some(2.5));
-        assert_eq!(table.get(AnimSource::Enhanced, 200, 0), None);
-        for bad in ["kr 200 0 1.0", "cc 200 0", "cc x 0 1.0", "cc 200 0 -1.0", "cc 200 0 1.0\ncc 200 0 2.0"] {
-            let error = MobileStrides::parse("test", bad).unwrap_err();
-            assert!(error.starts_with("test:"), "{error}");
+    fn a_stride_is_used_only_while_the_frames_hash_as_measured() {
+        const KEY: (AnimSource, u32, u16) = (AnimSource::Enhanced, 200, 0);
+        const TILES: f32 = 1.5;
+        const MEASURED: u64 = 0x1234;
+        const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let (source, body, action) = KEY;
+        let mut strides = MobileStrides::default();
+        for (hash_now, expected) in [(Some(MEASURED), Some(TILES)), (Some(MEASURED + 1), None), (None, None)] {
+            let (hashed, hashing) = std::sync::mpsc::channel::<()>();
+            let task = background_pool().spawn(Priority::Visible, "test stride check", move || {
+                hashing.recv_timeout(CHECK_TIMEOUT).ok()?;
+                hash_now
+            });
+            strides.checks.insert(KEY, StrideCheck::Hashing { stride_tiles: TILES, clip_hash: MEASURED, task });
+            assert_eq!(strides.get(source, body, action), None, "no stride while hashing");
+            hashed.send(()).unwrap();
+            let started = std::time::Instant::now();
+            while !matches!(strides.checks.get(&KEY), Some(StrideCheck::Hashing { task, .. }) if task.is_finished()) {
+                assert!(started.elapsed() < CHECK_TIMEOUT, "the check never ran");
+                std::thread::yield_now();
+            }
+            assert_eq!(strides.get(source, body, action), expected, "frames hashing {hash_now:x?}");
+            assert_eq!(strides.get(source, body, action), expected, "settled");
         }
-    }
-
-    #[test]
-    fn the_bundled_stride_table_reads() {
-        let table = MobileStrides::parse(BUNDLED_STRIDES_NAME, BUNDLED_STRIDES).unwrap();
-        assert!(!table.strides.is_empty());
+        // Without the packages, no stride.
+        assert_eq!(strides.get(AnimSource::Classic, body, action), None);
     }
 }
