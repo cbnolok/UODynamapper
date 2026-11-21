@@ -26,6 +26,8 @@ const GRID_ZOOMS: RangeInclusive<f32> = 0.125..=4.0;
 const GRID_DEFAULT_ZOOM: f32 = 0.5;
 /// Share of the central panel's height the player may take; the grid gets the rest.
 const PLAYER_HEIGHT_SHARE: f32 = 0.45;
+/// The player's room for "(no image)" when the shown direction holds no frame at all.
+const NO_IMAGE_SLOT: egui::Vec2 = egui::vec2(96.0, 32.0);
 const ROW_LABEL_WIDTH: f32 = 96.0;
 /// Frames are shown numbered from 1, in the player and the grid.
 const DISPLAYED_FIRST_FRAME: usize = 1;
@@ -565,8 +567,9 @@ pub(super) fn show_player(
         area = area.scroll_offset(offset);
     }
     let texture = image_index.and_then(|index| frame_texture(app, ctx, frames, index, hue));
+    let slot_size = if texture.is_some() { largest } else { largest.max(NO_IMAGE_SLOT) };
     let output = area.show(ui, |ui| {
-        let (slot, _) = ui.allocate_exact_size(largest, egui::Sense::hover());
+        let (slot, _) = ui.allocate_exact_size(slot_size, egui::Sense::hover());
         match &texture {
             Some(texture) => paint_bottom_centred(ui, texture, slot, zoom, mirrored),
             None => {
