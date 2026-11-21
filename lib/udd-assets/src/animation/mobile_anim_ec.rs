@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -10,6 +10,9 @@ use udd_container::UddpReader;
 use crate::common::{
     decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow,
     AtlasCacheOptions, AtlasPageCache,
+};
+use crate::animation::mobile_strides::{
+    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileStrideRecord, StrideSource,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -422,6 +425,7 @@ pub struct MobileAnimEcPackage {
     frames: Vec<MobileAnimEcFrameRecord>,
     items: Vec<MobileAnimEcItemRecord>,
     source_hints: Vec<MobileAnimEcSourceHintRecord>,
+    strides: Vec<MobileStrideRecord>,
     page_cache: AtlasPageCache,
 }
 
@@ -464,6 +468,7 @@ impl MobileAnimEcPackage {
         let items = parse_item_manifest(&item_manifest)?;
         let source_hints = parse_source_hint_manifest(&source_hint_manifest)?;
         let bodies = parse_body_manifest(&body_manifest)?;
+        let strides = read_stride_records(&package)?;
         let mut animation_lookup = HashMap::with_capacity(animations.len());
         let mut lowest_plain_actions = HashMap::<u32, u16>::new();
         for (index, animation) in animations.iter().enumerate() {
@@ -488,6 +493,7 @@ impl MobileAnimEcPackage {
             frames,
             items,
             source_hints,
+            strides,
             page_cache: AtlasPageCache::new(options),
         })
     }
@@ -618,6 +624,50 @@ impl MobileAnimEcPackage {
             frame.width,
             frame.height,
         )
+    }
+}
+
+impl MobileAnimClips for MobileAnimEcPackage {
+    fn stride_source(&self) -> StrideSource {
+        StrideSource::Enhanced
+    }
+
+    fn stride_records(&self) -> &[MobileStrideRecord] {
+        &self.strides
+    }
+
+    fn stride_clips(&self) -> Vec<(u32, u16)> {
+        let mut clips = BTreeSet::new();
+        for body in &self.bodies {
+            for movement in [MOVE_WALK, MOVE_RUN] {
+                let actions = [body.move_action(GROUP_PEACE, movement), body.move_action(GROUP_WAR, movement),
+                    body.mount_move_action(movement)];
+                for action in actions.into_iter().flatten() {
+                    clips.insert((body.body_id, action));
+                }
+            }
+        }
+        clips.into_iter().collect()
+    }
+
+    /// The package holds every direction, a mirrored one sharing the frames of its stored twin; flying animations
+    /// on. A frame's anchor is its centre from its top-left corner; the frames are those the sequence does not skip.
+    fn clip(&self, body: u32, action: u16, direction: u8) -> eyre::Result<Option<MobileClip>> {
+        const FLYING_ANIMATIONS: bool = true;
+        let Some(resolved) = self.resolve_animation(body, action, direction, FLYING_ANIMATIONS) else { return Ok(None) };
+        let record = resolved.record;
+        let frames = self.animation_frames(record).iter().enumerate()
+            .filter(|(index, frame)| !record.is_frame_skipped(*index as u32) && frame.width > 0 && frame.height > 0)
+            .map(|(_, frame)| Ok(MobileClipFrame {
+                width: frame.width,
+                height: frame.height,
+                anchor_x: i32::from(frame.center_x),
+                anchor_y: i32::from(frame.center_y),
+                rgba: self.read_frame_rgba(frame)?,
+            }))
+            .collect::<eyre::Result<Vec<_>>>()?;
+        Ok((!frames.is_empty()).then_some(MobileClip { frames, mirrored: record.is_mirrored(), fps: resolved.fps,
+            stored: record.frame_start }))
     }
 }
 

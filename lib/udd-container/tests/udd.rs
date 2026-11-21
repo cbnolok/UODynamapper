@@ -869,3 +869,45 @@ fn an_extended_package_keeps_its_entries_and_opens_the_added_one_in_place() {
         Err(udd_container::uddp::FormatError::FileNotFound)
     ));
 }
+
+/// Writing a package with one entry replaced and one added keeps every other entry as it was stored, and the result
+/// reads back with a valid package hash.
+#[test]
+fn a_package_written_with_entries_replaces_and_adds_them_and_copies_the_rest() {
+    const KEPT_PATH: &str = "kept.bin";
+    const REPLACED_PATH: &str = "metadata/replaced.bin";
+    const ADDED_PATH: &str = "metadata/added.bin";
+    const KEPT_REPEATS: usize = 64;
+    let request = |path: &str, compression, data: Vec<u8>| AddOwnedFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(path.to_string()),
+        path_hash64: None,
+        id: None,
+        data,
+    };
+    let kept = b"kept payload, compressed ".repeat(KEPT_REPEATS);
+    let mut base = UddpBuilder::new(LookupMode::VirtualPathHash);
+    base.add_owned_file(request(KEPT_PATH, CompressionFlag::ZstdNoDict, kept.clone())).unwrap();
+    base.add_owned_file(request(REPLACED_PATH, CompressionFlag::ZstdNoDict, b"old".to_vec())).unwrap();
+    let base = UddpReader::open(base.into_bytes().unwrap()).unwrap();
+
+    let dir = streaming_test_dir("write-with-entries");
+    let path = dir.join("written.uddp");
+    let metadata = DataType::Metadata as u8;
+    UddpBuilder::write_with_entries(&base, &[(xxh64_virtual_path(REPLACED_PATH), metadata, b"new".as_slice()),
+        (xxh64_virtual_path(ADDED_PATH), metadata, b"added".as_slice())], &path).unwrap();
+    let written = UddpReader::load(&path).unwrap();
+    assert_eq!(written.computed_package_hash64(), written.stored_package_hash64());
+    assert_eq!(written.records().len(), 3);
+    assert_eq!(written.read_file_by_path_hash(xxh64_virtual_path(KEPT_PATH)).unwrap(), kept);
+    let (was, is) = (base.find_by_path_hash(xxh64_virtual_path(KEPT_PATH)).unwrap(),
+        written.find_by_path_hash(xxh64_virtual_path(KEPT_PATH)).unwrap());
+    assert_eq!((is.codec, is.stored_size), (was.codec, was.stored_size), "stored as it was");
+    assert_eq!(written.read_file_by_path_hash(xxh64_virtual_path(REPLACED_PATH)).unwrap(), b"new");
+    assert_eq!(written.read_file_by_path_hash(xxh64_virtual_path(ADDED_PATH)).unwrap(), b"added");
+    drop(written);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

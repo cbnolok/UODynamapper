@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -9,6 +9,9 @@ use udd_container::UddpReader;
 use crate::common::{
     decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow,
     AtlasCacheOptions, AtlasPageCache,
+};
+use crate::animation::mobile_strides::{
+    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileStrideRecord, StrideSource,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -216,6 +219,7 @@ pub struct MobileAnimCcPackage {
     frames: Vec<MobileAnimCcFrameRecord>,
     body_resolve: Vec<MobileAnimCcBodyResolveRecord>,
     body_types: Vec<MobileAnimCcBodyTypeRecord>,
+    strides: Vec<MobileStrideRecord>,
     /// Indices of the animation records of each (body, action, direction).
     animation_lookup: HashMap<(u16, u16, u8), Vec<usize>>,
     page_cache: AtlasPageCache,
@@ -257,6 +261,7 @@ impl MobileAnimCcPackage {
         let frames = parse_frame_manifest(&frame_manifest)?;
         let body_resolve = parse_body_resolve_manifest(&body_resolve_manifest)?;
         let body_types = parse_body_type_manifest(&body_type_manifest)?;
+        let strides = read_stride_records(&package)?;
         let mut animation_lookup = HashMap::<(u16, u16, u8), Vec<usize>>::new();
         for (index, animation) in animations.iter().enumerate() {
             animation_lookup
@@ -276,6 +281,7 @@ impl MobileAnimCcPackage {
             frames,
             body_resolve,
             body_types,
+            strides,
             animation_lookup,
             page_cache: AtlasPageCache::new(options),
         })
@@ -600,6 +606,55 @@ impl MobileAnimCcPackage {
             frame.width,
             frame.height,
         )
+    }
+}
+
+impl MobileAnimClips for MobileAnimCcPackage {
+    fn stride_source(&self) -> StrideSource {
+        StrideSource::Classic
+    }
+
+    fn stride_records(&self) -> &[MobileStrideRecord] {
+        &self.strides
+    }
+
+    fn stride_clips(&self) -> Vec<(u32, u16)> {
+        let bodies: BTreeSet<u16> = self.animations.iter().map(|record| record.body_id)
+            .chain(self.body_resolve.iter().map(|record| record.body_id))
+            .chain(self.body_types.iter().map(|record| record.body_id))
+            .collect();
+        let mut clips = BTreeSet::new();
+        for body in bodies {
+            // A body with UOP frames has the animation sequence's war moves too.
+            let sequence = self.body_type_record(self.frames_body(body).type_body_id);
+            for movement in [MOVE_WALK, MOVE_RUN] {
+                let war = sequence.and_then(|record| record.move_action(GROUP_WAR, movement));
+                for action in [self.movement_action(body, movement, false), war].into_iter().flatten() {
+                    clips.insert((u32::from(body), action));
+                }
+            }
+        }
+        clips.into_iter().collect()
+    }
+
+    /// The client stores five directions and mirrors the other three ([`classic_stored_direction`]). A frame's anchor
+    /// is its centre x from the left and its centre y from the bottom (ClassicUO: the frame's top at the anchor minus
+    /// its height and centre y).
+    fn clip(&self, body: u32, action: u16, direction: u8) -> eyre::Result<Option<MobileClip>> {
+        let Ok(body) = u16::try_from(body) else { return Ok(None) };
+        let Some((stored_direction, mirrored)) = classic_stored_direction(direction) else { return Ok(None) };
+        let Some(animation) = self.server_body_animation(body, action, stored_direction) else { return Ok(None) };
+        let frames = self.animation_frames(animation).iter().filter(|frame| frame.width > 0 && frame.height > 0)
+            .map(|frame| Ok(MobileClipFrame {
+                width: frame.width,
+                height: frame.height,
+                anchor_x: i32::from(frame.center_x),
+                anchor_y: i32::from(frame.height) + i32::from(frame.center_y),
+                rgba: self.read_frame_rgba(frame)?,
+            }))
+            .collect::<eyre::Result<Vec<_>>>()?;
+        Ok((!frames.is_empty()).then_some(MobileClip { frames, mirrored, fps: animation.fps,
+            stored: u32::from(stored_direction) }))
     }
 }
 

@@ -429,6 +429,76 @@ impl UddpBuilder {
         Self::new(base.lookup_mode()).emit_package(BuildPlan { dictionaries, files })
     }
 
+    /// Writes to `path` the path-addressed package `base` with the entries of `entries` (path hash, data type, bytes)
+    /// stored uncompressed in place of `base`'s entries of the same path, or after its own when it has none. The other
+    /// files and the dictionaries are copied as stored, in payload order, streamed from `base` to the file: replacing
+    /// one small entry of a large package costs a copy of the package, without decoding or re-encoding its payloads.
+    /// `path` must not be the file `base` reads.
+    pub fn write_with_entries(base: &UddpReader, entries: &[(u64, u8, &[u8])], path: impl AsRef<Path>)
+        -> Result<(), BuildError> {
+        let to_build_error = |error: FormatError| BuildError::Io(std::io::Error::other(error.to_string()));
+        if base.lookup_mode() != LookupMode::VirtualPathHash {
+            return Err(BuildError::WrongKeyForLookupMode);
+        }
+        let mut dictionaries = Vec::new();
+        for (data_type, codec, _) in base.dictionary_records() {
+            let bytes = base.dictionary_for_type(data_type).ok_or(BuildError::MissingDictionaryForType(data_type))?;
+            dictionaries.push(BuiltDictionary { data_type, codec, bytes: bytes.to_vec() });
+        }
+        let entry_layout = |path_hash64: u64, data_type: u8, data: &[u8]| -> Result<FileLayout, BuildError> {
+            let size = u32::try_from(data.len()).map_err(|_| BuildError::FileTooLarge(data.len() as u64))?;
+            Ok(FileLayout { key: PendingKey::PathHash(path_hash64), data_type, codec: Codec::None,
+                independent_frames: false, raw_size: size, stored_size: size })
+        };
+        let mut records = base.records();
+        records.sort_by_key(|record| unpack_offset40(record.locator.pos64));
+        // Each file's layout and where its stored bytes come from: `base`'s payload, or the entry of that index.
+        let mut files: Vec<(FileLayout, Result<&[u8], usize>)> = Vec::with_capacity(records.len() + entries.len());
+        let mut placed = vec![false; entries.len()];
+        for record in records {
+            let FileKey::PathHash(path_hash64) = record.key else { return Err(BuildError::WrongKeyForLookupMode) };
+            if let Some(index) = entries.iter().position(|(hash, _, _)| *hash == path_hash64) {
+                let (_, data_type, data) = entries[index];
+                files.push((entry_layout(path_hash64, data_type, data)?, Err(index)));
+                placed[index] = true;
+                continue;
+            }
+            let payload = base.locator_payload(&record.locator).map_err(to_build_error)?;
+            files.push((FileLayout {
+                key: PendingKey::PathHash(path_hash64),
+                data_type: unpack_type(record.locator.meta32),
+                codec: unpack_codec(record.locator.meta32),
+                independent_frames: unpack_independent_frames(record.locator.meta32),
+                raw_size: record.locator.raw_size,
+                stored_size: payload.len() as u32,
+            }, Ok(payload)));
+        }
+        for (index, &(path_hash64, data_type, data)) in entries.iter().enumerate() {
+            if !placed[index] {
+                files.push((entry_layout(path_hash64, data_type, data)?, Err(index)));
+            }
+        }
+        let layouts = files.iter().map(|(layout, _)| *layout).collect::<Vec<_>>();
+        validate_keys(LookupMode::VirtualPathHash, &layouts)?;
+        let head = serialize_package_head(LookupMode::VirtualPathHash, &dictionaries, &layouts)?;
+
+        let file = File::create(path).map_err(BuildError::Io)?;
+        let mut writer = HashingWriter::new(BufWriter::with_capacity(PACKAGE_FILE_WRITE_BUFFER_BYTES, file));
+        writer.write_all(&head).map_err(BuildError::Io)?;
+        for dict in &dictionaries {
+            writer.write_all(&dict.bytes).map_err(BuildError::Io)?;
+        }
+        for (_, source) in &files {
+            let bytes = match *source {
+                Ok(payload) => payload,
+                Err(index) => entries[index].2,
+            };
+            writer.write_all(bytes).map_err(BuildError::Io)?;
+        }
+        let (writer, package_hash64) = writer.finish();
+        patch_file_package_hash64(writer, package_hash64)
+    }
+
     fn plan_build(&self) -> Result<BuildPlan, BuildError> {
         self.plan_build_with_progress(|_| {})
     }
