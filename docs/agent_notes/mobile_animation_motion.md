@@ -81,7 +81,9 @@ strides are measured offline over every body into a table, not guessed per frame
   painted look and a maze pattern on fine texture; bicubic looked better (`upscale_realesrgan.py`). Their
   real-world degradation + GAN training invents detail. Faithful models trained on pixel loss (SPAN 4xpix /
   4xmssim pretrains, 2.2 M parameters, CC-BY-4.0, `upscale_span.py`) look like a sharper bicubic without invented
-  texture; the user's verdict on them is pending.
+  texture. **Chosen: 4xmssim_span** (user: looks better, most of all on small animations, where bicubic blurs the
+  little detail there is). Folded for inference (each Conv3XC into one 3x3 conv) it has 426k parameters, 0.86 MB as
+  fp16, within 0.08/255 of the original. Alpha is upscaled bicubically, not through the network.
 - If adopted: 4× frames cost 16× the atlas memory (tight on a 4 GB card), so store 2× results, only for clips on screen
   while zoomed above ~1.5×.
 
