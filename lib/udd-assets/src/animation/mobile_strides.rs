@@ -15,6 +15,7 @@ use std::fmt::Write as _;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
@@ -104,6 +105,34 @@ pub fn stride_clip_hash(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> Op
     Some(hasher.digest())
 }
 
+/// The atlas pages last read for a clip's frames, a few at a time: the frames of a clip, and of its facings, mostly
+/// share a page, so they read it once instead of once a frame.
+#[derive(Default)]
+pub(crate) struct PageMemo {
+    pages: Vec<(u32, Vec<u8>)>,
+}
+
+/// The pages a [`PageMemo`] keeps.
+const MEMO_PAGES: usize = 2;
+
+impl PageMemo {
+    /// The bytes of page `page_index`, read by `read` unless kept.
+    pub(crate) fn page(&mut self, page_index: u32, read: impl FnOnce(u32) -> eyre::Result<Vec<u8>>)
+        -> eyre::Result<&[u8]> {
+        let index = match self.pages.iter().position(|(kept, _)| *kept == page_index) {
+            Some(index) => index,
+            None => {
+                if self.pages.len() >= MEMO_PAGES {
+                    self.pages.remove(0);
+                }
+                self.pages.push((page_index, read(page_index)?));
+                self.pages.len() - 1
+            }
+        };
+        Ok(&self.pages[index].1)
+    }
+}
+
 /// Which client's package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum StrideSource {
@@ -166,9 +195,10 @@ pub trait MobileAnimClips {
     }
 }
 
-/// [`MobileAnimClips::stride_clip_hash`] of each of `clips`, on `threads` threads, in order.
+/// [`MobileAnimClips::stride_clip_hash`] of each of `clips`, on `threads` threads, in order. `progress` hears of each
+/// clip hashed: how many are done, the clip's index in `clips`, and the time it took.
 pub fn stride_clip_hashes<P: MobileAnimClips + Sync + ?Sized>(package: &P, clips: &[(u32, u16)], threads: usize,
-    progress: impl Fn(usize) + Sync) -> Vec<eyre::Result<Option<u64>>> {
+    progress: impl Fn(usize, usize, Duration) + Sync) -> Vec<eyre::Result<Option<u64>>> {
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     let mut results: Vec<(usize, eyre::Result<Option<u64>>)> = std::thread::scope(|scope| {
@@ -177,8 +207,9 @@ pub fn stride_clip_hashes<P: MobileAnimClips + Sync + ?Sized>(package: &P, clips
             loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(&(body, action)) = clips.get(index) else { break };
+                let started = Instant::now();
                 hashed.push((index, package.stride_clip_hash(body, action)));
-                progress(done.fetch_add(1, Ordering::Relaxed) + 1);
+                progress(done.fetch_add(1, Ordering::Relaxed) + 1, index, started.elapsed());
             }
             hashed
         })).collect();
@@ -334,7 +365,7 @@ pub fn write_package_strides(package: &Path, output: &Path, records: &[MobileStr
 pub fn strides_still_matching<P: MobileAnimClips + Sync + ?Sized>(package: &P, previous: &[MobileStrideRecord],
     threads: usize) -> Vec<MobileStrideRecord> {
     let clips: Vec<(u32, u16)> = previous.iter().map(|record| (record.body_id, record.action_id)).collect();
-    let hashes = stride_clip_hashes(package, &clips, threads, |_| {});
+    let hashes = stride_clip_hashes(package, &clips, threads, |_, _, _| {});
     previous.iter().zip(hashes)
         .filter(|(record, hash)| matches!(hash, Ok(Some(hash)) if *hash == record.clip_hash))
         .map(|(record, _)| *record)

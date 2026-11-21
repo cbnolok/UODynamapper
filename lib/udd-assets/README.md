@@ -60,6 +60,7 @@ Built by `udd-conv` from the Classic `anim*.mul`, `AnimationFrame1..4.uop`, `Bod
 | `metadata/frames.bin` | `MAFR` | `u32 count`, then frame records |
 | `metadata/body_resolve.bin` | `MABR` | `u32 count`, then the `Body.def` / `Bodyconv.def` records, sorted by body |
 | `metadata/body_types.bin` | `MABT` | `u32 count`, then body type records (25 bytes), sorted by body |
+| `metadata/strides.bin` | `MOST` | optional: the measured strides (below), version `MOBILE_STRIDES_VERSION` |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
 
 Animation record: `u16 body_id, u16 action_id, u8 direction, u8 file_index, u32 source_index, u32 frame_start,
@@ -91,6 +92,7 @@ accepts only version 1 and asks for a repack with the current `udd-cli` otherwis
 | `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (44 bytes), sorted by body |
 | `metadata/items.bin` | `MEIT` | `EcMobileAnimations.kdl` items (unchanged) |
 | `metadata/source_hints.bin` | `MESH` | `EcMobileAnimations.kdl` source hints (unchanged) |
+| `metadata/strides.bin` | `MOST` | optional: the measured strides (below), version `MOBILE_STRIDES_VERSION` |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
 | `masks/NNNNN.r8` | | hue mask of a page with `PAGE_FLAG_HUE_MASK` (zstd) |
 
@@ -211,6 +213,23 @@ level):
 Not carried: sequence frame effects (footstep sounds), and the typed 0xE2 and transition lookups.
 A consumer that needs those must read them from `AnimationSequence.uop` with
 `uocf::animation_sequence`.
+
+## Measured strides (`metadata/strides.bin`, version 1)
+
+Optional in both mobile animation packages (`animation::mobile_strides`); without it a package has
+no strides. `MOST`, the u32 version, `u32 count`, then records (30 bytes) sorted by body and
+action: `u32 body_id, u16 action_id, u64 clip_hash, f32 stride_tiles, f32 facing_tiles[3]`, NaN
+for none. `facing_tiles` are measured on server directions 4, 5 and 6, `stride_tiles` is their
+median (NaN: measured, no usable stride). `clip_hash` is `stride_clip_hash` of those three clips
+as `MobileAnimClips::clip` gives them; a stride applies only while it still matches. The exact
+hash input is in `docs/dev_wiki/UDDP_FORMATS.md` §3.1.
+
+`MobileAnimClips` (both packages) gives the clips a stride is measured for, a clip's frames
+(`clip`, `side_clips`, reading each atlas page once per clip), the stored records and the hash
+now. `plan_strides` sorts stored records against the hashes now (unchanged, changed, new,
+removed); `write_package_strides` replaces the entry by copying the package's other entries as
+stored; `format_stride_table` / `parse_stride_table` are the text form `udd-cli tool strides`
+reads and writes.
 
 ## `effects_ec.uddp` (metadata version 1)
 

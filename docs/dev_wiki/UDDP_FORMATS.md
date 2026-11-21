@@ -25,6 +25,7 @@ Every format was reset to version 1 on 2026-11-12, and the packages were repacke
 | `gumps_cc.uddp`, `gumps_ec.uddp` | atlas page and slot manifests (`GAPG`, `GASL`); shared Classic gump table (`GSHC`) | `GUMP_ATLAS_METADATA_VERSION`, `SHARED_CLASSIC_GUMP_TABLE_VERSION` = 1 |
 | `mobile_anim_cc.uddp` | page, animation, frame, body resolve and body type manifests (`MAPG`, `MAAN`, `MAFR`, `MABR`, `MABT`) | `MOBILE_ANIM_CC_METADATA_VERSION` = 1 |
 | `mobile_anim_ec.uddp` | page, animation, frame, item, source hint and body manifests (`MEPG`, `MEAN`, `MEFR`, `MEIT`, `MESH`, `MEBD`) | `MOBILE_ANIM_EC_METADATA_VERSION` = 1 |
+| `mobile_anim_cc.uddp`, `mobile_anim_ec.uddp` | optional `metadata/strides.bin` (`MOST`) | `MOBILE_STRIDES_VERSION` = 1 |
 | `paperdoll_ec.uddp` | `metadata/frames.bin` (`PDFR`), `metadata/dress_decisions.bin` (`PDDD`) | `PAPERDOLL_EC_METADATA_VERSION` = 1 |
 | `world_lights.uddp` | slot manifest (`WLSL`) | `WORLD_LIGHTS_METADATA_VERSION` = 1 |
 | `tex_aux_ec.uddp` | `metadata/slots.bin` (`AXSL`), for the whole package | `TEX_AUX_EC_METADATA_VERSION` = 1 |
@@ -407,6 +408,14 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 - `classic_stored_direction` maps the 8 directions to the 5 stored ones plus mirroring (ClassicUO `GetAnimDirection`; the client's tables at 0x007087dc and 0x007087fc agree).
 
 Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges. This is an on-disk package invariant, not a runtime repair step.
+
+### 3.1 Measured Strides
+
+Both packages may hold `metadata/strides.bin` (`MOST`, `MOBILE_STRIDES_VERSION` = 1, stored uncompressed): how far a body's planted feet travel in one cycle of its walk and run clips, which Dynamapper paces those cycles by ([mobile_animation_motion.md](../agent_notes/mobile_animation_motion.md#walk-pace)). Without the entry the package has no strides and every clip keeps the clients' timing. After the header comes `u32 count`, then the records (30 bytes) sorted by body and action:
+
+`u32 body_id, u16 action_id, u64 clip_hash, f32 stride_tiles, f32 facing_tiles[3]`
+
+`facing_tiles` are the strides measured on the facings south, south-west and west (server directions 4, 5, 6), `stride_tiles` their median; NaN where nothing measured, and a NaN `stride_tiles` records a clip measured without a usable stride. `clip_hash` (`udd_assets::animation::mobile_strides::stride_clip_hash`) is the XXH64, seed 0, of those three clips as the reader gives them (empty and skipped frames dropped), fed little-endian: per facing a `u8` 0 when it has no frames, else `u8` 1, `u8 mirrored`, `u32 frame_count` and per frame `u16 width, u16 height, i32 anchor_x, i32 anchor_y` and its straight-alpha RGBA. A stride applies only while the clip hashes the same, so a repack keeps those whose frames did not change and drops the rest. Dynamapper's `measure-strides` writes the entry, `udd-cli tool strides` exports, imports and checks it, and both replace it by copying the package's other entries as stored.
 
 ---
 
