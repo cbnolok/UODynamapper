@@ -1,4 +1,5 @@
-//! Stable ties for instance batches whose mesh positions are placeholder corners.
+//! Stable ties for instance batches whose mesh positions are placeholder corners, and for the client light sprites,
+//! which blend over one another.
 //!
 //! Also the walk of a transparent phase's batches (`drawn_batches`) for the passes that redraw its items outside
 //! Bevy's own phase rendering: the light scene, the deferred light sprites and the static pixel query.
@@ -20,14 +21,28 @@ pub(crate) struct StaticTransparentBatchOrder {
     pub kind: u8,
 }
 
+/// A client light sprite's place in its scan (`client_light_sprites`): its map block, (gy, gx), then its place among
+/// the block's sprites. Where their depths tie the sprites draw in this order, whatever views the launch visited
+/// before; it stays as long as the sprite's block holds the same sprites, so a kept sprite keeps its own.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
+pub(crate) struct ClientLightSpriteOrder {
+    pub block: (u32, u32),
+    pub index: u32,
+}
+
+/// The order of tied items: the others first, as they came, then the light sprites in their scan order, then the
+/// static batches by their key.
 pub(super) fn stabilize_equal_depth_batches(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     batches: Query<(&MainEntity, &StaticTransparentBatchOrder)>,
+    light_sprites: Query<&ClientLightSpriteOrder>,
 ) {
     let orders: HashMap<_, _> = batches.iter().map(|(entity, order)| (*entity,
         (order.kind, order.key.map_id, order.key.gy, order.key.gx, order.key.scale))).collect();
     for phase in phases.values_mut() {
-        let key = |item: &Transparent3d| (FloatOrd(item.distance), orders.get(&item.entity.1).copied());
+        let key = |item: &Transparent3d| (FloatOrd(item.distance), orders.get(&item.entity.1).copied(),
+            light_sprites.get(item.entity.0).ok().copied());
         // Retained phases are normally already canonical. Only a changed tie
         // group needs another sort after Bevy's distance/material-bias ordering.
         if !phase.items.values().map(key).is_sorted() {

@@ -39,6 +39,7 @@ use crate::render::statics::static_placement::{
 use crate::render::statics::static_source::{classic_static_visual_kind, StaticArtSourceState, StaticVisualKind};
 use crate::render::statics::statics_collect::static_land_z;
 use crate::render::statics::static_batches::StaticChunkBatchKey;
+use crate::render::statics::transparent_order::ClientLightSpriteOrder;
 use crate::render::view::camera::PlayerCamera;
 use crate::render::uniform_state::UniformState;
 use crate::settings::{ClientTextureSource, Settings};
@@ -156,16 +157,38 @@ pub struct ClientLightSpriteInstance {
     pub cave_outside: bool,
 }
 
+/// What `sys_collect_client_light_sprites` collected each map block's sprites from, besides the resources it watches
+/// for changes: whether it centred the sprites on their items, the rule, z-view cut and multi parts it hid covered
+/// lights by (`light_cover`), the caves drawn over the map (`CavesRes::revision`), the art source whose tile data it
+/// read (`TileMetaPackageRes::for_art`) and the graphics the statics are routed to. When it changes, or one of those
+/// resources, every block is scanned again. The land z the covers count from is the map package's (`static_land_z`),
+/// which does not change as the map blocks load or are evicted.
+#[derive(Clone, PartialEq)]
+struct ClientLightSpriteScanKey {
+    map_id: u32,
+    centre_on_items: bool,
+    light_cover: LightCoverRule,
+    z_cut: ZViewCut,
+    show_hidden_multi_parts: bool,
+    caves_revision: u64,
+    art_source: Option<ClientTextureSource>,
+    /// `StaticsStore::item_routes_revision`.
+    item_routes_revision: u64,
+    /// Whether the Classic art (`tex_art_cc.uddp`) and the multi definitions the scan reads are loaded: one leaving
+    /// is no change of the other.
+    packages_present: [bool; 2],
+}
+
 /// The light sprites of the statics in and around the visible chunks.
 #[derive(Resource, Default)]
 pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
-    /// What the last scan covered, whether it centred the sprites on their items, and the rule, z-view cut and multi
-    /// parts it hid covered lights by (`light_cover`), the caves drawn over the map (`CavesRes::revision`), and the art
-    /// source whose tile data it read (`TileMetaPackageRes::for_art`); the scan reruns only when it changes. The land z the covers count from is the map package's (`static_land_z`), which
-    /// does not change as the map blocks load or are evicted.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, ZViewCut, bool, u64,
-        Option<ClientTextureSource>)>,
+    /// What the last scan covered and collected its sprites from; the scan reruns only when it changes.
+    last_scan: Option<(ClientLightSpriteScanKey, Vec<StaticChunkBatchKey>)>,
+    /// The sprites of each map block the last scan covered, by (gy, gx), in scan order, for `last_scan`'s scan key: as
+    /// the view moves, a scan reads only the blocks it has not read (`assemble_block_sprites`). Changing them leaves
+    /// `instances` unchanged for change detection.
+    blocks: HashMap<(u32, u32), Vec<ClientLightSpriteInstance>>,
 }
 
 impl RenderClientLightSprites {
@@ -192,6 +215,12 @@ pub struct ClientLightSpriteCache {
     materials_by_entry: HashMap<u32, Option<Handle<LightClipMaterial>>>,
     /// Each light texture's glow colour, `None` once the texture failed to load.
     glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
+    /// Each light texture read for its glow colour, until its material takes it: the texture is read once. Only a
+    /// texture with a glow colour draws a sprite and needs a material.
+    light_texture_by_entry: HashMap<u32, LightTexture>,
+    /// Counts the times the packages or the item light scales changed and the cache forgot what it read from them
+    /// (`forget_sources`): the sprites drawn with the forgotten materials are spawned again.
+    sources_revision: u64,
     /// Each lit item's Classic art (`cache_client_light_sprite_art`), `None` for an item without one.
     art_by_graphic: HashMap<u16, Option<ClientLightSpriteArt>>,
     /// `art_by_graphic` for every lit item, read by a background job (`warm_client_light_sprite_art`).
@@ -202,8 +231,36 @@ pub struct ClientLightSpriteCache {
     warned_no_package: bool,
 }
 
+impl ClientLightSpriteCache {
+    /// Forgets what was read from the packages and the item light scales, which changed: the light textures, their
+    /// glow colours and materials, the lit items' art and the scan reach.
+    fn forget_sources(&mut self) {
+        *self = Self { mesh: self.mesh.take(), sources_revision: self.sources_revision + 1, ..Self::default() };
+    }
+}
+
+/// A light texture's size and RGBA8888 texels, as `tex_aux_ec.uddp` gives them.
+type LightTexture = (u16, u16, Vec<u8>);
+
+/// Reads the light texture `entry` from `tex_aux_ec.uddp`. `None`, with a warning, when it cannot.
+fn load_light_texture(tex_aux: &TexAuxEcPackageRes, entry: u32) -> Option<LightTexture> {
+    tex_aux
+        .0
+        .load_terrain_texture_rgba(entry)
+        .inspect_err(|error| log::warn!("Cannot read light texture {entry} from tex_aux_ec.uddp: {error:#}"))
+        .ok()
+}
+
 #[derive(Component)]
 pub struct ClientLightSpriteEntity;
+
+/// What a light sprite entity draws: its sprite as collected and its place in the scan. The sync updates an entity
+/// whose sprite changed and leaves the others as they are (`plan_client_light_sprite_sync`).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct ClientLightSpriteDrawn {
+    sprite: ClientLightSpriteInstance,
+    order: ClientLightSpriteOrder,
+}
 
 /// The local bounds of a light sprite around the static's base point, along the billboard's right (x) and world Y
 /// (y): the clients' sprite window of the `width` x `height` light texture at the light's scale, then its offsets.
@@ -695,6 +752,16 @@ fn client_light_sprite_reach_blocks(
     (reach * light_scales.largest() / MAP_STORAGE_BLOCK_TILE_DIM as f32).ceil() as u32
 }
 
+/// The sprites of the map blocks `blocks`, in their order, from the sprites `cached` holds for each block it has
+/// read, which keeps only those of `blocks`. A block it has not read (one the statics store could not read) gives none.
+fn assemble_block_sprites(
+    cached: &mut HashMap<(u32, u32), Vec<ClientLightSpriteInstance>>,
+    blocks: &BTreeSet<(u32, u32)>,
+) -> Vec<ClientLightSpriteInstance> {
+    cached.retain(|block, _| blocks.contains(block));
+    blocks.iter().filter_map(|block| cached.get(block)).flatten().copied().collect()
+}
+
 pub fn sys_collect_client_light_sprites(
     statics_res: Res<StaticsStoreRes>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
@@ -711,12 +778,29 @@ pub fn sys_collect_client_light_sprites(
     mut cache: ResMut<ClientLightSpriteCache>,
     mut output: ResMut<RenderClientLightSprites>,
 ) {
+    // The light textures, the lit items' art and the scan reach are read from the packages and the item light scales.
+    // Not the map planes' change: land drawing changes their loaded blocks, while the scan reads the land z from the
+    // map package (`PackageLand`), whatever blocks are loaded.
+    let changed = |resource: Option<bool>| resource.unwrap_or(false);
+    let sources_changed = changed(tilemeta_res.as_ref().map(|res| res.is_changed()))
+        || changed(tex_aux_res.as_ref().map(|res| res.is_changed()))
+        || changed(tex_art_cc_res.as_ref().map(|res| res.is_changed()))
+        || light_scales.is_changed();
+    if sources_changed {
+        cache.forget_sources();
+    }
+    let resources_changed = sources_changed
+        || statics_res.is_changed()
+        || changed(multis.0.as_ref().map(|res| res.is_changed()))
+        || multis.1.is_changed();
+
     let drawn = settings.world_rendering.enable_static_lights
         && StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer;
     let (Some(tilemeta_res), true) = (tilemeta_res, drawn) else {
         if !output.instances.is_empty() || output.last_scan.is_some() {
             output.instances.clear();
             output.last_scan = None;
+            output.blocks.clear();
         }
         return;
     };
@@ -742,20 +826,34 @@ pub fn sys_collect_client_light_sprites(
     let (z_view, caves) = view_cuts;
     let z_cut = z_view.0;
     let show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
-    if output.last_scan.as_ref().is_some_and(
-        |(last_map, last_keys, last_centred, last_cover, last_cut, last_hidden, last_caves, last_art)| {
-            *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
-                && *last_cover == light_cover && *last_cut == z_cut && *last_hidden == show_hidden_multi_parts
-                && *last_caves == caves.revision() && *last_art == art_source.active_source
-        },
-    ) {
-        return;
-    }
-
     let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|store| store.as_ref()) else {
         return;
     };
     let mut statics_store = statics_store.lock();
+    let scan = (
+        ClientLightSpriteScanKey {
+            map_id,
+            centre_on_items,
+            light_cover,
+            z_cut,
+            show_hidden_multi_parts,
+            caves_revision: caves.revision(),
+            art_source: art_source.active_source,
+            item_routes_revision: statics_store.item_routes_revision(),
+            packages_present: [tex_art_cc_res.is_some(), multis.0.is_some()],
+        },
+        visible_chunk_keys,
+    );
+    if !resources_changed && output.last_scan.as_ref() == Some(&scan) {
+        return;
+    }
+    // The blocks' sprites and the scan key change apart from the sprites, which the sync and the static lights follow.
+    let state = output.bypass_change_detection();
+    if resources_changed || state.last_scan.as_ref().is_none_or(|(key, _)| *key != scan.0) {
+        state.blocks.clear();
+    }
+
+    let cache = &mut *cache;
     let reach_blocks = *cache
         .reach_blocks
         .get_or_insert_with(|| client_light_sprite_reach_blocks(&tilemeta_res, &tex_aux, &light_scales));
@@ -763,7 +861,7 @@ pub fn sys_collect_client_light_sprites(
     let tilemeta = tilemeta_res.for_art(art_source.active_source).as_ref();
 
     let mut blocks = BTreeSet::new();
-    for chunk_key in &visible_chunk_keys {
+    for chunk_key in &scan.1 {
         let start_gx = (chunk_key.gx * CHUNK_STORAGE_BLOCKS_DIM).saturating_sub(reach_blocks);
         let start_gy = (chunk_key.gy * CHUNK_STORAGE_BLOCKS_DIM).saturating_sub(reach_blocks);
         let end_gx = (chunk_key.gx + chunk_key.scale) * CHUNK_STORAGE_BLOCKS_DIM + reach_blocks;
@@ -774,152 +872,204 @@ pub fn sys_collect_client_light_sprites(
             }
         }
     }
-
-    let block_range = |coordinate: fn(&(u32, u32)) -> u32| {
-        let start = blocks.iter().map(coordinate).min().unwrap_or(0);
-        start..blocks.iter().map(coordinate).max().map_or(start, |end| end + 1)
-    };
-    let (blocks_x, blocks_y) = (block_range(|&(_, gx)| gx), block_range(|&(gy, _)| gy));
-    let multi_parts = MultiCoverParts::read(
-        tilemeta,
-        multis.0.as_deref(),
-        &multis.1,
-        show_hidden_multi_parts,
-        map_id,
-        blocks_x,
-        blocks_y,
-    );
+    // A sprite follows from its block's statics, the cover cells next to it and the scan key alone, so the blocks
+    // read before keep theirs.
+    let unread = blocks.iter().copied().filter(|block| !state.blocks.contains_key(block)).collect::<Vec<_>>();
 
     if centre_on_items {
-        warm_client_light_sprite_art(&mut cache, tex_art_cc_res.as_deref().map(|package| &package.0),
+        warm_client_light_sprite_art(cache, tex_art_cc_res.as_deref().map(|package| &package.0),
             tilemeta_res.for_art(art_source.active_source), art_source.active_source);
-        let mut lit_graphics = BTreeSet::new();
-        for &(gy, gx) in &blocks {
-            if let Ok(tiles) = statics_store.block_tiles(gx, gy) {
-                lit_graphics.extend(
-                    tiles.iter().map(|tile| tile.graphic).filter(|graphic| {
-                        tilemeta.item_light(u32::from(*graphic)).is_some()
-                    }),
-                );
-            }
-        }
-        cache_client_light_sprite_art(&mut cache.art_by_graphic,
-            tex_art_cc_res.as_deref().map(|package| package.0.as_ref()), tilemeta, lit_graphics);
     }
-
-    let mut instances = Vec::new();
-    let mut seen = HashSet::new();
-    let land = RefCell::new(PackageLand::default());
-    for (gy, gx) in blocks {
-        let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
-            continue;
+    if !unread.is_empty() {
+        let block_range = |coordinate: fn(&(u32, u32)) -> u32| {
+            let start = unread.iter().map(coordinate).min().unwrap_or(0);
+            start..unread.iter().map(coordinate).max().map_or(start, |end| end + 1)
         };
-        // Copied out of the store, which `static_light_is_hidden` reads again for the cover cells.
-        let lit_tiles = tiles
-            .iter()
-            .copied()
-            .filter(|tile| tilemeta.item_light(u32::from(tile.graphic)).is_some())
-            .collect::<Vec<_>>();
-        for tile in lit_tiles {
-            let Some(light) = tilemeta.item_light(u32::from(tile.graphic)) else {
-                continue;
-            };
-            if !has_drawable_scale(light) {
-                continue;
-            }
-            let entry = light.light_texture_entry;
-            let Some(slot) = tex_aux.0.slot_for_texture_id(tex_aux_ec_terrain_texture_key(entry)) else {
-                if cache.warned_entries.insert(entry) {
-                    let graphic = tile.graphic;
-                    log::warn!("tex_aux_ec.uddp has no light texture {entry} (item {graphic}): repack it");
+        let (blocks_x, blocks_y) = (block_range(|&(_, gx)| gx), block_range(|&(gy, _)| gy));
+        let multi_parts = MultiCoverParts::read(
+            tilemeta,
+            multis.0.as_deref(),
+            &multis.1,
+            show_hidden_multi_parts,
+            map_id,
+            blocks_x,
+            blocks_y,
+        );
+
+        if centre_on_items {
+            let mut lit_graphics = BTreeSet::new();
+            for &(gy, gx) in &unread {
+                if let Ok(tiles) = statics_store.block_tiles(gx, gy) {
+                    lit_graphics.extend(
+                        tiles.iter().map(|tile| tile.graphic).filter(|graphic| {
+                            tilemeta.item_light(u32::from(*graphic)).is_some()
+                        }),
+                    );
                 }
-                continue;
-            };
-            let key = ClientLightSpriteKey {
-                map_id,
-                tile_x: gx * MAP_STORAGE_BLOCK_TILE_DIM + tile.x_offset() as u32,
-                tile_y: gy * MAP_STORAGE_BLOCK_TILE_DIM + tile.y_offset() as u32,
-                z: tile.z,
-                graphic: tile.graphic,
-            };
-            let land_z = |x: u32, y: u32| static_land_z(&land, map_planes.as_deref(), map_id, (x as i32, y as i32));
-            if !seen.insert(key) {
-                continue;
             }
-            // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the sprite is
-            // not darkened itself, the light buffer multiplying the scene, darkened already, but its colour fades as
-            // the scene's (`cave_outside`).
-            let flags_height = tilemeta.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
-            let Some(cave_light) = caves.light_view(key.tile_x, key.tile_y, key.z, flags_height.0, flags_height.1,
-                || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z_at(key.tile_x as i32, key.tile_y as i32))
-            else {
+            cache_client_light_sprite_art(&mut cache.art_by_graphic,
+                tex_art_cc_res.as_deref().map(|package| package.0.as_ref()), tilemeta, lit_graphics);
+        }
+
+        let mut seen = HashSet::new();
+        let land = RefCell::new(PackageLand::default());
+        for (gy, gx) in unread {
+            let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
                 continue;
             };
-            let light_max_z = cave_light.max_z;
-            if static_light_is_hidden(
-                &mut statics_store,
-                tilemeta,
-                &multi_parts,
-                light_cover,
-                &land_z,
-                key.tile_x,
-                key.tile_y,
-                key.z,
-                light_max_z,
-                z_cut.roof_layer_at(key.tile_x as i32, key.tile_y as i32),
-            ) {
-                continue;
+            // Copied out of the store, which `static_light_is_hidden` reads again for the cover cells.
+            let lit_tiles = tiles
+                .iter()
+                .copied()
+                .filter(|tile| tilemeta.item_light(u32::from(tile.graphic)).is_some())
+                .collect::<Vec<_>>();
+            let block_sprites = state.blocks.entry((gy, gx)).or_default();
+            for tile in lit_tiles {
+                let Some(light) = tilemeta.item_light(u32::from(tile.graphic)) else {
+                    continue;
+                };
+                if !has_drawable_scale(light) {
+                    continue;
+                }
+                let entry = light.light_texture_entry;
+                let Some(slot) = tex_aux.0.slot_for_texture_id(tex_aux_ec_terrain_texture_key(entry)) else {
+                    if cache.warned_entries.insert(entry) {
+                        let graphic = tile.graphic;
+                        log::warn!("tex_aux_ec.uddp has no light texture {entry} (item {graphic}): repack it");
+                    }
+                    continue;
+                };
+                let key = ClientLightSpriteKey {
+                    map_id,
+                    tile_x: gx * MAP_STORAGE_BLOCK_TILE_DIM + tile.x_offset() as u32,
+                    tile_y: gy * MAP_STORAGE_BLOCK_TILE_DIM + tile.y_offset() as u32,
+                    z: tile.z,
+                    graphic: tile.graphic,
+                };
+                let land_z = |x: u32, y: u32| static_land_z(&land, map_planes.as_deref(), map_id, (x as i32, y as i32));
+                if !seen.insert(key) {
+                    continue;
+                }
+                // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the sprite
+                // is not darkened itself, the light buffer multiplying the scene, darkened already, but its colour
+                // fades as the scene's (`cave_outside`).
+                let flags_height =
+                    tilemeta.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
+                let Some(cave_light) = caves.light_view(key.tile_x, key.tile_y, key.z, flags_height.0, flags_height.1,
+                    || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z_at(key.tile_x as i32, key.tile_y as i32))
+                else {
+                    continue;
+                };
+                let light_max_z = cave_light.max_z;
+                if static_light_is_hidden(
+                    &mut statics_store,
+                    tilemeta,
+                    &multi_parts,
+                    light_cover,
+                    &land_z,
+                    key.tile_x,
+                    key.tile_y,
+                    key.z,
+                    light_max_z,
+                    z_cut.roof_layer_at(key.tile_x as i32, key.tile_y as i32),
+                ) {
+                    continue;
+                }
+                let ceiling = (light_cover == LightCoverRule::Uod)
+                    .then(|| {
+                        static_light_ceiling_z(
+                            &mut statics_store,
+                            tilemeta,
+                            &multi_parts,
+                            &land_z,
+                            key.tile_x,
+                            key.tile_y,
+                            key.z,
+                            light_max_z,
+                            z_cut.roof_layer_at(key.tile_x as i32, key.tile_y as i32),
+                        )
+                    })
+                    .flatten();
+                let Some(glow_rgb) = *cache.glow_rgb_by_entry.entry(entry).or_insert_with(|| {
+                    let texture = load_light_texture(&tex_aux, entry)?;
+                    let glow_rgb = light_texture_glow_rgb(&texture.2)?;
+                    cache.light_texture_by_entry.insert(entry, texture);
+                    Some(glow_rgb)
+                }) else {
+                    continue;
+                };
+                let bounds = client_light_sprite_bounds(light, u32::from(slot.width), u32::from(slot.height));
+                let (center, size) =
+                    client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
+                let size = size * light_scales.scale(key.graphic);
+                let center = if centre_on_items {
+                    let art = cache.art_by_graphic.get(&key.graphic).copied().flatten();
+                    client_light_sprite_centred(center, size, key, entry, art)
+                } else {
+                    center
+                };
+                block_sprites.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb,
+                    ceiling, cave_outside: cave_light.outside });
             }
-            let ceiling = (light_cover == LightCoverRule::Uod)
-                .then(|| {
-                    static_light_ceiling_z(
-                        &mut statics_store,
-                        tilemeta,
-                        &multi_parts,
-                        &land_z,
-                        key.tile_x,
-                        key.tile_y,
-                        key.z,
-                        light_max_z,
-                        z_cut.roof_layer_at(key.tile_x as i32, key.tile_y as i32),
-                    )
-                })
-                .flatten();
-            let Some(glow_rgb) = *cache.glow_rgb_by_entry.entry(entry).or_insert_with(|| {
-                let (_, _, rgba) = tex_aux
-                    .0
-                    .load_terrain_texture_rgba(entry)
-                    .inspect_err(|error| log::warn!("Cannot read light texture {entry} from tex_aux_ec.uddp: {error:#}"))
-                    .ok()?;
-                light_texture_glow_rgb(&rgba)
-            }) else {
-                continue;
-            };
-            let bounds = client_light_sprite_bounds(light, u32::from(slot.width), u32::from(slot.height));
-            let (center, size) =
-                client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
-            let size = size * light_scales.scale(key.graphic);
-            let center = if centre_on_items {
-                let art = cache.art_by_graphic.get(&key.graphic).copied().flatten();
-                client_light_sprite_centred(center, size, key, entry, art)
-            } else {
-                center
-            };
-            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb, ceiling,
-                cave_outside: cave_light.outside });
         }
     }
 
-    if instances.len() != output.instances.len() {
-        console_logger::one(
-            LogSev::Debug,
-            LogAbout::RenderWorldArt,
-            &format!("client light sprites: instances={} reach_blocks={reach_blocks}", instances.len()),
-        );
+    let instances = assemble_block_sprites(&mut state.blocks, &blocks);
+    state.last_scan = Some(scan);
+    if instances != state.instances {
+        if instances.len() != state.instances.len() {
+            console_logger::one(
+                LogSev::Debug,
+                LogAbout::RenderWorldArt,
+                &format!("client light sprites: instances={} reach_blocks={reach_blocks}", instances.len()),
+            );
+        }
+        output.instances = instances;
     }
-    output.instances = instances;
-    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, z_cut, show_hidden_multi_parts,
-        caves.revision(), art_source.active_source));
+}
+
+/// Each sprite's place in the scan (`ClientLightSpriteOrder`): its map block, then its place among the block's
+/// sprites, which the scan lists block by block.
+fn client_light_sprite_orders(instances: &[ClientLightSpriteInstance]) -> Vec<ClientLightSpriteOrder> {
+    let mut orders = Vec::<ClientLightSpriteOrder>::with_capacity(instances.len());
+    for instance in instances {
+        let block = (instance.key.tile_y / MAP_STORAGE_BLOCK_TILE_DIM, instance.key.tile_x / MAP_STORAGE_BLOCK_TILE_DIM);
+        let index = orders.last().filter(|previous| previous.block == block).map_or(0, |previous| previous.index + 1);
+        orders.push(ClientLightSpriteOrder { block, index });
+    }
+    orders
+}
+
+/// How the sprite entities follow the sprites: the sprites to spawn and the entities to update, by their index in
+/// `wanted`, and the entities to despawn. An entity stays for the sprite of its key, and is updated only when the
+/// sprite or its place in the scan changed.
+#[derive(Debug, Default, PartialEq)]
+struct ClientLightSpriteSync {
+    spawn: Vec<usize>,
+    update: Vec<(Entity, usize)>,
+    despawn: Vec<Entity>,
+}
+
+fn plan_client_light_sprite_sync(
+    existing: impl IntoIterator<Item = (Entity, ClientLightSpriteDrawn)>,
+    wanted: &[ClientLightSpriteDrawn],
+) -> ClientLightSpriteSync {
+    let mut plan = ClientLightSpriteSync::default();
+    let mut existing_by_key = HashMap::new();
+    for (entity, drawn) in existing {
+        if let Some((duplicate, _)) = existing_by_key.insert(drawn.sprite.key, (entity, drawn)) {
+            plan.despawn.push(duplicate);
+        }
+    }
+    for (index, drawn) in wanted.iter().enumerate() {
+        match existing_by_key.remove(&drawn.sprite.key) {
+            Some((_, old)) if old == *drawn => {}
+            Some((entity, _)) => plan.update.push((entity, index)),
+            None => plan.spawn.push(index),
+        }
+    }
+    plan.despawn.extend(existing_by_key.into_values().map(|(entity, _)| entity));
+    plan
 }
 
 pub fn sys_sync_client_light_sprites(
@@ -932,8 +1082,8 @@ pub fn sys_sync_client_light_sprites(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LightClipMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut last_clip_mode: Local<Option<LightClipMode>>,
-    existing_q: Query<Entity, With<ClientLightSpriteEntity>>,
+    (mut last_clip_mode, mut last_sources_revision): (Local<Option<LightClipMode>>, Local<Option<u64>>),
+    existing_q: Query<(Entity, &ClientLightSpriteDrawn), With<ClientLightSpriteEntity>>,
 ) {
     let Some(light_scene) = light_scene else {
         return;
@@ -949,45 +1099,72 @@ pub fn sys_sync_client_light_sprites(
         set_light_clip_mode(&mut materials, cache.materials_by_entry.values().flatten(), clip_mode);
         *last_clip_mode = Some(clip_mode);
     }
-    if !sprites.is_changed() {
+    // The cache forgot the materials the sprites were drawn with: they are spawned anew.
+    let sources_changed = *last_sources_revision != Some(cache.sources_revision);
+    if !sprites.is_changed() && !sources_changed {
         return;
     }
-    // Every sprite is spawned anew, in scan order, whenever the set changes. The sprites blend over one another, so
-    // their order shows, and the light buffer draws them in its transparent phase, which Bevy keeps from frame to
-    // frame and sorts by depth with a stable sort: sprites at one depth (many, under the tilted camera) draw in the
-    // order they entered it. Kept sprites kept their places from the views before, so the glows of a view depended
-    // on the views the launch had visited (the keep's floors, the Britain lamp posts).
-    for entity in &existing_q {
-        commands.entity(entity).despawn();
+    *last_sources_revision = Some(cache.sources_revision);
+    let existing = existing_q.iter().map(|(entity, drawn)| (entity, *drawn)).filter(|_| !sources_changed);
+    if tex_aux_res.is_none() || sources_changed {
+        for (entity, _) in &existing_q {
+            commands.entity(entity).despawn();
+        }
     }
-    let Some(tex_aux) = tex_aux_res else {
+    if tex_aux_res.is_none() {
         return;
-    };
+    }
 
+    // Kept sprites keep their entities. The sprites blend over one another, so their order shows: the light buffer
+    // draws them in its transparent phase, which Bevy keeps from frame to frame and sorts by depth with a stable sort,
+    // and sprites at one depth (many, under the tilted camera) would draw in the order they entered it, which follows
+    // the views the launch visited before (the keep's floors, the Britain lamp posts). They draw in their scan order
+    // instead, which `ClientLightSpriteOrder` carries (`transparent_order::stabilize_equal_depth_batches`).
     let cache = &mut *cache;
     let mesh = cache.mesh.get_or_insert_with(|| meshes.add(build_client_light_sprite_mesh())).clone();
-    let rotation = client_light_sprite_rotation();
-    for instance in &sprites.instances {
+    let mut wanted = Vec::with_capacity(sprites.instances.len());
+    let mut wanted_materials = Vec::with_capacity(sprites.instances.len());
+    for (instance, order) in sprites.instances.iter().zip(client_light_sprite_orders(&sprites.instances)) {
         let material = cache
             .materials_by_entry
             .entry(instance.texture_entry)
             .or_insert_with(|| {
-                let base = client_light_sprite_material(&tex_aux, instance.texture_entry, &mut images)?;
+                let texture = cache.light_texture_by_entry.remove(&instance.texture_entry);
+                let base = client_light_sprite_material(instance.texture_entry, texture, &mut images)?;
                 Some(materials.add(light_clip_material(base, &light_scene, clip_mode)))
             });
         let Some(material) = material.clone() else {
             continue;
         };
+        wanted.push(ClientLightSpriteDrawn { sprite: *instance, order });
+        wanted_materials.push(material);
+    }
+    let plan = plan_client_light_sprite_sync(existing, &wanted);
+    let rotation = client_light_sprite_rotation();
+    let placed = |drawn: &ClientLightSpriteDrawn, material: &Handle<LightClipMaterial>| {
+        let instance = &drawn.sprite;
+        (
+            MeshMaterial3d(material.clone()),
+            Transform::from_translation(instance.center).with_rotation(rotation).with_scale(instance.size.extend(1.0)),
+            client_light_sprite_tag(instance),
+            *drawn,
+            drawn.order,
+        )
+    };
+    for entity in plan.despawn {
+        commands.entity(entity).despawn();
+    }
+    for (entity, index) in plan.update {
+        commands.entity(entity).insert(placed(&wanted[index], &wanted_materials[index]));
+    }
+    for index in plan.spawn {
+        let drawn = &wanted[index];
         commands.spawn((
             Mesh3d(mesh.clone()),
-            MeshMaterial3d(material),
-            Transform::from_translation(instance.center)
-                .with_rotation(rotation)
-                .with_scale(instance.size.extend(1.0)),
-            client_light_sprite_tag(instance),
+            placed(drawn, &wanted_materials[index]),
             RenderLayers::layer(LIGHT_BUFFER_LAYER),
             NoFrustumCulling,
-            instance.key,
+            drawn.sprite.key,
             ClientLightSpriteEntity,
         ));
     }
@@ -995,17 +1172,17 @@ pub fn sys_sync_client_light_sprites(
 
 /// The light texture as the light buffer takes it: its 8-bit values unchanged (not sRGB), so the buffer blends them
 /// as the client blends its sprites (SRCALPHA, INVSRCALPHA) and the composite reads them back. Linear filtering and
-/// clamped addressing, no mips, as the client's light map.
+/// clamped addressing, no mips, as the client's light map. `texture` is the texture the scan read for its glow colour
+/// (`ClientLightSpriteCache::light_texture_by_entry`): every sprite's texture has one.
 fn client_light_sprite_material(
-    tex_aux: &TexAuxEcPackageRes,
     entry: u32,
+    texture: Option<LightTexture>,
     images: &mut Assets<Image>,
 ) -> Option<StandardMaterial> {
-    let (width, height, rgba) = tex_aux
-        .0
-        .load_terrain_texture_rgba(entry)
-        .inspect_err(|error| log::warn!("Cannot read light texture {entry} from tex_aux_ec.uddp: {error:#}"))
-        .ok()?;
+    let Some((width, height, rgba)) = texture else {
+        log::warn!("Light texture {entry} was not read for its glow colour: its sprites are not drawn");
+        return None;
+    };
     let mut image = Image::new(
         Extent3d { width: u32::from(width), height: u32::from(height), depth_or_array_layers: 1 },
         TextureDimension::D2,
@@ -1491,5 +1668,87 @@ mod tests {
     fn the_reach_is_the_largest_bound() {
         let bounds = client_light_sprite_bounds(&LANTERN_LIGHT, LIGHT_GENERIC_SIDE, LIGHT_GENERIC_SIDE);
         assert!((client_light_sprite_reach(bounds) - 6.428).abs() < EPSILON);
+    }
+
+    /// A sprite of the item `graphic` on the cell (`tile_x`, `tile_y`), its quad's centre moved by `shift`.
+    fn sprite(tile_x: u32, tile_y: u32, graphic: u16, shift: f32) -> ClientLightSpriteInstance {
+        ClientLightSpriteInstance {
+            key: ClientLightSpriteKey { map_id: 1, tile_x, tile_y, z: 0, graphic },
+            texture_entry: LANTERN_LIGHT.light_texture_entry,
+            center: Vec3::splat(shift),
+            size: Vec2::ONE,
+            glow_rgb: [1.0; 3],
+            ceiling: None,
+            cave_outside: false,
+        }
+    }
+
+    /// The sprites come block by block in (gy, gx) order, as a scan of all the blocks lists them, and the blocks out
+    /// of the view are dropped; a block the store could not read gives none.
+    #[test]
+    fn the_read_blocks_give_the_sprites_in_scan_order() {
+        let block = MAP_STORAGE_BLOCK_TILE_DIM;
+        let mut cached = HashMap::from([
+            ((1, 0), vec![sprite(0, block, 10, 0.0), sprite(1, block, 11, 0.0)]),
+            ((0, 1), vec![sprite(block, 0, 12, 0.0)]),
+            ((0, 0), vec![sprite(0, 0, 13, 0.0)]),
+            ((5, 5), vec![sprite(5 * block, 5 * block, 14, 0.0)]),
+        ]);
+        let blocks = BTreeSet::from([(0, 0), (0, 1), (1, 0), (2, 2)]);
+        let graphics = assemble_block_sprites(&mut cached, &blocks).iter().map(|sprite| sprite.key.graphic)
+            .collect::<Vec<_>>();
+        assert_eq!(graphics, [13, 12, 10, 11]);
+        assert_eq!(cached.keys().copied().collect::<BTreeSet<_>>(), BTreeSet::from([(0, 0), (0, 1), (1, 0)]));
+    }
+
+    /// Each sprite's place is its block, then its place among the block's sprites: the scan order, which a sprite
+    /// keeps while its block holds the same sprites, whatever the blocks before it.
+    #[test]
+    fn a_sprites_place_is_its_block_then_its_place_in_the_block() {
+        let block = MAP_STORAGE_BLOCK_TILE_DIM;
+        let sprites = [sprite(3, 2, 1, 0.0), sprite(1, 2, 2, 0.0), sprite(block + 1, 0, 3, 0.0), sprite(0, block, 4, 0.0)];
+        let orders = client_light_sprite_orders(&sprites);
+        let place = |block, index| ClientLightSpriteOrder { block, index };
+        assert_eq!(orders, [place((0, 0), 0), place((0, 0), 1), place((0, 1), 0), place((1, 0), 0)]);
+        assert!(orders.is_sorted());
+        assert_eq!(client_light_sprite_orders(&sprites[2..]), orders[2..]);
+    }
+
+    /// The sync keeps the entities of unchanged sprites, updates those whose sprite or place changed, spawns the new
+    /// sprites and despawns the gone ones and any second entity of one key.
+    #[test]
+    fn the_sync_touches_only_the_changed_sprites() {
+        let drawn = |sprite: ClientLightSpriteInstance, index| {
+            ClientLightSpriteDrawn { sprite, order: ClientLightSpriteOrder { block: (0, 0), index } }
+        };
+        let (kept, moved, renumbered, gone, doubled) =
+            (sprite(1, 1, 1, 0.0), sprite(2, 2, 2, 0.0), sprite(3, 3, 3, 0.0), sprite(4, 4, 4, 0.0), sprite(5, 5, 5, 0.0));
+        let entity = |index| Entity::from_raw_u32(index).expect("a valid entity index");
+        let existing = [
+            (entity(1), drawn(kept, 0)),
+            (entity(2), drawn(moved, 1)),
+            (entity(3), drawn(renumbered, 2)),
+            (entity(4), drawn(gone, 3)),
+            (entity(5), drawn(doubled, 4)),
+            (entity(6), drawn(doubled, 4)),
+        ];
+        let wanted = [
+            drawn(kept, 0),
+            drawn(sprite(2, 2, 2, 1.0), 1),
+            drawn(sprite(6, 6, 6, 0.0), 2),
+            drawn(renumbered, 3),
+            drawn(doubled, 4),
+        ];
+        let mut plan = plan_client_light_sprite_sync(existing, &wanted);
+        plan.despawn.sort_by_key(|entity| entity.index_u32());
+        assert_eq!(plan, ClientLightSpriteSync {
+            spawn: vec![2],
+            update: vec![(entity(2), 1), (entity(3), 3)],
+            despawn: vec![entity(4), entity(5)],
+        });
+        let unchanged = plan_client_light_sprite_sync(wanted.iter().enumerate().map(|(index, drawn)| {
+            (entity(index as u32 + 1), *drawn)
+        }), &wanted);
+        assert_eq!(unchanged, ClientLightSpriteSync::default());
     }
 }

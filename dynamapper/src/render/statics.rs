@@ -53,6 +53,9 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
             transparent_order::StaticTransparentBatchOrder,
         >::default());
+        app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
+            transparent_order::ClientLightSpriteOrder,
+        >::default());
         app.init_resource::<static_lights::StaticLightMaterialCache>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             crate::render::assets::art::SpriteArtPageAtlasHandles,
