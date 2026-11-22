@@ -93,9 +93,10 @@ BC7 RDO device combos (Auto, CPU, GPU) on the BC7 cards: art, land, the
 auxiliary textures and the mobile animations. The encode combo appears with a
 BC7 format, and the RDO combo is beside the RDO settings. The encode device is
 also the BC1 Encode combo on the gump cards packing lossy: their single
-Classic gumps are BC1. Auto encodes the BC1 on the GPU when there is one and
-the BC7 on the CPU; GPU puts both on the GPU, whose BC7 pages come out about as
-small after Zstd, with blocks of their own. Both choices are
+Classic gumps are BC1. Auto encodes both on the GPU when there is one, else on
+the CPU, which also takes over when the GPU fails; GPU puts both on the GPU and
+fails without one. The GPU's BC7 pages come out about as small after Zstd, with
+blocks of their own, two to three times as fast. Both choices are
 shared by every job, Quick Convert included, and each job sets them when it
 starts. They are saved as `bc_encode_device` and `bc7_rdo_device`. An older
 settings file without them loads both as Auto, the CLI's default.

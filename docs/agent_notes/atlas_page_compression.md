@@ -612,13 +612,12 @@ RGBA8888 test packages. Slow, the last profile, was left out: Basic already cost
 **In the packers** (`udd_conv::atlas::bc_encode_device`): `udd-cli pack --bc-encode-device auto|cpu|gpu` chooses
 where the mobile animation (Classic, Enhanced), art, land and aux packers encode their BC7 pages and where the single
 Classic gumps' BC1 (`gumps_cc`, and the Classic colour space gumps of a lossy `gumps_ec`; our BC1 keeps their
-punch-through transparency, below, "GPU block encoding") is encoded. Auto, the default, encodes the BC1 on the GPU when
-a wgpu adapter is there and the BC7 on the CPU (the user, 2026-11-22: the GPU BC7 pages are 1–2.5 % larger after Zstd
-and faster only on some packs, so they wait for an optimized GPU encoder). Optimized (below), the GPU's BC7 packages
-are as small as the CPU's, 0.5 % smaller over the three art and land packs, and the encode 2.3 to 2.9 times as fast,
-though the whole packs take the same time: the candidate for Auto's BC7, which stays on the CPU until the user
-decides. If the GPU fails, Auto warns and the CPU
-encodes the image. `gpu` puts both on the GPU and fails without an adapter. The RDO, when on, runs after the encode on
+punch-through transparency, below, "GPU block encoding") is encoded. Auto, the default, encodes both on the GPU when
+a wgpu adapter is there and on the CPU without one (the user, 2026-11-22). The BC7 first stayed on the CPU, whose pages
+were 1–2.5 % smaller after Zstd; optimized (below), the GPU's whole BC7 packs come out 0.5 % smaller than the CPU's
+over the three art and land packs, the encode 2.3 to 2.9 times as fast, with the CPU's threads free for the rest of
+the pack, whose time stays level (reading the sources and the Zstd 19 weigh more), so Auto's BC7 moved to the GPU.
+If the GPU fails, Auto warns and the CPU encodes the image. `gpu` puts both on the GPU and fails without an adapter. The RDO, when on, runs after the encode on
 its own device (`--bc7-rdo-device`). The other BC7 images (the Enhanced gumps, effects, radar) are not atlas pages and
 stay on the CPU, as the effects' BC1 does. The converter GUI has both choices on its BC7 cards, and the encode device
 as BC1 Encode on the gump cards packing lossy.

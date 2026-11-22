@@ -1512,11 +1512,12 @@ fn draw_control_cell<R>(
 /// The width of a device combo, and of the BC7 Encode cell that holds one.
 const RDO_DEVICE_COMBO_WIDTH: f32 = 62.0;
 const BC7_DEVICE_CELL_WIDTH: f32 = 80.0;
-const BC_ENCODE_DEVICE_TOOLTIP: &str = "Where the BC7 pages are encoded (--bc-encode-device). Auto: the CPU (the BC1 \
-gumps go to the GPU). GPU: the GPU encoder, about the CPU's quality and size after Zstd with blocks of its own, \
-failing the job without one. Shared by every job, the BC1 gumps' too.";
+const BC_ENCODE_DEVICE_TOOLTIP: &str = "Where the BC7 pages are encoded (--bc-encode-device). Auto: the GPU when \
+there is one, else the CPU, which also takes over when the GPU fails. The GPU encoder comes to about the CPU's quality \
+and size after Zstd with blocks of its own, two to three times as fast; GPU fails the job without one. Shared by every \
+job, the BC1 gumps' too.";
 const BC1_ENCODE_DEVICE_TOOLTIP: &str = "Where the single gumps' BC1 is encoded (--bc-encode-device). Auto: the GPU \
-when there is one, else the CPU (the BC7 pages stay on the CPU). The GPU encoder is ten times faster, half a dB below \
+when there is one, else the CPU, as the BC7 pages. The GPU encoder is ten times faster, half a dB below \
 the CPU's colour, with the same one bit of alpha; GPU fails the job without one. Shared by every job, the BC7 pages' \
 too.";
 const BC7_RDO_DEVICE_TOOLTIP: &str = "Where the BC7 RDO runs (--bc7-rdo-device), after the encode. Auto: the GPU when \

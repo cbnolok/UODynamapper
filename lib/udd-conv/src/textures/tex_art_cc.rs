@@ -2,7 +2,7 @@
 //!
 //! Package layout:
 //! - `pages/{page_index}.rgba8888` or `pages/{page_index}.bc7`: atlas page payloads.
-//!   When BC7 compression is enabled each page is block-compressed on the CPU before
+//!   When BC7 compression is enabled each page is block-compressed on the BC encode device before
 //!   being stored in the UDDP container. RGBA pages are stored uncompressed (TODO: compress them with zstd instead).
 //! - `metadata/pages.bin`: page table with atlas dimensions, per-page occupancy, and
 //!   the pixel format used for each page.
