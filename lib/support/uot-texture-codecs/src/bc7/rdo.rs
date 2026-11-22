@@ -22,11 +22,11 @@ use simd::{SIMD_AVX2, SIMD_AVX512, SIMD_SCALAR};
 
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
 /// Bits charged per literal byte when estimating match cost.
-pub(crate) const LITERAL_BITS: f32 = 13.0;
+pub const LITERAL_BITS: f32 = 13.0;
 /// Reduced cost for a match that continues directly from the previous one.
-pub(crate) const MATCH_CONTINUE_BITS: f32 = 1.0;
+pub const MATCH_CONTINUE_BITS: f32 = 1.0;
 /// Reduced cost for a REP0 match (re-using the previous match distance).
-pub(crate) const MATCH_REP0_BITS: f32 = 4.0;
+pub const MATCH_REP0_BITS: f32 = 4.0;
 
 pub(crate) const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
 const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 2048;
@@ -774,52 +774,8 @@ fn reduce_entropy_bc7_body<const COLLECT_STATS: bool, const SIMD: u8>(
 
     let num_blocks = blocks.len();
     let mut total_modified = 0;
-    let mut actual_params = params.clone();
-
-    // 1. Calculate ultrasmooth scales if requested
-    let mut block_mse_scales = if params.use_ultrasmooth_block_handling {
-        Some(compute_block_mse_scales(
-            rgba_blocks,
-            blocks_x,
-            blocks_y,
-            params.debug_output,
-        ))
-    } else {
-        None
-    };
-
-    // 2. Automatic smooth block MSE scale derivation
-    if !params.custom_smooth_block_error_scale {
-        actual_params.smooth_block_max_mse_scale = lerp(15.0, 50.0, (params.lambda / 4.0).min(1.0));
-        if params.debug_output {
-            println!(
-                "Using an automatically computed smooth block error scale of {}",
-                actual_params.smooth_block_max_mse_scale
-            );
-        }
-    }
-
-    // 3. Adjust ultrasmooth scales with lambda and smooth_block_max_mse_scale
-    if let Some(ref mut scales) = block_mse_scales {
-        let lambda_scale = params.lambda.min(3.0);
-        if scales.len() < PARALLEL_RDO_BLOCK_THRESHOLD {
-            for s in scales.iter_mut() {
-                if *s > 0.0 {
-                    *s = actual_params
-                        .smooth_block_max_mse_scale
-                        .max(*s * lambda_scale);
-                }
-            }
-        } else {
-            scales.par_iter_mut().for_each(|s| {
-                if *s > 0.0 {
-                    *s = actual_params
-                        .smooth_block_max_mse_scale
-                        .max(*s * lambda_scale);
-                }
-            });
-        }
-    }
+    let (actual_params, block_mse_scales) =
+        smooth_block_scales(rgba_blocks, blocks_x, blocks_y, params);
 
     // 4. Main loop
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
@@ -1358,6 +1314,90 @@ fn reduce_entropy_bc7_body<const COLLECT_STATS: bool, const SIMD: u8>(
     flush_progress(progress, &mut pending_progress);
 
     total_modified
+}
+
+/// The parameters with the automatic smooth block scale filled in, and the ultrasmooth scales of the blocks (above
+/// zero inside an ultrasmooth region) when `params` asks for them.
+fn smooth_block_scales(
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+) -> (Bc7RdoParams, Option<Vec<f32>>) {
+    let mut actual_params = params.clone();
+
+    // 1. Calculate ultrasmooth scales if requested
+    let mut block_mse_scales = if params.use_ultrasmooth_block_handling {
+        Some(compute_block_mse_scales(
+            rgba_blocks,
+            blocks_x,
+            blocks_y,
+            params.debug_output,
+        ))
+    } else {
+        None
+    };
+
+    // 2. Automatic smooth block MSE scale derivation
+    if !params.custom_smooth_block_error_scale {
+        actual_params.smooth_block_max_mse_scale = lerp(15.0, 50.0, (params.lambda / 4.0).min(1.0));
+        if params.debug_output {
+            println!(
+                "Using an automatically computed smooth block error scale of {}",
+                actual_params.smooth_block_max_mse_scale
+            );
+        }
+    }
+
+    // 3. Adjust ultrasmooth scales with lambda and smooth_block_max_mse_scale
+    if let Some(ref mut scales) = block_mse_scales {
+        let lambda_scale = params.lambda.min(3.0);
+        if scales.len() < PARALLEL_RDO_BLOCK_THRESHOLD {
+            for s in scales.iter_mut() {
+                if *s > 0.0 {
+                    *s = actual_params
+                        .smooth_block_max_mse_scale
+                        .max(*s * lambda_scale);
+                }
+            }
+        } else {
+            scales.par_iter_mut().for_each(|s| {
+                if *s > 0.0 {
+                    *s = actual_params
+                        .smooth_block_max_mse_scale
+                        .max(*s * lambda_scale);
+                }
+            });
+        }
+    }
+    (actual_params, block_mse_scales)
+}
+
+/// The weight of each block's error against its bits, as this RDO gives it (the ultrasmooth scale inside an
+/// ultrasmooth region, the smooth block scale elsewhere), for an RDO with the same price model that runs elsewhere
+/// (the GPU RDO in uot-gpu-compute). The ultrasmooth regions are found over all the blocks given.
+pub fn block_error_scales(
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+) -> Vec<f32> {
+    let (actual_params, block_mse_scales) =
+        smooth_block_scales(rgba_blocks, blocks_x, blocks_y, params);
+    let smooth_scale = |block_index: usize| {
+        smooth_block_error_scale_from_pixels(
+            rgba_block_at(rgba_blocks, block_index),
+            actual_params.max_smooth_block_std_dev,
+            actual_params.smooth_block_max_mse_scale,
+        )
+    };
+    (0..blocks_x * blocks_y)
+        .into_par_iter()
+        .map(|block_index| match block_mse_scales.as_ref().map(|scales| scales[block_index]) {
+            Some(scale) if scale > 0.0 => scale,
+            _ => smooth_scale(block_index),
+        })
+        .collect()
 }
 
 #[inline]
@@ -2657,8 +2697,9 @@ fn compute_block_max_std_dev(pixels: &RgbaBlock) -> f32 {
     max_std_dev
 }
 
+/// Bits [`LITERAL_BITS`]' price model charges for a match of `match_len` bytes.
 #[inline(always)]
-pub(crate) fn compute_match_len_cost(match_len: u32) -> u32 {
+pub fn compute_match_len_cost(match_len: u32) -> u32 {
     if match_len >= 12 {
         9
     } else if match_len >= 8 {
@@ -2670,8 +2711,9 @@ pub(crate) fn compute_match_len_cost(match_len: u32) -> u32 {
     }
 }
 
+/// Bits the price model charges for a match `dist` bytes back.
 #[inline(always)]
-pub(crate) fn compute_dist_cost_estimate(dist: u32) -> u32 {
+pub fn compute_dist_cost_estimate(dist: u32) -> u32 {
     let mut dist_cost = 5;
     if dist < 512 {
         dist_cost += SMALL_DIST_EXTRA[dist as usize & 511] as u32;

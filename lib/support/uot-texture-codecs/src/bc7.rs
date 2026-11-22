@@ -16,7 +16,7 @@ pub mod analytical_wide;
 pub mod rdo;
 #[cfg(feature = "bc7-encode")]
 #[path = "bc7/tables.rs"]
-pub(crate) mod tables;
+pub mod tables;
 
 // Simple container used to persist pre-encoded VRAM textures on disk.
 // Layout: magic(4) | version(2) | format(2) | width(4) | height(4) | payload_len(4)
@@ -83,12 +83,45 @@ pub const DEFAULT_BC7_RDO_LAMBDA: f32 = 0.05;
 pub const DEFAULT_BC7_RDO_LOOKBACK_BLOCKS: usize = 64;
 pub const BC7_RDO_LOOKBACK_BLOCK_PRESETS: [usize; 3] = [64, 128, 256];
 
+/// An RDO that runs the page's search somewhere other than this crate's CPU code (the GPU RDO of uot-gpu-compute,
+/// which keeps the price model and the scales but makes choices of its own). It is called from the encoding threads,
+/// several at once.
 #[cfg(feature = "bc7-encode")]
-#[derive(Clone, Debug)]
+pub trait Bc7RdoAccelerator: Send + Sync {
+    /// Reduces the entropy of a page's `blocks` (`blocks_x` by `blocks_y`, rows top down) against `rgba_blocks`,
+    /// their texels in block order, telling `progress` of the blocks done. An error fails the encode; an accelerator
+    /// that should fall back to the CPU does so itself.
+    fn reduce_entropy(
+        &self,
+        blocks: &mut [[u8; 16]],
+        rgba_blocks: &[[u8; 4]],
+        blocks_x: usize,
+        blocks_y: usize,
+        params: &rdo::Bc7RdoParams,
+        progress: &(dyn Fn(usize) + Sync),
+    ) -> Result<(), String>;
+}
+
+#[cfg(feature = "bc7-encode")]
+#[derive(Clone)]
 pub struct Bc7RdoOptions {
     pub lambda: f32,
     pub lookback_blocks: usize,
     pub skip_zero_mse_blocks: bool,
+    /// Runs the RDO instead of the CPU code when set.
+    pub accelerator: Option<Arc<dyn Bc7RdoAccelerator>>,
+}
+
+#[cfg(feature = "bc7-encode")]
+impl fmt::Debug for Bc7RdoOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bc7RdoOptions")
+            .field("lambda", &self.lambda)
+            .field("lookback_blocks", &self.lookback_blocks)
+            .field("skip_zero_mse_blocks", &self.skip_zero_mse_blocks)
+            .field("accelerator", &self.accelerator.is_some())
+            .finish()
+    }
 }
 
 #[cfg(feature = "bc7-encode")]
@@ -98,6 +131,7 @@ impl Bc7RdoOptions {
             lambda,
             lookback_blocks,
             skip_zero_mse_blocks: false,
+            accelerator: None,
         }
     }
 
@@ -106,7 +140,14 @@ impl Bc7RdoOptions {
             lambda,
             lookback_blocks,
             skip_zero_mse_blocks: true,
+            accelerator: None,
         }
+    }
+
+    /// These options with the RDO run by `accelerator` (the CPU code when `None`).
+    pub fn with_accelerator(mut self, accelerator: Option<Arc<dyn Bc7RdoAccelerator>>) -> Self {
+        self.accelerator = accelerator;
+        self
     }
 
     fn to_rdo_params(&self) -> crate::bc7::rdo::Bc7RdoParams {
@@ -745,7 +786,7 @@ pub fn encode_to_bc7_with_rdo_options(
         rgba_pixels.as_ref(),
         extent,
         rdo_options,
-    );
+    )?;
 
     Bc7TextureData::new(extent, flatten_bc7_blocks(encoded.blocks))
 }
@@ -908,7 +949,7 @@ where
         extent,
         rdo_options,
         &rdo_progress,
-    );
+    )?;
     let rdo_time = rdo_timer.elapsed();
 
     let flatten_timer = Instant::now();
@@ -1348,9 +1389,9 @@ fn apply_bc7_rdo(
     rgba_pixels: &[u8],
     extent: ImageExtent,
     rdo_options: &Bc7RdoOptions,
-) {
+) -> Result<(), TextureError> {
     if rdo_options.lambda <= 0.0 || !rdo_options.lambda.is_finite() {
-        return;
+        return Ok(());
     }
 
     let owned_rgba_blocks;
@@ -1362,6 +1403,9 @@ fn apply_bc7_rdo(
         }
     };
     let params = rdo_options.to_rdo_params();
+    if let Some(accelerator) = &rdo_options.accelerator {
+        return accelerate_bc7_rdo(accelerator.as_ref(), &mut encoded.blocks, rgba_blocks, extent, &params, &|_| {});
+    }
     crate::bc7::rdo::reduce_entropy_bc7_parallel(
         &mut encoded.blocks,
         rgba_blocks,
@@ -1369,6 +1413,32 @@ fn apply_bc7_rdo(
         extent.blocks_high() as usize,
         &params,
     );
+    Ok(())
+}
+
+#[cfg(feature = "bc7-encode")]
+fn accelerate_bc7_rdo(
+    accelerator: &dyn Bc7RdoAccelerator,
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    extent: ImageExtent,
+    params: &crate::bc7::rdo::Bc7RdoParams,
+    progress: &(dyn Fn(usize) + Sync),
+) -> Result<(), TextureError> {
+    accelerator
+        .reduce_entropy(
+            blocks,
+            rgba_blocks,
+            extent.blocks_wide() as usize,
+            extent.blocks_high() as usize,
+            params,
+            progress,
+        )
+        .map_err(|message| TextureError::BackendOperationFailed {
+            backend: "BC7 RDO accelerator",
+            operation: "reduce entropy",
+            message,
+        })
 }
 
 #[cfg(feature = "bc7-encode")]
@@ -1378,11 +1448,12 @@ fn apply_bc7_rdo_with_progress<F>(
     extent: ImageExtent,
     rdo_options: &Bc7RdoOptions,
     progress: &F,
-) where
+) -> Result<(), TextureError>
+where
     F: Fn(usize) + Sync,
 {
     if rdo_options.lambda <= 0.0 || !rdo_options.lambda.is_finite() {
-        return;
+        return Ok(());
     }
 
     let owned_rgba_blocks;
@@ -1394,6 +1465,9 @@ fn apply_bc7_rdo_with_progress<F>(
         }
     };
     let params = rdo_options.to_rdo_params();
+    if let Some(accelerator) = &rdo_options.accelerator {
+        return accelerate_bc7_rdo(accelerator.as_ref(), &mut encoded.blocks, rgba_blocks, extent, &params, progress);
+    }
     crate::bc7::rdo::reduce_entropy_bc7_parallel_with_progress(
         &mut encoded.blocks,
         rgba_blocks,
@@ -1402,6 +1476,7 @@ fn apply_bc7_rdo_with_progress<F>(
         &params,
         progress,
     );
+    Ok(())
 }
 
 #[cfg(feature = "bc7-encode")]

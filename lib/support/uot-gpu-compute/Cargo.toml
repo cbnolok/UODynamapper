@@ -29,14 +29,15 @@ color-eyre.workspace = true
 pollster = "0.4"
 serde.workspace = true
 serde_json.workspace = true
+# The BC7 RDO's price model, error scales and partition tables (bc7_rdo.rs), the CPU RDO's.
+uot-texture-codecs = { path = "../uot-texture-codecs", features = ["bc7-encode"] }
 wgpu.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-# The block encoding evaluation (block_encode/tests.rs): CPU decoding of the blocks, the CPU BC7 encoder for
-# reference, and PNG sheets.
+# The block encoding evaluation (block_encode/tests.rs): PNG sheets (the CPU decoding of the blocks and the CPU BC7
+# encoder for reference come from uot-texture-codecs).
 image = { workspace = true, features = ["png"] }
-uot-texture-codecs = { path = "../uot-texture-codecs", features = ["bc7-encode"] }
 # Reads the frames it evaluates on from the animation packages; a dev-dependency only, the crate itself depends on
 # no udd crate.
 udd-assets = { path = "../../udd-assets" }

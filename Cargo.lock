@@ -8744,7 +8744,6 @@ dependencies = [
  "quote",
  "rand 0.10.2",
  "raw-window-handle",
- "regex",
  "regex-automata",
  "regex-syntax",
  "resize",
