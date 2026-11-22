@@ -139,6 +139,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A file from before the BC7 device choices loads with both on Auto, the CLI's default.
+    #[test]
+    fn a_file_without_the_bc7_devices_loads_them_on_auto() {
+        use crate::models::ComputeDevice;
+        let path = temp_config_path("devices");
+        let mut contents = toml::to_string_pretty(&AppSettings::default()).expect("serialize settings");
+        contents = contents.lines()
+            .filter(|line| !line.starts_with("bc_encode_device") && !line.starts_with("bc7_rdo_device"))
+            .map(|line| format!("{line}\n")).collect();
+        contents = contents.replace("bc7_rdo_enabled = false", "bc7_rdo_enabled = true");
+        std::fs::write(&path, contents).expect("write config");
+
+        let load = load_settings_from_path(&path).expect("lenient load");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(load.value.bc7_rdo_enabled);
+        assert_eq!(load.value.bc_encode_device, ComputeDevice::Auto);
+        assert_eq!(load.value.bc7_rdo_device, ComputeDevice::Auto);
+        let name = path.display().to_string();
+        for key in ["bc_encode_device", "bc7_rdo_device"] {
+            assert!(load.warnings.contains(&format!("{name}: missing key `{key}` filled from the default")));
+        }
+    }
+
     #[test]
     fn older_settings_file_is_filled_and_unknown_keys_dropped() {
         let path = temp_config_path("older");

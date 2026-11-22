@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use udd_conv::atlas::bc7_rdo_device::Bc7RdoDevice;
+use udd_conv::atlas::bc_encode_device::BcEncodeDevice;
 use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
@@ -54,6 +56,50 @@ impl From<HueRamp> for HueRampMode {
     }
 }
 
+/// Where a step of the BC7 pages runs: the encode (`udd-cli pack --bc-encode-device`) or the RDO
+/// (`--bc7-rdo-device`).
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ComputeDevice {
+    /// The GPU when a wgpu adapter is there, else the CPU.
+    #[default]
+    Auto,
+    Cpu,
+    /// The GPU, failing the job without one.
+    Gpu,
+}
+
+impl ComputeDevice {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Cpu, Self::Gpu];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Cpu => "CPU",
+            Self::Gpu => "GPU",
+        }
+    }
+}
+
+impl From<ComputeDevice> for BcEncodeDevice {
+    fn from(device: ComputeDevice) -> Self {
+        match device {
+            ComputeDevice::Auto => BcEncodeDevice::Auto,
+            ComputeDevice::Cpu => BcEncodeDevice::Cpu,
+            ComputeDevice::Gpu => BcEncodeDevice::Gpu,
+        }
+    }
+}
+
+impl From<ComputeDevice> for Bc7RdoDevice {
+    fn from(device: ComputeDevice) -> Self {
+        match device {
+            ComputeDevice::Auto => Bc7RdoDevice::Auto,
+            ComputeDevice::Cpu => Bc7RdoDevice::Cpu,
+            ComputeDevice::Gpu => Bc7RdoDevice::Gpu,
+        }
+    }
+}
+
 /// The Zstd level of `--zstd` without a level, and of the packers' default Zstd (`CompressionFlag::ZstdNoDict`).
 pub const DEFAULT_ZSTD_LEVEL: i32 = 7;
 
@@ -94,6 +140,10 @@ pub struct AppSettings {
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
     pub bc7_rdo_enabled: bool,
+    /// Where the BC7 atlas pages are encoded (`udd-cli pack --bc-encode-device`).
+    pub bc_encode_device: ComputeDevice,
+    /// Where their BC7 RDO runs (`udd-cli pack --bc7-rdo-device`).
+    pub bc7_rdo_device: ComputeDevice,
     pub upscale_tex_art_cc: UpscaleFilter,
     pub upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig,
@@ -199,6 +249,8 @@ impl Default for AppSettings {
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
             bc7_rdo_enabled: default_bc7_rdo_enabled(),
+            bc_encode_device: ComputeDevice::Auto,
+            bc7_rdo_device: ComputeDevice::Auto,
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
             upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig::default(),
@@ -379,6 +431,8 @@ mod tests {
         assert_eq!(settings.upscale_profile_path, None);
         assert_eq!(settings.classic_client_exe, None);
         assert!(!settings.bc7_rdo_enabled);
+        assert_eq!(settings.bc_encode_device, ComputeDevice::Auto);
+        assert_eq!(settings.bc7_rdo_device, ComputeDevice::Auto);
         assert_eq!(
             settings.bc7_rdo_lookback_blocks,
             udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
@@ -446,6 +500,18 @@ mod tests {
     }
 
     #[test]
+    fn compute_devices_map_to_the_packer_devices() {
+        for (device, encode, rdo) in [
+            (ComputeDevice::Auto, BcEncodeDevice::Auto, Bc7RdoDevice::Auto),
+            (ComputeDevice::Cpu, BcEncodeDevice::Cpu, Bc7RdoDevice::Cpu),
+            (ComputeDevice::Gpu, BcEncodeDevice::Gpu, Bc7RdoDevice::Gpu),
+        ] {
+            assert_eq!(BcEncodeDevice::from(device), encode);
+            assert_eq!(Bc7RdoDevice::from(device), rdo);
+        }
+    }
+
+    #[test]
     fn hue_ramps_map_to_the_packer_modes() {
         assert_eq!(HueRampMode::from(HueRamp::Linear), HueRampMode::Linear);
         assert_eq!(HueRampMode::from(HueRamp::Flat), HueRampMode::Flat);
@@ -508,6 +574,8 @@ mod tests {
         settings.upscale_profile_path = Some(PathBuf::from("profiles/mobile-upscale.toml"));
         settings.classic_client_exe = Some(PathBuf::from("/uo/classic/client_tc.exe"));
         settings.bc7_rdo_lookback_blocks = 128;
+        settings.bc_encode_device = ComputeDevice::Gpu;
+        settings.bc7_rdo_device = ComputeDevice::Cpu;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");
         let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
@@ -527,5 +595,7 @@ mod tests {
         );
         assert_eq!(restored.classic_client_exe, Some(PathBuf::from("/uo/classic/client_tc.exe")));
         assert_eq!(restored.bc7_rdo_lookback_blocks, 128);
+        assert_eq!(restored.bc_encode_device, ComputeDevice::Gpu);
+        assert_eq!(restored.bc7_rdo_device, ComputeDevice::Cpu);
     }
 }

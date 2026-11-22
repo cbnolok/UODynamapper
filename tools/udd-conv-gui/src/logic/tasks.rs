@@ -66,6 +66,8 @@ use uocf::enhanced::hues::HUES_UOP_NAME;
 use uocf::enhanced::paperdoll::PAPERDOLL_UOP_NAME;
 use uocf::enhanced::tileart::TILEART_UOP_NAME;
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
+use udd_conv::atlas::bc7_rdo_device::set_bc7_rdo_device;
+use udd_conv::atlas::bc_encode_device::set_bc_encode_device;
 use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat};
 use udd_conv::upscale_profile::UpscaleProfile;
 use udd_conv::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
@@ -293,6 +295,13 @@ fn bc7_rdo_lambda(settings: &AppSettings, optimization: TextureOptimization) -> 
 
 fn bc7_rdo_lookback_blocks(settings: &AppSettings) -> usize {
     udd_conv::bc7::normalize_bc7_rdo_lookback_blocks(settings.bc7_rdo_lookback_blocks)
+}
+
+/// Sets where the packers encode their BC7 pages and run the RDO on them, as `udd-cli pack --bc-encode-device` and
+/// `--bc7-rdo-device` do. Both are process-wide; a job starts with the settings of its start.
+fn apply_bc7_devices(settings: &AppSettings) {
+    set_bc_encode_device(settings.bc_encode_device.into());
+    set_bc7_rdo_device(settings.bc7_rdo_device.into());
 }
 
 fn upscale_filter_active(filter: UpscaleFilter) -> bool {
@@ -1316,6 +1325,7 @@ impl UddConvApp {
             return;
         }
 
+        apply_bc7_devices(&self.settings);
         let reporter = AssetProgressReporter {
             task: task_id,
             progress: self.asset_progress.clone(),
@@ -1761,6 +1771,24 @@ mod tests {
 
         assert_eq!(bc7_rdo_lambda(&settings, TextureOptimization::Bc7), 0.0);
         assert_eq!(bc7_rdo_lambda(&settings, TextureOptimization::Bc7Zstd), 0.6);
+    }
+
+    /// A job sets the packers' encode and RDO devices from the settings, each on its own.
+    #[test]
+    fn a_job_applies_the_bc7_devices() {
+        use crate::models::ComputeDevice;
+        use udd_conv::atlas::bc7_rdo_device::{bc7_rdo_device, Bc7RdoDevice};
+        use udd_conv::atlas::bc_encode_device::{bc_encode_device, BcEncodeDevice};
+
+        let mut settings = AppSettings::default();
+        for (encode, rdo) in [(ComputeDevice::Gpu, ComputeDevice::Cpu), (ComputeDevice::Cpu, ComputeDevice::Gpu),
+            (ComputeDevice::Auto, ComputeDevice::Auto)] {
+            settings.bc_encode_device = encode;
+            settings.bc7_rdo_device = rdo;
+            apply_bc7_devices(&settings);
+            assert_eq!(bc_encode_device(), BcEncodeDevice::from(encode));
+            assert_eq!(bc7_rdo_device(), Bc7RdoDevice::from(rdo));
+        }
     }
 
     #[test]

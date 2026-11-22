@@ -4,7 +4,7 @@ use crate::logic::tasks::{
     paperdoll_ec_sources, single_gump_pixel_format, EcGumpsShare, HuesSource, PAPERDOLL_EC_SOURCE_NAMES,
 };
 use crate::models::{
-    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, HueRamp,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ComputeDevice, GumpsEcSharing, HueRamp,
     StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
@@ -98,6 +98,7 @@ impl UddConvApp {
             None,
             None,
             None,
+            None,
             vec![],
         );
         if clicked {
@@ -120,10 +121,12 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_tex_art_cc),
             None,
+            Some(&mut self.settings.bc_encode_device),
             Some((
                 &mut self.settings.bc7_rdo_enabled,
                 &mut self.settings.bc7_rdo_lambda,
                 &mut self.settings.bc7_rdo_lookback_blocks,
+                &mut self.settings.bc7_rdo_device,
             )),
             Some((&mut self.settings.upscale_tex_art_cc, Some(crate::models::UpscalePreviewTarget::TexArtCc))),
             vec![],
@@ -146,6 +149,7 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_tex_land_cc),
             Some(CLASSIC_LAND_LOSSY_REFUSAL),
+            None,
             None,
             None,
             vec![
@@ -171,10 +175,12 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_mobile_anim_cc),
             None,
+            Some(&mut self.settings.bc_encode_device),
             Some((
                 &mut self.settings.bc7_rdo_enabled,
                 &mut self.settings.bc7_rdo_lambda,
                 &mut self.settings.bc7_rdo_lookback_blocks,
+                &mut self.settings.bc7_rdo_device,
             )),
             Some((&mut self.settings.upscale_mobile_anim_cc, None)),
             vec![],
@@ -199,10 +205,12 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_tex_art_ec),
             None,
+            Some(&mut self.settings.bc_encode_device),
             Some((
                 &mut self.settings.bc7_rdo_enabled,
                 &mut self.settings.bc7_rdo_lambda,
                 &mut self.settings.bc7_rdo_lookback_blocks,
+                &mut self.settings.bc7_rdo_device,
             )),
             Some((&mut self.settings.upscale_tex_art_ec, Some(crate::models::UpscalePreviewTarget::TexArtEc))),
             vec![],
@@ -225,6 +233,7 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_tex_land_ec),
             None,
+            Some(&mut self.settings.bc_encode_device),
             // The lossy Enhanced land is BC7 without RDO.
             None,
             None,
@@ -262,10 +271,12 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_tex_aux_ec),
             None,
+            Some(&mut self.settings.bc_encode_device),
             Some((
                 &mut self.settings.bc7_rdo_enabled,
                 &mut self.settings.bc7_rdo_lambda,
                 &mut self.settings.bc7_rdo_lookback_blocks,
+                &mut self.settings.bc7_rdo_device,
             )),
             Some((&mut self.settings.upscale_tex_aux_ec, None)),
             vec![],
@@ -287,10 +298,12 @@ impl UddConvApp {
             None,
             Some(&mut self.settings.opt_mobile_anim_ec),
             None,
+            Some(&mut self.settings.bc_encode_device),
             Some((
                 &mut self.settings.bc7_rdo_enabled,
                 &mut self.settings.bc7_rdo_lambda,
                 &mut self.settings.bc7_rdo_lookback_blocks,
+                &mut self.settings.bc7_rdo_device,
             )),
             Some((&mut self.settings.upscale_mobile_anim_ec, None)),
             vec![],
@@ -1171,7 +1184,8 @@ fn draw_asset_card(
     opt: Option<&mut TextureOptimization>,
     // When set, the block formats are greyed out with this reason in their tooltip.
     lossy_refusal: Option<&str>,
-    bc7_rdo: Option<(&mut bool, &mut f32, &mut usize)>,
+    bc_encode_device: Option<&mut ComputeDevice>,
+    bc7_rdo: Option<(&mut bool, &mut f32, &mut usize, &mut ComputeDevice)>,
     upscale_single: Option<(&mut UpscaleFilter, Option<crate::models::UpscalePreviewTarget>)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
 ) -> (bool, bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
@@ -1247,13 +1261,22 @@ fn draw_asset_card(
                                 });
                         });
 
+                        if let Some(device) = bc_encode_device {
+                            if !matches!(opt_val, TextureOptimization::None) {
+                                draw_control_cell(ui, "BC7 Encode", BC7_DEVICE_CELL_WIDTH, |ui| {
+                                    draw_device_combo(ui, format!("{title}_bc_encode_device"), device)
+                                        .on_hover_text(BC_ENCODE_DEVICE_TOOLTIP);
+                                });
+                            }
+                        }
+
                         if show_bc7_settings {
-                            if let Some((enabled, lambda, lookback_blocks)) = bc7_rdo {
+                            if let Some((enabled, lambda, lookback_blocks, rdo_device)) = bc7_rdo {
                                 *lookback_blocks =
                                     udd_conv::bc7::normalize_bc7_rdo_lookback_blocks(
                                         *lookback_blocks,
                                     );
-                                draw_control_cell(ui, "BC7 RDO", 230.0, |ui| {
+                                draw_control_cell(ui, "BC7 RDO", 230.0 + RDO_DEVICE_COMBO_WIDTH, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.checkbox(enabled, "On")
                                             .on_hover_text("Disable to skip the BC7 RDO pass.");
@@ -1280,6 +1303,11 @@ fn draw_asset_card(
                                         })
                                             .response
                                             .on_hover_text("Limits how many previous BC7 blocks RDO searches.");
+                                        ui.add_enabled_ui(*enabled, |ui| {
+                                            draw_device_combo(ui, format!("{title}_bc7_rdo_device"), rdo_device)
+                                        })
+                                            .inner
+                                            .on_hover_text(BC7_RDO_DEVICE_TOOLTIP);
                                     });
                                 });
                             }
@@ -1466,6 +1494,29 @@ fn draw_control_cell<R>(
         add_contents(ui)
     })
     .inner
+}
+
+/// The width of a device combo, and of the BC7 Encode cell that holds one.
+const RDO_DEVICE_COMBO_WIDTH: f32 = 62.0;
+const BC7_DEVICE_CELL_WIDTH: f32 = 80.0;
+const BC_ENCODE_DEVICE_TOOLTIP: &str = "Where the BC7 pages are encoded (--bc-encode-device). Auto: the GPU when there is \
+one, else the CPU. The GPU encoder comes to about the CPU's quality with blocks of its own; GPU fails the job without \
+one. Shared by every job; BC1 stays on the CPU.";
+const BC7_RDO_DEVICE_TOOLTIP: &str = "Where the BC7 RDO runs (--bc7-rdo-device), after the encode. Auto: the GPU when \
+there is one, else the CPU. The GPU RDO comes to about the CPU's size and error with blocks of its own; GPU fails the \
+job without one. Shared by every job.";
+
+/// A combo of the devices a BC7 step can run on.
+fn draw_device_combo(ui: &mut egui::Ui, id: String, device: &mut ComputeDevice) -> egui::Response {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(device.label())
+        .width(RDO_DEVICE_COMBO_WIDTH)
+        .show_ui(ui, |ui| {
+            for choice in ComputeDevice::ALL {
+                ui.selectable_value(device, choice, choice.label());
+            }
+        })
+        .response
 }
 
 fn draw_zstd_level_cell(ui: &mut egui::Ui, level: &mut i32) {

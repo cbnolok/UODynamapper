@@ -110,6 +110,8 @@ fn quick_settings(configured: &AppSettings, classic: bool, enhanced: bool) -> Ap
         opt_mobile_anim_cc: TextureOptimization::Bc7Zstd,
         opt_mobile_anim_ec: TextureOptimization::Bc7Zstd,
         bc7_rdo_enabled: false,
+        bc_encode_device: configured.bc_encode_device,
+        bc7_rdo_device: configured.bc7_rdo_device,
         upscale_tex_land_ec_64: UpscaleConfig::default(),
         upscale_tex_land_ec_128: UpscaleConfig::default(),
         upscale_tex_land_ec_256: UpscaleConfig::default(),
@@ -215,12 +217,15 @@ mod tests {
 
     #[test]
     fn quick_formats_keep_native_resolution_and_ignore_manual_overrides() {
+        use crate::models::ComputeDevice;
         let manual = AppSettings {
             upscale_profile_path: Some(PathBuf::from("custom.kdl")),
             opt_tex_art_cc: TextureOptimization::None,
             measure_strides_mobile_anim_cc: StrideMeasurement::Full,
             include_verdata: true,
             input_uddp_dir: PathBuf::from("separate"),
+            bc_encode_device: ComputeDevice::Cpu,
+            bc7_rdo_device: ComputeDevice::Gpu,
             ..AppSettings::default()
         };
         let quick = quick_settings(&manual, true, true);
@@ -238,6 +243,9 @@ mod tests {
         assert!(!quick.include_verdata);
         assert_eq!(quick.measure_strides_mobile_anim_cc, StrideMeasurement::Off);
         assert_eq!(quick.input_uddp_dir, quick.output_uddp_dir);
+        // The devices are the user's, as in the manual jobs.
+        assert_eq!(quick.bc_encode_device, ComputeDevice::Cpu);
+        assert_eq!(quick.bc7_rdo_device, ComputeDevice::Gpu);
     }
 
     #[test]
