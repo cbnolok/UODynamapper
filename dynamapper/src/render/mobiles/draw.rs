@@ -40,6 +40,9 @@ const MOUNT_TIE_LEVEL: u32 = 7;
 const RIDER_TIE_LEVEL: u32 = 8;
 /// The pixels of the frames per Classic screen pixel: the packages hold them at the client's size.
 const MOBILE_PIXEL_RATIO: f32 = 1.0;
+/// How far into a cell a sliding mobile must be for its depth to take that cell: below this, the float error of a
+/// mobile at rest on its cell.
+const DEPTH_CELL_SLIDE_EPSILON: f32 = 1.0 / 1024.0;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
@@ -366,6 +369,8 @@ fn mobile_instance(
     local_lights: Option<(&RenderStaticLightInstances, u32)>,
 ) -> MobileSpriteInstance {
     let (world_x, world_z) = apply_cc_static_world_anchor_translation(translation.x, translation.z);
+    let (depth_x, depth_z) = mobile_depth_cell(translation.x, translation.z);
+    let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x, depth_z);
     let bounds = mobile_card_bounds(frames.placement, mirrored, offset_px, MOBILE_PIXEL_RATIO);
     let priority_z_units = crate::world::coords::scale_bevy_units_to_uo_z(translation.y).round()
         + MOBILE_PRIORITY_Z_OFFSET;
@@ -380,8 +385,8 @@ fn mobile_instance(
         uv_max: frames.uv_max.to_array(),
         local_min: [bounds.local_min_x, bounds.local_min_y],
         local_max: [bounds.local_max_x, bounds.local_max_y],
-        tile_x: world_x,
-        tile_y: world_z,
+        tile_x,
+        tile_y,
         priority_z_units,
         sort_bias_ordinal: tie_level,
         is_wet_flags: 0,
@@ -400,9 +405,27 @@ fn mobile_instance(
     MobileSpriteInstance { sprite, crossfade: frames.crossfade }
 }
 
+/// The cell a mobile at (`x`, `z`) is ordered from: its own at rest, and while it slides between two cells, the
+/// nearer to the camera in each map axis, as the client orders a walking mobile (ClassicUO `View.CalculateDepthZ`
+/// takes the next cell east and south of its step's origin, the origin north and west). Ordered from the cell it
+/// slides out of, or from its fractional position, the land of the cells in front would cover its lower half
+/// until the step ends.
+fn mobile_depth_cell(x: f32, z: f32) -> (f32, f32) {
+    ((x - DEPTH_CELL_SLIDE_EPSILON).ceil(), (z - DEPTH_CELL_SLIDE_EPSILON).ceil())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sliding_mobile_is_ordered_from_the_nearer_cell_of_its_step() {
+        assert_eq!(mobile_depth_cell(1473.0, 1722.0), (1473.0, 1722.0), "at rest");
+        assert_eq!(mobile_depth_cell(1473.25, 1722.0), (1474.0, 1722.0), "east, from the cell it steps into");
+        assert_eq!(mobile_depth_cell(1473.75, 1721.25), (1474.0, 1722.0), "north-east");
+        assert_eq!(mobile_depth_cell(1472.5, 1722.5), (1473.0, 1723.0), "south-west");
+        assert_eq!(mobile_depth_cell(1472.75, 1721.75), (1473.0, 1722.0), "north-west, from the cell it leaves");
+    }
 
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
