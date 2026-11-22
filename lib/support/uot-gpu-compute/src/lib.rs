@@ -1,15 +1,16 @@
 //! GPU compute on plain wgpu, with no app or package format around it: the RIFE frame interpolation network
 //! ([`rife`]), the SPAN upscaler ([`upscale`]), the BC1/BC7 block encoder of frames ([`block_encode`]), and the
 //! measurement of a walk cycle's stride with RIFE's flow ([`strides`]), and RIFE in-betweens of a clip's plain RGBA
-//! frames ([`in_betweens`]), and the BC7 RDO of texture pages ([`bc7_rdo`]). Dynamapper runs the networks on its own
-//! device; the udd tools measure the strides of the animation packages, preview the in-betweens and RDO the packages'
-//! pages on a device of their own. [`warm_up`] compiles the networks' pipelines ahead of use (the block encoder and
+//! frames ([`in_betweens`]), and the BC7 encode ([`page_encode`]) and RDO ([`bc7_rdo`]) of texture pages. Dynamapper
+//! runs the networks on its own device; the udd tools measure the strides of the animation packages, preview the
+//! in-betweens and encode and RDO the packages' pages on a device of their own. [`warm_up`] compiles the networks' pipelines ahead of use (the block encoder and
 //! the RDO compile on their own). Shaders and weights are embedded in the binary.
 
 pub mod bc7_rdo;
 pub mod block_encode;
 pub mod frame_upscales;
 pub mod in_betweens;
+pub mod page_encode;
 pub mod rife;
 pub mod strides;
 pub mod upscale;

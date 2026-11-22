@@ -22,7 +22,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
-use crate::atlas::bc7_rdo_device::on_bc7_rdo_device;
+use crate::atlas::bc_encode_device::on_bc7_devices;
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress, Bc7RdoOptions, Bc7ProgressStage,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
@@ -335,7 +335,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
                         extent,
                         RawImageFormat::Rgba8888,
                         encoding,
-                        &on_bc7_rdo_device(Bc7RdoOptions::new(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks)),
+                        &on_bc7_devices(Bc7RdoOptions::new(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks)),
                         report_bc7_progress,
                     )
                         .map_err(|e| {

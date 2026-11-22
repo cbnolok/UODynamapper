@@ -98,6 +98,7 @@ use udd_conv::{
     CompressionFlag, PagePixelFormat,
 };
 use udd_conv::atlas::bc7_rdo_device::{set_bc7_rdo_device, Bc7RdoDevice};
+use udd_conv::atlas::bc_encode_device::{set_bc_encode_device, BcEncodeDevice};
 use udd_conv::bc7::NO_BC7_RDO_LAMBDA;
 
 /// The level of a bare `--zstd` where it adds a pass over another encoding (BC7, raw texture pages).
@@ -128,29 +129,46 @@ Nothing is written into --ccdir or --ecdir unless an output path points there.";
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    #[arg(long, global = true, value_enum, default_value_t = CliBc7RdoDevice::Auto, help = BC7_RDO_DEVICE_HELP)]
-    bc7_rdo_device: CliBc7RdoDevice,
+    #[arg(long, global = true, value_enum, default_value_t = CliComputeDevice::Auto, help = BC7_RDO_DEVICE_HELP)]
+    bc7_rdo_device: CliComputeDevice,
+    #[arg(long, global = true, value_enum, default_value_t = CliComputeDevice::Auto, help = BC_ENCODE_DEVICE_HELP)]
+    bc_encode_device: CliComputeDevice,
 }
 
 const BC7_RDO_DEVICE_HELP: &str = "Where --bc7-rdo runs: auto (the GPU when a wgpu adapter is there, else the CPU), \
 cpu, or gpu (failing without one). The GPU RDO has the CPU's price model and comes to about its size and error, with \
 blocks of its own.";
 
-/// `--bc7-rdo-device`.
+const BC_ENCODE_DEVICE_HELP: &str = "Where the BC7 atlas pages are encoded (mobile animations, art, land, auxiliary \
+textures): auto (the GPU when a wgpu adapter is there, else the CPU), cpu, or gpu (failing without one). The GPU \
+encoder comes to about the CPU's quality, with blocks of its own; --bc7-rdo then runs on its own device. BC1 and the \
+other BC7 images (gumps, effects, radar) stay on the CPU.";
+
+/// `--bc7-rdo-device` and `--bc-encode-device`.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum CliBc7RdoDevice {
+enum CliComputeDevice {
     #[default]
     Auto,
     Cpu,
     Gpu,
 }
 
-impl From<CliBc7RdoDevice> for Bc7RdoDevice {
-    fn from(device: CliBc7RdoDevice) -> Self {
+impl From<CliComputeDevice> for Bc7RdoDevice {
+    fn from(device: CliComputeDevice) -> Self {
         match device {
-            CliBc7RdoDevice::Auto => Bc7RdoDevice::Auto,
-            CliBc7RdoDevice::Cpu => Bc7RdoDevice::Cpu,
-            CliBc7RdoDevice::Gpu => Bc7RdoDevice::Gpu,
+            CliComputeDevice::Auto => Bc7RdoDevice::Auto,
+            CliComputeDevice::Cpu => Bc7RdoDevice::Cpu,
+            CliComputeDevice::Gpu => Bc7RdoDevice::Gpu,
+        }
+    }
+}
+
+impl From<CliComputeDevice> for BcEncodeDevice {
+    fn from(device: CliComputeDevice) -> Self {
+        match device {
+            CliComputeDevice::Auto => BcEncodeDevice::Auto,
+            CliComputeDevice::Cpu => BcEncodeDevice::Cpu,
+            CliComputeDevice::Gpu => BcEncodeDevice::Gpu,
         }
     }
 }
@@ -1553,6 +1571,7 @@ where
 {
     let cli = Cli::parse_from(args);
     set_bc7_rdo_device(cli.bc7_rdo_device.into());
+    set_bc_encode_device(cli.bc_encode_device.into());
     match cli.command {
         Commands::PackArt {
             source_dirs: source_dir_args,
@@ -2739,13 +2758,27 @@ mod tests {
     fn cli_parses_the_bc7_rdo_device_after_the_command() {
         let default = Cli::try_parse_from(["uddpack", "pack-mobile-anims", "--ccdir", "/cc", "--bc7-rdo"])
             .expect("parse cli args");
-        assert_eq!(default.bc7_rdo_device, CliBc7RdoDevice::Auto);
-        for (value, device) in [("cpu", CliBc7RdoDevice::Cpu), ("gpu", CliBc7RdoDevice::Gpu)] {
+        assert_eq!(default.bc7_rdo_device, CliComputeDevice::Auto);
+        for (value, device) in [("cpu", CliComputeDevice::Cpu), ("gpu", CliComputeDevice::Gpu)] {
             let cli = Cli::try_parse_from(["uddpack", "pack-art", "--ccdir", "/cc", "--bc7-rdo",
                 "--bc7-rdo-device", value]).expect("parse cli args");
             assert_eq!(cli.bc7_rdo_device, device);
         }
         assert!(Cli::try_parse_from(["uddpack", "pack-art", "--ccdir", "/cc", "--bc7-rdo-device", "npu"]).is_err());
+    }
+
+    #[test]
+    fn cli_parses_the_bc_encode_device_apart_from_the_rdo_device() {
+        let default = Cli::try_parse_from(["uddpack", "pack-mobile-anims", "--ccdir", "/cc"]).expect("parse cli args");
+        assert_eq!(default.bc_encode_device, CliComputeDevice::Auto);
+        for (value, device) in [("cpu", CliComputeDevice::Cpu), ("gpu", CliComputeDevice::Gpu)] {
+            let cli = Cli::try_parse_from(["uddpack", "pack-ec-textures", "--ecdir", "/ec", "--bc-encode-device", value,
+                "--bc7-rdo-device", "auto"]).expect("parse cli args");
+            assert_eq!(cli.bc_encode_device, device);
+            assert_eq!(cli.bc7_rdo_device, CliComputeDevice::Auto);
+        }
+        assert_eq!(BcEncodeDevice::from(CliComputeDevice::Gpu), BcEncodeDevice::Gpu);
+        assert!(Cli::try_parse_from(["uddpack", "pack-art", "--ccdir", "/cc", "--bc-encode-device", "npu"]).is_err());
     }
 
     #[test]

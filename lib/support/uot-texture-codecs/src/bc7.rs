@@ -102,6 +102,24 @@ pub trait Bc7RdoAccelerator: Send + Sync {
     ) -> Result<(), String>;
 }
 
+/// A BC7 encoder that encodes a page somewhere other than this crate's CPU code (the GPU encoder of
+/// uot-gpu-compute, whose blocks differ from the CPU's at about its quality). It is called from the encoding threads,
+/// several at once.
+#[cfg(feature = "bc7-encode")]
+pub trait Bc7EncodeAccelerator: Send + Sync {
+    /// Encodes `rgba` (RGBA8888, `extent`, rows top down) to its blocks, block rows top down, a partial block
+    /// repeating the edge texels as the CPU encoder does, telling `progress` of the blocks done. An error fails the
+    /// encode; an accelerator that should fall back to the CPU does so itself.
+    fn encode(
+        &self,
+        rgba: &[u8],
+        extent: ImageExtent,
+        progress: &(dyn Fn(usize) + Sync),
+    ) -> Result<Vec<[u8; 16]>, String>;
+}
+
+/// How a page's BC7 is made past the encoder backend: the RDO's parameters, where the RDO runs and where the encode
+/// runs.
 #[cfg(feature = "bc7-encode")]
 #[derive(Clone)]
 pub struct Bc7RdoOptions {
@@ -110,6 +128,8 @@ pub struct Bc7RdoOptions {
     pub skip_zero_mse_blocks: bool,
     /// Runs the RDO instead of the CPU code when set.
     pub accelerator: Option<Arc<dyn Bc7RdoAccelerator>>,
+    /// Encodes the page instead of the backend's CPU code when set; the RDO then runs on its blocks.
+    pub encoder: Option<Arc<dyn Bc7EncodeAccelerator>>,
 }
 
 #[cfg(feature = "bc7-encode")]
@@ -120,6 +140,7 @@ impl fmt::Debug for Bc7RdoOptions {
             .field("lookback_blocks", &self.lookback_blocks)
             .field("skip_zero_mse_blocks", &self.skip_zero_mse_blocks)
             .field("accelerator", &self.accelerator.is_some())
+            .field("encoder", &self.encoder.is_some())
             .finish()
     }
 }
@@ -132,6 +153,7 @@ impl Bc7RdoOptions {
             lookback_blocks,
             skip_zero_mse_blocks: false,
             accelerator: None,
+            encoder: None,
         }
     }
 
@@ -141,12 +163,19 @@ impl Bc7RdoOptions {
             lookback_blocks,
             skip_zero_mse_blocks: true,
             accelerator: None,
+            encoder: None,
         }
     }
 
     /// These options with the RDO run by `accelerator` (the CPU code when `None`).
     pub fn with_accelerator(mut self, accelerator: Option<Arc<dyn Bc7RdoAccelerator>>) -> Self {
         self.accelerator = accelerator;
+        self
+    }
+
+    /// These options with the page encoded by `encoder` (the backend's CPU code when `None`).
+    pub fn with_encoder(mut self, encoder: Option<Arc<dyn Bc7EncodeAccelerator>>) -> Self {
+        self.encoder = encoder;
         self
     }
 
@@ -775,9 +804,10 @@ pub fn encode_to_bc7_with_rdo_options(
     let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
     let backend = resolve_bc7_encoder_backend(backend);
 
-    let mut encoded = match backend {
-        Bc7EncoderBackend::Analytical => encode_with_analytical(rgba_pixels.as_ref(), extent),
-        Bc7EncoderBackend::AnalyticalWide => {
+    let mut encoded = match (&rdo_options.encoder, backend) {
+        (Some(encoder), _) => accelerate_bc7_encode(encoder.as_ref(), rgba_pixels.as_ref(), extent, &|_| {})?,
+        (None, Bc7EncoderBackend::Analytical) => encode_with_analytical(rgba_pixels.as_ref(), extent),
+        (None, Bc7EncoderBackend::AnalyticalWide) => {
             encode_with_analytical_wide(rgba_pixels.as_ref(), extent)
         }
     };
@@ -932,11 +962,14 @@ where
     let encode_progress = |units| progress(Bc7ProgressStage::Encode, units);
 
     let encode_timer = Instant::now();
-    let mut encoded = match backend {
-        Bc7EncoderBackend::Analytical => {
+    let mut encoded = match (&rdo_options.encoder, backend) {
+        (Some(encoder), _) => {
+            accelerate_bc7_encode(encoder.as_ref(), rgba_pixels.as_ref(), extent, &encode_progress)?
+        }
+        (None, Bc7EncoderBackend::Analytical) => {
             encode_with_analytical_and_progress(rgba_pixels.as_ref(), extent, &encode_progress)
         }
-        Bc7EncoderBackend::AnalyticalWide => {
+        (None, Bc7EncoderBackend::AnalyticalWide) => {
             encode_with_analytical_wide_and_progress(rgba_pixels.as_ref(), extent, &encode_progress)
         }
     };
@@ -1384,6 +1417,29 @@ where
 }
 
 #[cfg(feature = "bc7-encode")]
+fn accelerate_bc7_encode(
+    encoder: &dyn Bc7EncodeAccelerator,
+    rgba_pixels: &[u8],
+    extent: ImageExtent,
+    progress: &(dyn Fn(usize) + Sync),
+) -> Result<EncodedBc7Blocks, TextureError> {
+    let operation_failed = |message| TextureError::BackendOperationFailed {
+        backend: "BC7 encode accelerator",
+        operation: "encode",
+        message,
+    };
+    let blocks = encoder.encode(rgba_pixels, extent, progress).map_err(operation_failed)?;
+    let expected = extent.blocks_wide() as usize * extent.blocks_high() as usize;
+    if blocks.len() != expected {
+        return Err(operation_failed(format!("{} blocks for a page of {expected}", blocks.len())));
+    }
+    Ok(EncodedBc7Blocks {
+        blocks,
+        rgba_blocks: None,
+    })
+}
+
+#[cfg(feature = "bc7-encode")]
 fn apply_bc7_rdo(
     encoded: &mut EncodedBc7Blocks,
     rgba_pixels: &[u8],
@@ -1696,6 +1752,73 @@ mod tests {
 
         assert_eq!(bc7_encode_progress_units(extent, 0.0), blocks);
         assert_eq!(bc7_encode_progress_units(extent, 1.0), blocks * 2);
+    }
+
+    /// An encoder that writes one block everywhere and counts its calls.
+    struct OneBlockEncoder {
+        block: [u8; 16],
+        blocks: Option<usize>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Bc7EncodeAccelerator for OneBlockEncoder {
+        fn encode(&self, _rgba: &[u8], extent: ImageExtent, progress: &(dyn Fn(usize) + Sync))
+            -> Result<Vec<[u8; 16]>, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let blocks = self.blocks.unwrap_or(extent.blocks_wide() as usize * extent.blocks_high() as usize);
+            progress(blocks);
+            Ok(vec![self.block; blocks])
+        }
+    }
+
+    /// The encoder in the options replaces the backend on every path, the RDO runs on its blocks, and a wrong block
+    /// count fails the encode.
+    #[test]
+    fn an_encode_accelerator_replaces_the_backend_and_feeds_the_rdo() {
+        use std::sync::atomic::Ordering;
+        const RDO_LAMBDA: f32 = 1.0;
+        // A mode 6 block: a valid block the RDO's decode understands.
+        const BLOCK: [u8; 16] = [0x40, 0xff, 0x80, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+            0x0b, 0x0c, 0x0d];
+        // Steps through the byte values in a pattern no block repeats exactly.
+        const PIXEL_STEP: usize = 37;
+        let extent = ImageExtent::new(37, 22).unwrap();
+        let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
+        let pixels: Vec<u8> = (0..extent.byte_len(RawImageFormat::Rgba8888)).map(|byte| (byte * PIXEL_STEP) as u8).collect();
+        let encoder = Arc::new(OneBlockEncoder { block: BLOCK, blocks: None, calls: Default::default() });
+        let plain = Bc7RdoOptions::new(NO_BC7_RDO_LAMBDA, DEFAULT_BC7_RDO_LOOKBACK_BLOCKS)
+            .with_encoder(Some(encoder.clone()));
+
+        let texture = encode_to_bc7_with_rdo_options(&pixels, extent, RawImageFormat::Rgba8888,
+            Bc7EncoderBackend::AnalyticalWide, &plain).unwrap();
+        assert_eq!(texture.blocks(), BLOCK.repeat(blocks));
+        let progressed = std::sync::atomic::AtomicUsize::new(0);
+        let (texture, _) = encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed(&pixels, extent,
+            RawImageFormat::Rgba8888, VramTextureEncoding::Bc7(Bc7EncoderBackend::Analytical), &plain,
+            |stage, units| {
+                assert_eq!(stage, Bc7ProgressStage::Encode);
+                progressed.fetch_add(units, Ordering::Relaxed);
+            }).unwrap();
+        assert_eq!(texture.bytes(), BLOCK.repeat(blocks));
+        assert_eq!(progressed.load(Ordering::Relaxed), blocks);
+        assert_eq!(encoder.calls.load(Ordering::Relaxed), 2);
+
+        let rdo = Bc7RdoOptions::new(RDO_LAMBDA, DEFAULT_BC7_RDO_LOOKBACK_BLOCKS).with_encoder(Some(encoder.clone()));
+        let reduced = encode_to_bc7_with_rdo_options(&pixels, extent, RawImageFormat::Rgba8888,
+            Bc7EncoderBackend::AnalyticalWide, &rdo).unwrap();
+        let mut expected: Vec<[u8; 16]> = vec![BLOCK; blocks];
+        let rgba_blocks = rgba_pixels_to_block_order(&pixels, extent);
+        rdo::reduce_entropy_bc7_parallel(&mut expected, &rgba_blocks, extent.blocks_wide() as usize,
+            extent.blocks_high() as usize, &rdo.to_rdo_params());
+        assert_eq!(reduced.blocks(), expected.as_flattened());
+
+        let short = Bc7RdoOptions::default()
+            .with_encoder(Some(Arc::new(OneBlockEncoder { block: BLOCK, blocks: Some(1), calls: Default::default() })));
+        assert!(matches!(
+            encode_to_bc7_with_rdo_options(&pixels, extent, RawImageFormat::Rgba8888,
+                Bc7EncoderBackend::AnalyticalWide, &short),
+            Err(TextureError::BackendOperationFailed { .. })
+        ));
     }
 }
 

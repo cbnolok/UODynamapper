@@ -32,7 +32,7 @@ use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::utils::path::find_file_ignoring_case;
 
 use super::animation_sequences::{load_animation_sequences, move_actions};
-use crate::atlas::bc7_rdo_device::on_bc7_rdo_device;
+use crate::atlas::bc_encode_device::on_bc7_devices;
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
     Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
@@ -808,7 +808,7 @@ fn encode_mobile_anim_page_chunk(
 ) -> eyre::Result<(Vec<(String, Vec<u8>, u32, u32)>, Bc7StageTimings)> {
     debug_assert!(options.pixel_format == PagePixelFormat::Bc7);
     let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
-    let rdo_options = on_bc7_rdo_device(Bc7RdoOptions::sparse_atlas(
+    let rdo_options = on_bc7_devices(Bc7RdoOptions::sparse_atlas(
         options.bc7_rdo_lambda,
         options.bc7_rdo_lookback_blocks,
     ));

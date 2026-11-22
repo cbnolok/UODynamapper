@@ -52,7 +52,7 @@ use udd_container::{
 };
 use uocf::enhanced::textures::Textures;
 
-use crate::atlas::bc7_rdo_device::on_bc7_rdo_device;
+use crate::atlas::bc_encode_device::on_bc7_devices;
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress, Bc7RdoOptions, preferred_bc7_encoder_backend,
     ImageExtent, RawImageFormat, VramTextureEncoding,
@@ -674,7 +674,7 @@ fn encode_image(
         extent,
         RawImageFormat::Rgba8888,
         VramTextureEncoding::Bc7(preferred_bc7_encoder_backend()),
-        &on_bc7_rdo_device(Bc7RdoOptions::new(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks)),
+        &on_bc7_devices(Bc7RdoOptions::new(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks)),
         |_, _| {},
     )
     .ok()?;
