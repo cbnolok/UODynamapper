@@ -1,6 +1,6 @@
 # Reproduces the measurements in ../atlas_page_compression.md. Standalone: build it outside the workspace's target, e.g.
 #   CARGO_TARGET_DIR=/path/to/scratch cargo run --release --bin atlas-page-compression-bench -- /path/to/uddp
-# and the binaries in src/bin the same way (strip_levels, block_pages, upscaled_pages, anim_rdo, rdo_gpu_proto).
+# and the binaries in src/bin the same way (strip_levels, block_pages, upscaled_pages, anim_rdo, rdo_gpu_proto, rdo_gpu).
 [package]
 name = "atlas-page-compression-bench"
 version = "0.1.0"
@@ -23,5 +23,7 @@ uot-image-postprocess = { path = "../../../lib/support/uot-image-postprocess" }
 wgpu = { version = "30.0", default-features = false, features = ["vulkan", "wgsl"] }
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
+# The GPU RDO itself (rdo_gpu).
+uot-gpu-compute = { path = "../../../lib/support/uot-gpu-compute" }
 
 [workspace]

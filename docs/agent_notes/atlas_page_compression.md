@@ -458,12 +458,95 @@ Same 20 Classic pages, Radeon 880M (RADV), against the parallel AVX2 CPU RDO on 
   look-back 64 would take about 80 s instead of about 6 minutes.
 - **Its size and quality are on the CPU's curve.** Without the continuation and REP0 prices it takes a few more
   matches: 1.3 % smaller for 0.17 dB at λ 1.
-- **A full version** in `uot-gpu-compute`, called by udd-conv, has to choose between two semantics:
+- **A full version** in `uot-gpu-compute`, called by udd-conv, had to choose between two semantics:
   - port the CPU's exact search (the hash, the continuation and REP0 state that changes within a block's search, the
     ultrasmooth scales, modes other than 6 and 4 on the CPU), which costs a sequential pass per block;
   - define its own deterministic RDO, whose output differs from the CPU's and depends on the chunking.
 
-  With RDO off by default, it pays only for someone who opts in at λ 1 or more.
+  It took the second (next section).
+
+### On the GPU (uot-gpu-compute)
+
+`uot_gpu_compute::bc7_rdo::Bc7RdoGpu` (`shaders/block_encode/bc7_rdo.wgsl`) is the full version (2026-11-22). Its
+blocks differ from the CPU's, and it defines its own deterministic search:
+
+- **The CPU's price model and error scales.** It uses the codecs' match length and distance prices, the literal
+  price, and the continuation and REP0 prices. The CPU computes the per-block error scales over the whole page
+  (`bc7::rdo::block_error_scales`): the smooth block scale, and the ultrasmooth regions scaled by λ.
+- **Every mode.** The shader decodes all eight BC7 modes. Blocks without a mode are left alone, and with
+  `skip_zero_mse_blocks` so are exact blocks.
+- **The lowest cost wins, ordered.** Each block takes the cheapest of its candidates: an earlier block of the same
+  mode in the look-back, × run length 16 to 3, × offset. On a tie it takes the lowest candidate number: the nearest
+  block, then the longest run, then the lowest offset. The 64 threads of a workgroup share the candidates. A thread
+  drops a candidate only when it cannot cost less than the thread's own best, which already has a lower number:
+  either the rate alone reaches that best, or the error passes a bound kept above the exact one by a margin. A
+  minimum over the costs, then over the numbers, picks the winner. The result therefore does not depend on how the
+  threads split the candidates.
+- **Fixed chunks.** One workgroup walks each chunk of whole block rows: at least 2048 blocks, and at least the
+  look-back. The chunks are the page's, not the pool's, so the blocks depend only on the page, λ and the look-back.
+  They do not depend on the workgroup size, the pages batched together, the blocks per submission, or the CPU's
+  thread count (the CPU RDO's output does).
+- **Match state as in ert.cpp and the BC1 RDO.** The last match's distance (REP0), and the block a run from offset 0
+  continues, are set after each matched block. A block without a match resets the continuation, and skipped blocks
+  leave both alone. The CPU BC7 RDO instead updates this state during the search.
+- **No segment hash.** The CPU's hash skips a trial already tried from a nearer block. On the GPU the same trial from
+  a farther block costs at least as much (the distance price never falls), and the tie goes to the nearer block, so
+  the hash would only save time.
+- **Not supported.** Relative movement and the two-match search; parameters asking for them are an error.
+
+Its tests (`bc7_rdo/tests.rs`, ignored without a GPU) compare it with a CPU walk of the same search, which tries
+every candidate with no bound and uses the codecs' decoder. The fixtures are random blocks of every mode with near
+copies and invalid and exact blocks, plus encoded sprite pages of one and three chunks, at λ 1 to 4 and look-back 8
+and 64. They match block for block (4 to 72 % of the blocks changed). A batch, a second run, and three threads calling
+at once give the same blocks.
+
+Same pages as above, Radeon 880M (RADV, Mesa 26.2.7), against the parallel AVX2 CPU RDO on all 20 threads. The GPU
+wall time includes the CPU's error scales and the upload; the two GPU runs and the concurrent callers (the packers'
+way, one call per page from the rayon threads) gave the same blocks in every row:
+
+| Pages | Look-back | λ | CPU wall | GPU wall | CPU size | GPU size | CPU PSNR | GPU PSNR |
+|---|---|---|---|---|---|---|---|---|
+| Classic | 8 | 1 | 1.19 s | 0.66 s | −2.6 % | −3.2 % | 32.33 | 32.20 |
+| | | 2 | 0.99 s | 0.56 s | −6.3 % | −7.2 % | 30.55 | 30.33 |
+| | 64 | 1 | 5.42 s | 1.65 s | −4.8 % | −6.3 % | 31.76 | 31.50 |
+| | | 2 | 4.60 s | 1.71 s | −10.4 % | −12.7 % | 29.65 | 29.27 |
+| Enhanced | 8 | 1 | 0.99 s | 0.52 s | −2.0 % | −2.6 % | 31.28 | 31.21 |
+| | | 2 | 0.90 s | 0.46 s | −4.8 % | −5.7 % | 30.12 | 29.97 |
+| | 64 | 1 | 4.53 s | 1.39 s | −4.7 % | −6.2 % | 30.89 | 30.74 |
+| | | 2 | 4.20 s | 1.44 s | −9.1 % | −11.4 % | 29.42 | 29.14 |
+
+- **It lies on or slightly above the CPU's size/PSNR curve.** At a given λ it takes a few more matches: 0.6 to 2.3 %
+  smaller, for 0.07 to 0.38 dB. Along the CPU's line between λ 1 and 2, the CPU at the GPU's PSNR would be 0.3 to
+  1.5 % larger. So at equal quality the GPU is as small or a little smaller, and λ means slightly more on the GPU. The
+  prototype, without the continuation and REP0 prices and the ultrasmooth scales, landed in the same place (−6.1 %,
+  31.59 dB). Those prices and scales mostly move the choices, not the curve.
+- **It is 2.7 to 3.3 times faster at look-back 64 and 1.8 to 2 times at look-back 8.** At look-back 8 the CPU's error
+  scales, the upload and a GPU walk of fixed length weigh more. The CPU stays free during the walk.
+- **Compile:** the walk's pipeline takes 91 ms on a cold Mesa cache and 4 ms warm. The module is created without
+  naga's loop bounding (`network_shader_module`); every loop counts up to a constant, a uniform or a chunk's end.
+- **Visual check at λ 1, look-back 64:**
+  `/home/claudio/rust-target/uodynamapper-scratch/gpu-rdo/gpu-rdo_{cc,ec}_l1_lb64.mp4` and their `zoom_` 5×
+  versions toggle plain BC7, the CPU RDO, the GPU RDO and the source on a crop of a Classic and an Enhanced page.
+  The two RDOs look alike: both flatten some sprite texture, with no block artefacts of their own.
+
+**In the packers** (`udd_conv::atlas::bc7_rdo_device`): when RDO is on, the mobile animation (Classic, Enhanced),
+art, land and aux packers run it on the GPU if a wgpu adapter is there, otherwise on the CPU. If the GPU fails, Auto
+warns and runs the page on the CPU. `udd-cli pack --bc7-rdo-device auto|cpu|gpu` chooses the device; `gpu` fails
+without an adapter. The packers start one device on the first page they RDO. The pages encoded at once call it from
+their threads and share its batches. RDO stays off by default.
+
+A full repack of the Classic mobile animations (`udd-cli pack pack-mobile-anims --bc7-rdo --bc7-rdo-lambda 1
+--bc7-rdo-lookback-blocks 64 --zstd=9`, 1210 pages, release build, all 20 threads):
+
+| RDO device | Total | Page encode | Package |
+|---|---|---|---|
+| GPU, first run | 169.7 s | 124.7 s | 810 486 376 bytes |
+| GPU, second run | 164.2 s | 122.5 s | 810 486 376 bytes, the same file |
+| CPU | 397.5 s | 353.5 s | 823 320 535 bytes |
+
+The GPU package is 1.6 % smaller, in line with the pages above, and the two GPU runs wrote the same file byte for byte.
+With the walk on the GPU, the CPU's BC7 encode, which runs on the same threads, also takes less time (536 against 1475
+thread seconds).
 
 ### The BC7 packages without RDO, and their strides
 
@@ -525,4 +608,6 @@ the dictionaries were one-off runs with the numbers above. `--bin anim_rdo <dir>
 [stats|parallel]` runs the BC7 RDO on pages sampled from an RGBA8888 `mobile_anim_cc.uddp` or `mobile_anim_ec.uddp`:
 `stats` adds the RDO's counters for one page on one thread, `parallel` runs the pages at once as the packers do, and
 `ANIM_RDO_SIMD=scalar|avx2|avx512` sets the highest instruction set. `--bin rdo_gpu_proto <dir> <cc|ec> <pages> <λ>
-<look-back>` times the GPU prototype against the CPU RDO on the same pages.
+<look-back>` times the GPU prototype against the CPU RDO on the same pages, and `--bin rdo_gpu <dir> <cc|ec> <pages>
+<λ,...> <look-back,...> [<crop dir> <page> <x> <y> <width> <height>]` the GPU RDO (with its compile time; set
+`MESA_SHADER_CACHE_DIR` to an empty folder for a cold one), writing the crops of the visual check as raw RGBA.

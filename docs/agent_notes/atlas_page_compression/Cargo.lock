@@ -100,6 +100,7 @@ dependencies = [
  "pollster",
  "rayon",
  "udd-assets",
+ "uot-gpu-compute",
  "uot-image-postprocess",
  "uot-texture-codecs",
  "wgpu",
@@ -159,6 +160,16 @@ name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+
+[[package]]
+name = "block_compression"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5ca8c67a97492f3c8263ce18d307053f8aa657e8ecbf191484676bb25ae5f4a"
+dependencies = [
+ "bytemuck",
+ "wgpu",
+]
 
 [[package]]
 name = "borsh"
@@ -1875,6 +1886,21 @@ dependencies = [
  "toml",
  "uot-kdl",
  "wide",
+ "workspace-hack",
+]
+
+[[package]]
+name = "uot-gpu-compute"
+version = "0.1.0"
+dependencies = [
+ "block_compression",
+ "bytemuck",
+ "color-eyre",
+ "pollster",
+ "serde",
+ "serde_json",
+ "uot-texture-codecs",
+ "wgpu",
  "workspace-hack",
 ]
 
