@@ -63,7 +63,7 @@ The graphical editor previews upscale passes on animation frames. Image packers 
 
 ![Enhanced horse sprite enlarged with nearest-neighbor, bicubic and SPAN](images/showcase/anim-upscale-span.webp)
 
-An offline 4× neural upscaling experiment on an Enhanced horse frame. SPAN is shown as development work. The live renderer uses its existing packaged textures and filters.
+An offline 4× comparison on an Enhanced horse frame. Dynamapper also offers **SPAN 2×** in its graphics options. It runs on the GPU for Enhanced animations at close zoom, including RIFE in-betweens. [Runtime animation and upscaling notes](agent_notes/mobile_animation_motion.md#span-2-in-game-mobile_upscale-2026-11-21)
 
 ## Cave entrances
 
@@ -92,6 +92,10 @@ In **F2 → Graphics**, enable **Show Only the Player's Floor**. **Only the Play
 | ![Close-up of the Britain square planter, stairs, and individual pavers](images/showcase/world-zoom-close.webp) | ![Wide view of Britain with streets, waterways, the castle, and docks](images/showcase/world-zoom-wide.webp) |
 
 Both captures are centered on the same point in Britain. The wide view covers 32 times as much world width as the close view.
+
+At scale 20 and wider, Dynamapper draws statics as radar-color dots and skips statics below Z 10. This omits low water statics, including some rivers and shorelines. Terrain water still draws.
+
+[View the full Trammel facet as a radar export](images/showcase/world-trammel-radar.webp). The converter builds this top-down image from the map and its statics.
 
 ## Paperdolls
 
