@@ -552,14 +552,17 @@ thread seconds).
 
 `uot_gpu_compute::page_encode::PageEncoderGpu` encodes a whole page held on the CPU with the GPU BC7 encoder
 (`block_encode::MobileBlockEncoder`, block_compression's port of the ISPC kernels), on a device of its own
-(2026-11-22). A page goes up in bands of at most 128 Ki blocks, one submission each, read back before the next. A
-partial block repeats the page's edge texels, as the CPU encoder's does. The pages encoded at once share the encoder,
+(2026-11-22). A partial block repeats the page's edge texels, as the CPU encoder's does. A block of one colour is the
+CPU encoder's solid block, made on the CPU; the other blocks go up side by side, 1024 to a row, in bands of at most 128
+Ki blocks, one submission each, read back before the next, and are put back in their places (since the optimizations
+below; before, the bands were whole block rows of the page). The pages encoded at once share the encoder,
 whose frames wait in it for its next record, so a band records and submits under a lock and waits for its blocks
 outside it. It is `PageEncoderGpu` now, with `encode_bc1` and `encode_blocks(format)` beside `encode(quality)`.
 
 The pages against the packers' CPU encoder (AnalyticalWide), all encoded at once from the 20 rayon threads as the
-packers do, on the Radeon 880M (`--bin bc7_gpu`). PSNR is RGB over the texels with alpha > 0; sizes are the blocks at
-Zstd 9; GPU times are the faster of two runs, which gave the same blocks:
+packers do, on the Radeon 880M (`--bin bc7_gpu`), before the optimizations below (their table has the UltraFast
+rows now). PSNR is RGB over the texels with alpha > 0; sizes are the blocks at Zstd 9; GPU times are the faster of two
+runs, which gave the same blocks:
 
 | Pages | Encoder | Wall | Zstd 9 | RGB PSNR | Alpha PSNR |
 |---|---|---|---|---|---|
@@ -597,9 +600,10 @@ RGBA8888 test packages. Slow, the last profile, was left out: Basic already cost
   dB, except on the Classic sprites, from 64 to 60 dB, where both are far above the RGB error. VeryFast and above gain 0.6–3
   dB, but cost 2–15 % in size and 5–20 times the time: that is a choice of quality, not of device. The packers use
   UltraFast (`GPU_BC7_QUALITY` in `udd_conv::atlas::bc_encode_device`).
-- **It is not faster.** At UltraFast the GPU takes the CPU's wall time on 20 threads, give or take 0.05 s: the band
-  uploads and readbacks and the one queue weigh as much as the kernel. What it gives is CPU threads free for the
-  rest of the pack.
+- **It was not faster.** At UltraFast the GPU took the CPU's wall time on 20 threads, give or take 0.05 s: the band
+  uploads and readbacks and the one queue weighed as much as the kernel, which spent most of its time on transparent
+  blocks. What it gave was CPU threads free for the rest of the pack. Below, it encodes a whole pack's pages 2.3 to
+  2.9 times as fast.
 - **Compile:** creating the encoder compiled every profile's pipeline, block_compression's one pipeline holding every
   mode: about 20 s on a cold Mesa cache, 40–50 ms warm. With our kernels (below, "GPU block encoding") creating it
   compiles nothing (60 ms, the device's start) and each format compiles at its first page: UltraFast in 5.2 s cold,
@@ -610,27 +614,120 @@ where the mobile animation (Classic, Enhanced), art, land and aux packers encode
 Classic gumps' BC1 (`gumps_cc`, and the Classic colour space gumps of a lossy `gumps_ec`; our BC1 keeps their
 punch-through transparency, below, "GPU block encoding") is encoded. Auto, the default, encodes the BC1 on the GPU when
 a wgpu adapter is there and the BC7 on the CPU (the user, 2026-11-22: the GPU BC7 pages are 1–2.5 % larger after Zstd
-and faster only on some packs, so they wait for an optimized GPU encoder). If the GPU fails, Auto warns and the CPU
+and faster only on some packs, so they wait for an optimized GPU encoder). Optimized (below), the GPU's BC7 packages
+are as small as the CPU's, 0.5 % smaller over the three art and land packs, and the encode 2.3 to 2.9 times as fast,
+though the whole packs take the same time: the candidate for Auto's BC7, which stays on the CPU until the user
+decides. If the GPU fails, Auto warns and the CPU
 encodes the image. `gpu` puts both on the GPU and fails without an adapter. The RDO, when on, runs after the encode on
 its own device (`--bc7-rdo-device`). The other BC7 images (the Enhanced gumps, effects, radar) are not atlas pages and
 stay on the CPU, as the effects' BC1 does. The converter GUI has both choices on its BC7 cards, and the encode device
 as BC1 Encode on the gump cards packing lossy.
 
 Full packs with their default formats (BC7 without RDO, Zstd 19; release build, 20 threads, a warm shader cache),
-the PSNR over every image against a lossless pack of the same sources, matched by id (`bc7_gpu compare`):
+the PSNR over every image against a lossless pack of the same sources, matched by id (`bc7_gpu compare`). GPU before
+is the encoder before the optimizations below, GPU after with them:
 
 | Pack | Device | Time | Package | RGB PSNR | Alpha PSNR |
 |---|---|---|---|---|---|
-| `pack-art` (Classic, 39 386 images, 232 pages) | CPU | 12.3 s | 43 247 629 bytes | 33.04 dB | 57.22 dB |
-| | GPU | 8.9 s | 43 579 679 bytes (+0.8 %) | 32.70 dB | 58.29 dB |
-| `pack-ec-textures` art (13 305 images, 86 pages) | CPU | 14.7 s, with the land | 39 897 142 bytes | 45.56 dB | 49.64 dB |
-| | GPU | 14.4 s, with the land | 40 277 734 bytes (+1.0 %) | 46.25 dB | 49.21 dB |
+| `pack-art` (Classic, 39 386 images, 232 pages) | CPU | 12.3 s; 10.2–10.6 s | 43 247 629 bytes | 33.04 dB | 57.22 dB |
+| | GPU before | 8.9 s | 43 579 679 bytes (+0.8 %) | 32.70 dB | 58.29 dB |
+| | GPU after | 10.4–11.5 s | 43 269 306 bytes (+0.05 %) | 32.68 dB | 61.95 dB |
+| `pack-ec-textures` art (13 305 images, 86 pages) | CPU | 14.7 s; 17.4–22.0 s, with the land | 39 897 142 bytes | 45.56 dB | 49.64 dB |
+| | GPU before | 14.4 s, with the land | 40 277 734 bytes (+1.0 %) | 46.25 dB | 49.21 dB |
+| | GPU after | 17.2–23.1 s, with the land | 39 619 362 bytes (−0.7 %) | 45.92 dB | 49.55 dB |
 | `pack-ec-textures` land (446 images, 6 pages) | CPU | | 11 082 859 bytes | 50.20 dB | 57.71 dB |
-| | GPU | | 11 365 022 bytes (+2.5 %) | 52.76 dB | 55.79 dB |
+| | GPU before | | 11 365 022 bytes (+2.5 %) | 52.76 dB | 55.79 dB |
+| | GPU after | | 10 862 281 bytes (−2.0 %) | 51.79 dB | 57.81 dB |
 
-The GPU packs are 1–2.5 % larger and within 0.4 dB of the CPU's, or better (the Enhanced land by 2.6 dB). The Classic
-art pack is 28 % faster on the GPU, because the encode leaves the threads to the Zstd 19 of the pages; the Enhanced one,
-whose time goes to reading and composing the sources, is level.
+Before, the GPU packs were 1–2.5 % larger; after, the three packages together are 0.5 % smaller than the CPU's
+(93 750 949 bytes against 94 227 630): the Classic art level, the Enhanced art 0.7 % and the land 2 % smaller. In RGB
+the GPU stays 0.36 dB below the CPU on the Classic art and above it on the Enhanced (0.36 dB on the art, 1.6 on the
+land); its alpha is level or better. The pack times are the whole commands: the first CPU time and GPU before were
+taken on a quiet machine, the ranges after over three runs of each device, alternating, at loads of 7 to 18 from other
+agents' builds and previews. They do not separate the devices: a pack's time goes to reading and composing the sources
+and to the Zstd 19 of the pages (3.5 to 8 s per package), and its BC7 encode is about a second on the CPU's threads,
+half a second on the GPU (the dumped pages below).
+
+### Optimizing the GPU BC7 encode
+
+Before giving Auto's BC7 to the GPU (the user, 2026-11-22: "let's wait for the wgpu version and check if that could be
+further optimized"), where its time and its Zstd bytes went, at UltraFast (`--bin bc7_gpu stats`, `variants`,
+`fields`, `profile`):
+
+- **The kernel ran on empty blocks.** 43 to 67 % of a sprite or art page's blocks are transparent and up to 1 % are one
+  colour; the band upload, the kernel and the readback paid for them as for any other. One page at a time on one
+  thread, the kernel took 0.28 s of the Classic mobile pages' 0.34 s of GPU time (timestamp queries).
+- **The opaque blocks cost the Zstd bytes.** Swapping each kind of block for the CPU's: the transparent and one-colour
+  blocks move the size by at most 0.1 %, the all-opaque blocks of a page with alpha by 0.2 to 1.1 % (the most on the
+  land, 76 % of whose blocks are opaque). Two reasons: in modes 6 and 7 the GPU's p-bit is 0 wherever it fits the colour
+  better, which decodes alpha 254 (252 in mode 7) on texels of alpha 255 and makes the p-bits and alpha endpoints noise
+  to Zstd; and it encodes 3 to 9 % of those blocks in the dual-plane modes 4 and 5 on the sampled pages, 34 % on the
+  dumped land pages, where the CPU's AnalyticalWide puts them mostly through its RGB path, mode 6 with alpha 255 (modes
+  4 and 5 for 0.7 to 6 % on the sampled pages, none on the dumped land). The opaque profile on those blocks (no alpha
+  at all) is larger still: its mode 6 p-bits are free.
+
+What changed (`block_encode.rs`, `bc7.wgsl`, `page_encode.rs`):
+
+1. **One-colour blocks are the CPU's solid block** (mode 5 from the CPU encoder's optimal-endpoint table, appended to
+   the shader as `MODE5_SOLID_ENDPOINTS`): `page_encode` makes them on the CPU and never sends them, and the kernel
+   codes them the same way for the renderer's frames. A transparent block is one of them.
+2. **Packed bands.** `page_encode` sends only the other blocks, side by side, 1024 to a row, and puts them back in
+   place; the kernel and the transfers shrink with the page's empty area.
+3. **Opaque blocks are encoded as the CPU encodes them**: in a page with alpha, a block whose 16 alphas are 255 skips
+   modes 4 and 5 and keeps p-bits 1 in modes 6 and 7, so it decodes alpha 255. On the dumped land pages, mode 6 alone
+   gives up 0.6 dB of the GPU's 2.2 dB lead over the CPU in RGB and takes 4 % off its Zstd bytes.
+
+Every other block is still block_compression's byte for byte (`our_kernels_encode_as_block_compression`, which also
+checks the opaque blocks' RGB error against the CPU's: 0.99 times it at UltraFast, 0.45 to 0.81 times at the slower
+qualities; `uniform_and_opaque_blocks_are_the_cpu_encoders`). A second encode gives the same blocks.
+
+Pages sampled from lossless packs (as above, Zstd 9), and the pages the packers hand their BC7 encoder in a full pack
+(`dumped`: Bc7Oriented layouts, slots on whole blocks, unlike the lossless packs; Zstd 19, as the packages). RGB PSNR
+CPU / GPU; wall on 20 threads, the faster of two runs:
+
+| Pages | CPU wall | GPU before | GPU after | Size vs CPU, before | after | RGB PSNR CPU / GPU after |
+|---|---|---|---|---|---|---|
+| Classic mobile, 20 sampled | 0.27–0.37 s | 0.31 s | 0.19 s | +0.5 % | −0.2 % | 33.59 / 33.31 dB |
+| Enhanced mobile, 16 sampled | 0.26–0.29 s | 0.26 s | 0.12 s | +0.5 % | +0.0 % | 31.95 / 31.65 dB |
+| Classic art, 20 sampled | 0.08–0.09 s | 0.13 s | 0.07 s | +0.5 % | +0.2 % | 33.36 / 33.13 dB |
+| Enhanced art, 16 sampled | 0.14 s | 0.10 s | 0.09 s | +0.0 % | −0.6 % | 37.86 / 37.83 dB |
+| Enhanced land, 6 sampled | 0.07–0.09 s | 0.11 s | 0.10 s | +1.1 % | −0.2 % | 41.30 / 41.59 dB |
+| Classic art, 232 dumped | 1.16 s | | 0.49 s | | +0.2 % | 33.04 / 32.69 dB |
+| Enhanced art, 89 dumped | 0.75 s | | 0.33 s | | −0.9 % | 42.19 / 42.24 dB |
+| Enhanced land, 8 dumped | 0.26 s | | 0.09 s | | −2.0 % | 50.01 / 51.55 dB |
+
+The small sampled sets are a few hundred milliseconds of work, where the GPU's queue and the machine's load (other
+agents' builds) weigh most; on the dumped pages of a whole pack the GPU is 2.3 to 2.9 times as fast. Alpha PSNR moves by
+at most 0.1 dB, but on the Classic sprites and art, where it rises by 4 to 5 dB.
+
+Kernel and transfers, one page at a time on one thread (`profile ... packed`, timestamp queries):
+
+| Pages | Kernel before | Kernel after | Upload + readback after |
+|---|---|---|---|
+| Classic mobile, 20 | 0.280 s | 0.121 s (470 Mpx/s) | 0.11 s |
+| Enhanced mobile, 16 | 0.239 s | 0.092 s | 0.06 s |
+| Classic art, 20 | 0.103 s | 0.046 s | 0.05 s |
+| Enhanced art, 16 | 0.083 s | 0.064 s | 0.08 s |
+| Enhanced land, 6 | 0.098 s | 0.055 s | 0.08 s |
+
+Making the bands' texels on the CPU (finding the solid blocks, packing the others) costs 0.1 to 0.5 s of one thread on
+these pages, which the packers spread over their 20.
+
+**Compile:** unchanged. UltraFast with alpha compiles cold in 6.4 and 6.5 s after, 6.2 and 7.5 s before (alternating
+on the same loaded machine), and the app's warm-up is the same; see shader_compile_progress.md. Nothing tried cut it
+but the bounds checks, below.
+
+Tried and not taken:
+
+- **No bounds checks** (`ShaderRuntimeChecks::bounds_checks: false`): the kernel 1.6 times as fast (0.079 s on the
+  Classic mobile pages), the same blocks on every profile, the cold compile 0.5 s shorter. Left on: an out-of-range
+  index would be undefined behaviour on the GPU instead of a clamped read, and the kernel's indexing was not audited for
+  it. A choice to make.
+- **No loop bounding**: block_compression 0.9.1 turned it back on because RADV/Navi gave wrong BC7 without it.
+- **Gathering the band's texels straight from the page** instead of through a block list, and comparing a block's
+  texels as `u32`s: slower or level.
+- **Overlapping the transfers with the kernel**: the upload and readback are about a tenth of the wall on 20 threads;
+  not worth a second band in flight.
 
 ### The BC7 packages without RDO, and their strides
 
@@ -762,9 +859,13 @@ pages and BC1 gumps (2026-11-22). The API:
   record's own, so several records may share a submission. The blocks are written row-major into the storage buffer
   from `offset` (a multiple of 4); `record_copy_to_layer` copies a frame's blocks into a texture layer.
 
-**The same blocks as the crate.** Every BC7 profile (5 qualities, alpha and opaque) encodes the crate's blocks byte for
-byte: 0 of 188,169 blocks differ on the first and middle page of `mobile_anim_cc`/`_ec` and `tex_art_cc`/`_ec`
-(512² crops) and Classic and Enhanced frames. Only the modes a profile tries are WGSL constants; the numeric settings
+**The same blocks as the crate, but two kinds.** Every BC7 profile (5 qualities, alpha and opaque) encodes the crate's
+blocks byte for byte: 0 of 188,169 blocks differ on the first and middle page of `mobile_anim_cc`/`_ec` and
+`tex_art_cc`/`_ec` (512² crops) and Classic and Enhanced frames. Since 2026-11-22 two kinds of block are encoded as the
+CPU encoder does instead, for blocks Zstd compresses better ("Optimizing the GPU BC7 encode", above): a block of one
+colour is the CPU's solid block, and an all-opaque block of a frame with alpha skips modes 4 and 5 and keeps p-bits 1
+in modes 6 and 7 (`our_kernels_encode_as_block_compression` counts and checks both). Only the modes a profile tries
+are WGSL constants; the numeric settings
 stay in the crate's storage buffer, since as constants up to 0.3 % of the blocks came out different
 (shader_compile_progress.md, "Our block encoder").
 
@@ -826,4 +927,10 @@ check: the atmosphere maps and light textures BC7, the array's textures BC7, or 
 `--bin bc7_gpu <dir> <mobile_cc|mobile_ec|art_cc|art_ec|land_ec> <pages> [profile,...]` times the GPU BC7 encode
 against the CPU's on pages of a lossless package (pack the art and land with `--raw --zstd=9`), and `--bin bc7_gpu
 compare <art_cc|art_ec|land_ec> <lossless dir> <BC7 dir>` gives the PSNR of a packed BC7 package's
-images against a lossless package's, matched by id (the two lay their pages out differently).
+images against a lossless package's, matched by id (the two lay their pages out differently). Set `dumped` reads
+`<width>x<height>_<n>.rgba` pages from the directory (raw RGBA8, a packer's BC7 encoder input dumped by a temporary
+hook), and `BC7_GPU_ZSTD` sets the Zstd level (9 by default; 19 as the packages). `--bin bc7_gpu stats <dir> <set>
+<pages> [profile]` sorts the blocks by kind and gives each kind's modes and Zstd share on both encoders, `variants` the
+size with some kinds swapped for the CPU's or the opaque profile's, `fields` the alpha endpoints and p-bits of the
+opaque blocks' mode 6, and `profile <dir> <set> <pages> [profile] [packed]` the texels, upload, kernel and readback time
+of one page at a time (`packed` as `page_encode` sends its bands).

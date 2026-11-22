@@ -308,6 +308,19 @@ In the app (dev build, Britain, Desktop 4, the BC7 animation packages, one run e
 with ours; warm 0.0 s with both. The window's pipelines were ready after 0.9 to 1.0 s cold and 0.5 to 0.6 s warm with
 both.
 
+The BC7 kernel's solid blocks and its CPU-like opaque blocks (2026-11-22, atlas_page_compression.md, "Optimizing the
+GPU BC7 encode") leave the compile where it was: the same test, before and after alternating, two cold runs each on a
+loaded machine, UltraFast with alpha 7.5 and 6.2 s before, 6.5 and 6.4 s after; opaque UltraFast 1.3 to 1.4 s both;
+BC1 0.23 to 0.27 s both; the slower profiles within their noise (VeryFast 15.5 to 17.9 s, Basic 17.0 to 25.7 s, Slow
+23.8 to 44.3 s, both sides). Turning the kernels' bounds checks off (`ShaderRuntimeChecks`) took 0.5 s off UltraFast's
+cold compile and made its kernel 1.6 times as fast with the same blocks, but is not taken: an out-of-range index would
+be undefined behaviour instead of a clamped read.
+In the app (dev build, Minoc, the BC7 animation packages, an empty Mesa cache per launch, before and after alternating,
+other agents' builds running), the warm-up's line read 11.9 and 14.4 s before, 12.4 and 13.6 s after: the whole
+cache is cold there, so the encoder compiles beside every other pipeline. The renderer's quick tier is the same with
+both (71 captures identical, 22 within tolerance; two Classic water captures caught the after binary's first, cold,
+compile overlay and were identical when taken again).
+
 ## Atlas page formats and what compiles
 
 Nothing Bevy compiles depends on a package's page format, so there is no RGBA8888 or BC7 pipeline to leave out. The

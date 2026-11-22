@@ -1,11 +1,12 @@
 //! Where the packers' BC7 page encode and BC1 gump encode run ([`set_bc_encode_device`]): on the CPU, on the GPU
 //! (uot_gpu_compute::page_encode), or by default (Auto) the BC1 on the GPU when a wgpu adapter is there and the BC7 on
-//! the CPU, whose pages come out 1 to 2.5 % smaller after Zstd and in about the same time. The GPU encodes
-//! BC7 at [`GPU_BC7_QUALITY`], the profile whose quality matches the CPU encoder's, with blocks of its own; both give
-//! the same blocks from run to run. The GPU's BC1 ([`encode_bc1_on_device`]: the single Classic gumps) keeps the
-//! CPU's one bit of alpha on every texel, ten times faster, half a dB below its colour
-//! (docs/agent_notes/atlas_page_compression.md, "GPU block encoding"). The device starts at the first image encoded and
-//! stays for the process, compiling each format's pipeline at its first image; the images encoded at once share it.
+//! the CPU (the user's choice until the optimized GPU BC7 encoder is weighed: its whole packs now come out as small
+//! after Zstd as the CPU's). The GPU encodes BC7 at [`GPU_BC7_QUALITY`], the profile whose quality matches the CPU
+//! encoder's, with blocks of its own; both give the same blocks from run to run. The GPU's BC1
+//! ([`encode_bc1_on_device`]: the single Classic gumps) keeps the CPU's one bit of alpha on every texel, ten times
+//! faster, half a dB below its colour (docs/agent_notes/atlas_page_compression.md, "GPU block encoding"). The device
+//! starts at the first image encoded and stays for the process, compiling each format's pipeline at its first image;
+//! the images encoded at once share it.
 //! The BC7 RDO runs after the encode, on its own device (`bc7_rdo_device`).
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -65,8 +66,8 @@ impl BcEncodeDevice {
         }
     }
 
-    /// Where `format`'s images are encoded: Auto keeps the BC7 on the CPU, whose pages are smaller after Zstd for
-    /// about the GPU's time (docs/agent_notes/atlas_page_compression.md, "BC7 encode on the GPU").
+    /// Where `format`'s images are encoded: Auto keeps the BC7 on the CPU, the user's choice
+    /// (docs/agent_notes/atlas_page_compression.md, "BC7 encode on the GPU").
     fn encode_on(self, format: EncodedFormat) -> EncodeOn {
         match (self, format) {
             (Self::Cpu, _) | (Self::Auto, EncodedFormat::Bc7) => EncodeOn::Cpu,

@@ -170,7 +170,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5ca8c67a97492f3c8263ce18d307053f8aa657e8ecbf191484676bb25ae5f4a"
 dependencies = [
  "bytemuck",
- "wgpu",
 ]
 
 [[package]]
@@ -1895,7 +1894,6 @@ dependencies = [
 name = "uot-gpu-compute"
 version = "0.1.0"
 dependencies = [
- "block_compression",
  "bytemuck",
  "color-eyre",
  "pollster",
