@@ -214,3 +214,29 @@ ClassicUO's fixed UOP actions (walk 22, run 24, stand 25) match only the most co
   without flag 0x2) or 9 with 5; human or equipment 6 (r 0) or 5, 5. A UOP body plays a type-5 action of its
   sequence group. **confirmed**.
 
+## Walk pace
+
+How far a walk or run cycle carries the mobile, for Dynamapper's pace of the cycles. Found on 2026-11-22 with
+`ProbeClassicWalkPace.java` (the field accesses) and decompiles of the functions named.
+
+- The frame shown on the move is the counter +0x1a0 modulo the action's frame count: `GetObjectLayerFrame`
+  0x005441e0 for a MUL action, and for a UOP body, after `CMobile_UpdateUopMoveAction` 0x005b6e40, the counter
+  modulo the frame count at +0x224. **confirmed**.
+- The counter advances once a tick, and only while a step runs (`TickMobiles`, above). A step lasts
+  `CMobile_StepTicks` ticks, the `animinfo.mul` bytes. `AnimInfo_Load` 0x0056a970 reads 2000 two-byte entries and
+  puts 4 (walk) and 2 (run) in an entry that is missing or 0. The installed `animinfo.mul` (4000 bytes) holds 4 and
+  2 for every body. **confirmed**.
+- So a step plays 4 frames walking and 2 running, whatever the body and its clip. A 10-frame walk cycle covers 2.5
+  tiles and a 10-frame run covers 5; a 5-frame animal clip covers half that. At the servers' 400 and 200 ms steps
+  that is about ten frames a second. The step's draw offsets (+0x1f0, +0x1f4) are the ticks left times 22 or 44,
+  over the step's ticks, in the same ticks. Nothing scales the frames by the body's size or the clip's stride.
+  **confirmed**.
+- A server animation on a UOP body (`CMobile_SetUopAction` 0x005b6580) keeps its own clock. The frame time 1000 /
+  fps is at +0x238 (62 ms without one). 0x00454d30 reads it and steps the frame +0x220 (0x00454730) each time that
+  many milliseconds have passed. The move actions don't use this clock. **confirmed** for the code; **probable**
+  that the list it walks (0x0075a8fc) holds the mobiles playing such an action.
+
+By hand on the side facing, the human walk's planted foot travels about 1.35 tiles a cycle and the run's about 2.15.
+The Classic client's legs therefore move about half as fast as the ground needs. ClassicUO's 80 ms a frame across
+the steps (`CHARACTER_ANIMATION_DELAY`) gives 1.25 walk cycles a second, which is also short of the ground.
+

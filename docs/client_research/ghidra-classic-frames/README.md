@@ -75,3 +75,20 @@ Results of the 2026-11-21 report-only run: all 20 checks pass; every function al
 
 Probe: `~/ghidra_scripts/ClassicFramesConstProbe20261101.java` (read-only: finds the functions using an
 operand), plus the GhidraMCP decompiler and cross-references.
+
+## ProbeClassicWalkPace.java
+
+A read-only probe, kept for reproduction. After the same SHA-256 test, it lists every instruction whose memory
+operand has one of the given displacements off a register (a `CMobile` field), with its function and whether the
+instruction writes. It names nothing and writes no file.
+
+```
+ProbeClassicWalkPace.java HEX_DISPLACEMENT...
+run_ghidra_script(program="classic_7.0.103.0_client.exe", script_name="<abs path>/ProbeClassicWalkPace.java",
+                  args="238 220")
+```
+
+The 2026-11-22 run with `238 220` found the writers of the UOP frame time in `CMobile_SetUopAction`, its one
+reader 0x00454d30, and the writers of the frame +0x220. The rest of
+[Walk pace](results/classic_frames.md#walk-pace) comes from decompiling the functions it names,
+`GetObjectLayerFrame` and `CMobile_Draw`.

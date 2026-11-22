@@ -336,8 +336,11 @@ Resolving "server body S, action A, direction D" as the client does:
 The frame clock is time alone: `UOObjectComponentAnimationMob::Update` 0x00434c90 adds its `dt` argument to the
 frame time (component +0x38) and steps whole intervals off it; nothing in it scales the time by the movement or the
 step. Its caller is the component vtable slot 0x00c9f8d4, not traced further, so a scaled `dt` is **unlikely, not
-excluded**. A walk cycle therefore spans however many steps its frames last, as in the Classic client (ClassicUO:
-`CHARACTER_ANIMATION_DELAY`, 80 ms, across steps). 2026-11-21.
+excluded**. A walk cycle therefore spans however many steps its frames last (2026-11-21). The Classic client locks
+its frames to the steps instead, 4 a walk step and 2 a run step (`ghidra-classic-frames` results, "Walk pace"), and
+ClassicUO plays 80 ms a frame across the steps (`CHARACTER_ANIMATION_DELAY`). Checked again on 4.0.102.3 on
+2026-11-22: `BuildMobileAnimation` 0x00433a40 gives each frame set the interval `1 / GetActionFps` (0x00836e24,
+through `SetFrameInterval` 0x00833b71), and nothing on the way reads the movement or the step.
 
 ## AnimationFrame*.uop pixel decoding
 
