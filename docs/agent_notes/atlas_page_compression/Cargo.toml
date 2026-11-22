@@ -1,6 +1,7 @@
 # Reproduces the measurements in ../atlas_page_compression.md. Standalone: build it outside the workspace's target, e.g.
 #   CARGO_TARGET_DIR=/path/to/scratch cargo run --release --bin atlas-page-compression-bench -- /path/to/uddp
-# and the binaries in src/bin the same way (strip_levels, block_pages, upscaled_pages, anim_rdo, rdo_gpu_proto, rdo_gpu).
+# and the binaries in src/bin the same way (strip_levels, block_pages, upscaled_pages, anim_rdo, rdo_gpu_proto, rdo_gpu,
+# aux_maps, aux_bc7_variant).
 [package]
 name = "atlas-page-compression-bench"
 version = "0.1.0"
@@ -9,6 +10,8 @@ publish = false
 
 [dependencies]
 udd-assets = { path = "../../../lib/udd-assets" }
+# The BC7 copy of tex_aux_ec.uddp (aux_bc7_variant).
+udd-container = { path = "../../../lib/udd-container" }
 zstd = { version = "0.13", features = ["experimental"] }
 lz4 = "1"
 flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
@@ -25,5 +28,7 @@ pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 # The GPU RDO itself (rdo_gpu).
 uot-gpu-compute = { path = "../../../lib/support/uot-gpu-compute" }
+# BC4, BC5 and the ISPC BC7 on the CPU (aux_maps).
+block_compression = { version = "0.11", default-features = false, features = ["bc15", "bc7"] }
 
 [workspace]

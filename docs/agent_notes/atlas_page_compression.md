@@ -591,6 +591,71 @@ Against the strides of the RGBA8888 packages (`tool strides export` of both, joi
 - **A few clips cross the acceptance tests.** About 1 % of the strides exist in only one package: a facing measured or
   not, or a stride near the 0.25-tile minimum.
 
+## Atmosphere maps and light textures
+
+`tex_aux_ec.uddp` stores the textures under its reserved keys lossless, RGBA8888 at their own size, whatever the other
+textures take: the three atmosphere maps of `TerrainTexture.uop` (entries 20 to 22, day, night and night sight;
+the renderer samples only the night map, entry 21) and its 29 light textures (25 at 256², 4 at 128²). The packer
+encodes its missing-texture image as the other textures. The client ships the 32 as DXT5 (the light textures) and
+DXT1 (the three maps), without mips, so the lossless texels are the decoded DXT and a BC7 re-encode adds its error on
+top of that. None of them is in the renderer's auxiliary array: the night composite
+(`client_night.rs`) and the light sprites (`client_light_sprites.rs`) each upload their own `Rgba8Unorm` image
+through `load_terrain_texture_rgba`, which decodes BC7 on the CPU. Two other textures are always lossless: the
+Classic `light.mul` lights in `world_lights.uddp` (55 lights, one signed byte per texel, from which the renderer
+builds hued `Rgba8Snorm` textures, so no texture exists at pack time) and the Kingdom Reborn grunge of
+`tex_land_ec.uddp`.
+
+Measured on the test packages of 2026-11-16 with `--bin aux_maps` (2026-11-22). BC7 is the packers' encoder
+(`AnalyticalWide`, RDO off) and the ISPC kernels of `block_compression` at `alpha_slow`, the ones uot-gpu-compute
+runs on the GPU. BC4 keeps the alpha with the texture's mean colour, and BC5 the alpha and the luminance. Sizes are
+Zstd 19 of the payload. PSNR and the largest error are taken against the lossless texels: RGB where alpha is above 0,
+and the colour times alpha, which the light buffer adds.
+
+| Group | Lossless (Zstd) | BC7 | ISPC BC7 | BC4 | BC5 | VRAM RGBA / BC7 / BC4 | BC7 error | ISPC error | BC4 / BC5 error |
+|---|---|---|---|---|---|---|---|---|---|
+| Atmosphere maps (3) | 97.3 KiB | 85.6 | 117.9 | — | 43.4 | 768 / 192 / 96 KiB | 51.0 dB, max 7 | 62.5 dB, max 3 | 30.0 / 36.9 dB, max 40 / 27 |
+| Night map alone | 18.7 KiB | 19.7 | 28.0 | — | 12.1 | 256 / 64 / 32 KiB | 51.3 dB, max 4 | 68.6 dB, max 2 | — |
+| Light textures (29) | 500.6 KiB | 460.2 | 431.4 | 336.7 | 414.4 | 6464 / 1616 / 808 KiB | 60.7 dB, max 4.6 (colour 54.7, max 8) | 60.2 dB, max 4.7 | 44.4 / 44.5 dB, max 48 / 43 |
+| Missing texture | 2.0 KiB | 2.3 | 3.1 | — | 1.8 | 256 / 64 / 32 KiB | 58.3 dB, max 7 | 63.5 dB, max 6 | — |
+| `light.mul` (55) | 328.0 KiB | — | — | 382.3 | — | 11,325 / — / 1433 KiB | — | — | BC4 0.24 steps RMS, max 3 of 31 |
+
+- **Size.** BC7 saves 52 KiB of the 6 MB package: 12 KiB on the maps and 40 KiB on the lights. Several textures grow:
+  the night map, light 1 (7.9 to 14.3 KiB), light 17 (2.9 to 6.8 KiB) and lights 37 to 40 (7.4 KiB each to 10 to 14).
+- **VRAM.** Nothing changes unless the night composite and the light sprites upload BC7 blocks, and today they decode
+  them. With those uploads, the saving would be 4.7 MiB if every light texture were loaded at once (the sprites load
+  a light's texture only when a light in view uses it) and 192 KiB for the night map.
+- **Error.** BC7 keeps the lights within 4.6 levels of light added. On the night map, a near-black texture that the
+  composite scales by four, BC7 shifts the mean by +0.65, +0.53 and +0.20 levels, from (3.21, 4.41, 39.22) to (3.86,
+  4.94, 39.42). That is 20 % more red and 12 % more green: below the 1/255 tolerance of the `NIGHT_MAP_MEAN` check,
+  but a bias where the original texels round to 3 and 4. The ISPC kernels shift it by much less (68.6 dB, max 2).
+  The glow colours of the land and static lights, the alpha-weighted mean of their textures, move by at most one level.
+- **BC4 and BC5 do not fit.** The light textures' colour is not constant (a hot core and a coloured rim), so keeping
+  the alpha alone or the luminance loses up to 48 levels of added light. The atmosphere maps are colour gradients.
+  `light.mul` is smaller as Zstd bytes than as BC4, and its runtime textures (`Rgba8Snorm`, one per light, hue and
+  style: the VRAM column counts one each) carry the hue, so BC4 would have to be encoded at load.
+- **Mixed formats.** These textures never reach the auxiliary array, so storing them BC7 does nothing for the
+  mixed-format fallback of a BC7 package. The fallback came from `AuxLayerFormat::for_slots` counting their RGBA
+  slots. It now counts the slots the array holds (all but the reserved keys, plus the missing texture), and the Kingdom
+  Reborn section takes the Enhanced options. A BC7 package then keeps its array BC7: 651 textures of 256 KiB each as
+  RGBA, against 64 KiB as BC7. With the fix, a copy whose array textures (Kingdom Reborn section included) are BC7
+  loads without the warning and draws the 12 views of Britain's lamp posts, the lava and Deceit within 1 level of
+  the same textures decoded to RGBA8.
+
+**On screen the loss does not show.** The quick tier's night and cave views (45 captures, all four styles) were
+taken with one binary and two copies of the package (`--bin aux_bc7_variant`): BC7 textures in the array, with the
+maps and light textures lossless or BC7. Classic matches exactly, since it draws neither. In the Enhanced, KR-like
+and UOD-Painterly styles, at most 0.013 % of the pixels differ by more than 4 levels (Deceit's candles, largest 8).
+Elsewhere the largest difference is 6 levels (Britain's slate roofs at light level 22 and the lava), and most views
+stay within 3 or 4 levels. The harness still lists 34 of them as changed, because the glow colours move the
+static-light and light-sprite digests. Side by side, and toggled in a video, the frames cannot be told apart. The difference, amplified 16 times, is the night map's 4×4 blocks tiled over
+the ground, and it is one-sided: BC7 brightens the night frames by 0.2 to 0.5 levels on average (Britain's lamp posts
++0.30, +0.23 and +0.13 in the Enhanced style; Deceit +0.38, +0.34 and +0.15). BC7 therefore costs nothing visible
+here, and it gains 52 KiB on disk and no VRAM unless the renderer uploads blocks.
+
+A lossless copy of the client's own texels would be the DXT1 and DXT5 blocks as shipped: bit-exact, 0.5 to 1 byte
+per texel in VRAM, and no re-encode. `PagePixelFormat` has only RGBA8888 and BC7, though, so that needs a format
+change.
+
 ## Reproducing
 
 [`atlas_page_compression/`](atlas_page_compression/) is the benchmark, a standalone crate that reads its pages from a
@@ -611,3 +676,7 @@ the dictionaries were one-off runs with the numbers above. `--bin anim_rdo <dir>
 <look-back>` times the GPU prototype against the CPU RDO on the same pages, and `--bin rdo_gpu <dir> <cc|ec> <pages>
 <λ,...> <look-back,...> [<crop dir> <page> <x> <y> <width> <height>]` the GPU RDO (with its compile time; set
 `MESA_SHADER_CACHE_DIR` to an empty folder for a cold one), writing the crops of the visual check as raw RGBA.
+`--bin aux_maps <dir> [<dump dir>]` measures the atmosphere maps, light textures and `light.mul` lights of
+`tex_aux_ec.uddp` and `world_lights.uddp` in `<dir>`, and with a dump folder writes each texture and its BC7 decode as
+raw RGBA. `--bin aux_bc7_variant <tex_aux_ec.uddp> <output> reserved|array|all` writes the copy of the rendered
+check: the atmosphere maps and light textures BC7, the array's textures BC7, or both.
