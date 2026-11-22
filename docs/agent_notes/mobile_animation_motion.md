@@ -67,8 +67,10 @@ The original clients pace walk cycles by time, whatever the walking speed: Class
 is one 0.4 s step), but big Enhanced creatures skate visibly, and in-betweens make it more visible because the feet
 never plant.
 
-What each client times a clip by: Classic MUL bodies take a frame every 80 ms in ClassicUO; the client itself advances
-them once a mobile tick, which runs when more than 75 ms passed. Classic UOP bodies (`mobtypes.txt` flag 0x10000) take
+What each client times a clip by: Classic MUL bodies take a frame every 80 ms in ClassicUO. The client itself advances
+them once a mobile tick, which runs when more than 75 ms passed, and only while a step runs: 4 frames a walk step and
+2 a run step, so its cycles are locked to the ground ([Human walk and run](#human-walk-and-run-2026-11-22)). Classic UOP
+bodies (`mobtypes.txt` flag 0x10000) take
 1000 / fps of the action in their `AnimationSequence.uop` entry, aliases resolved (`CMobile_SetUopAction` 0x005b6580,
 Classic 7.0.103.0, [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#uop-bodies));
 those entries are the Enhanced client's, which times every body by them (`GetActionFps`). `mobile_anim_cc.uddp`
@@ -159,6 +161,44 @@ The port must feed RIFE exactly what the prototype did: the grey backdrop (RGB o
 the clip's frames share, and only the padding up to a multiple of 64 stays black. With the grey on each frame's own
 rectangle only, the flow near the feet changed and Classic body 9's walk came out 2.66 tiles instead of 2.79; with the
 canvas grey the port matches the prototype to 0.01 tiles.
+
+### Human walk and run (2026-11-22)
+
+The user found the walking human's legs too fast for how far it moved. The flow measures feet short, and the human
+clips are the worst. Each stride below was found by hand on the south-west facing (straight left, 44 px a tile), by
+following the planted foot's ground contact from frame to frame on the dumped frames. The Classic walk's contact
+moves back 8, 8, 7, 3, 2 px a frame, the run's 9.5, and the Enhanced walk's and run's 6.6 and 8.5 (frames of 9 at 9
+fps). A template match of the ground blobs gave the same within 0.1–0.2 tiles. In the table, slip is cycles/s × the
+hand stride − the ground speed: positive, the legs run ahead of the ground; negative, the feet slide forward.
+
+| Clip | Ground | Flow stride | By hand | Before: c/s, slip | After: c/s, slip |
+|---|---|---|---|---|---|
+| Classic 400/401 walk (0) | 2.5 t/s | 0.78 / 0.87 | 1.3 | 2.50 (clamped), +0.75 | 1.92, 0 |
+| Classic 400/401 run (2) | 5.0 | 1.40 / 1.55 | 2.15 | 2.50 (clamped), +0.37 | 2.33, 0 |
+| Enhanced 400/401 walk (1) | 2.5 | 1.16 / 1.24 | 1.4 | 2.00 (clamped), +0.30 | 1.79, 0 |
+| Enhanced 400/401 run (3) | 5.0 | 1.24 / 1.19 | 1.75 | 2.00 (clamped), −1.50 | 2.86, 0 |
+| Enhanced 400 war walk (15) | 2.5 | 1.09 | 1.3 | 2.00 (clamped), +0.10 | 1.92, 0 |
+
+The flow measures short on most bodies, though by different amounts. Unchanged by this fix (flow / by hand,
+side facing): Classic orc 17 walk 0.88 / 1.3 (legs 0.75 t/s ahead), ogre 1 1.92 / 2.25, daemon 9 2.79 / 2.8; Enhanced
+orc 17 1.55 / 2.4 (+1.37), wolf 225 1.04 / 1.55, ogre 1 1.83 / 2.55, daemon 9 2.73 / 3.13, horse 200 walk 1.44 / 1.36.
+The big bodies come close and the small and middle ones measure 0.6–0.8 of their stride. The humans' clips now take
+strides measured by hand (`HAND_STRIDES` in `render/mobiles/pace.rs`). The table covers the Classic walk and run and
+the Enhanced walk, run and war walk of bodies 400–403, 605 and 606; the elves' flow numbers match the humans' to 1%,
+and so do their contacts. A hand stride replaces the package's stride for the clip, still checked against the package
+record's frame hash, and paces the cycle outside the 0.5–2× clamp, which only bounds a flow number: the Enhanced
+run's 0.35 s cycle is a third of its own. A better measurement for every body is still open: the flow's 10th
+percentile over the lowest fifth of the silhouette (`uot-gpu-compute` `strides.rs`) needs checking against the hand
+counts, and the diagonal facings 4 and 6 measure shorter than 5.
+
+The clients (Ghidra): Classic 7.0.103.0 locks the frames to the steps. The frame counter +0x1a0 moves once a tick,
+only while a step runs, and a step lasts the `animinfo.mul` ticks, 4 walking and 2 running for every body; missing
+or 0 entries also read 4 and 2 (`AnimInfo_Load` 0x0056a970). A 10-frame cycle therefore covers 2.5 tiles walking and
+5 running, and the human's legs move at about half the ground's pace. ClassicUO's 80 ms a frame gives 1.25 cycles a
+second. Enhanced 4.0.102.3 plays 1 / fps of the sequence, and nothing on the way reads the movement
+([classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#walk-pace),
+[uosa_animation.md](../client_research/ghidra-animation/results/uosa_animation.md)). Neither client matches feet to
+the ground, so client timing stays as it is and keeps its own speed.
 
 ## Upscaling when zoomed
 

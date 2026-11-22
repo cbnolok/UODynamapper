@@ -213,8 +213,8 @@ fn ground_stride(strides: Option<&mut MobileStrides>, source: AnimSource, body: 
     if motion.movement == Movement::Stand {
         return None;
     }
-    let tiles = strides?.get(source, body, action?)?;
-    Some(GroundStride { tiles, step_secs: motion.step_secs(mounted) })
+    let stride = strides?.get(source, body, action?)?;
+    Some(GroundStride { stride, step_secs: motion.step_secs(mounted) })
 }
 
 fn classic_movement(movement: Movement) -> u8 {
