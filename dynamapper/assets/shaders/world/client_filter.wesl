@@ -37,20 +37,42 @@ fn client_rect_texel(texel: vec2<i32>, extent: vec2<i32>, wrap: bool) -> vec2<i3
   return select(clamp(texel, vec2<i32>(0), size - vec2<i32>(1)), wrapped, wrap);
 }
 
+// A straight-alpha texel premultiplied: its colour weighs by its alpha in a filter's sum, so a transparent texel
+// lends none. The Classic art's transparent texels are black, and a straight tap mixed that black into every edge.
+fn client_premultiplied(texel: vec4<f32>) -> vec4<f32> {
+  return vec4<f32>(texel.rgb * texel.a, texel.a);
+}
+
+// A premultiplied filter sum as straight alpha again: the colour of the texels that have alpha, transparent where
+// none has.
+fn client_straight(sum: vec4<f32>) -> vec4<f32> {
+  if (sum.a <= 0.0) {
+    return vec4<f32>(0.0);
+  }
+  return vec4<f32>(sum.rgb / sum.a, sum.a);
+}
+
 // One bilinear tap inside a rectangle of an array texture. `px` is in texels from the rectangle's origin,
 // texel centres at i + 0.5. The four texels are loaded and blended here, so the taps never reach the
-// atlas neighbours of the rectangle.
+// atlas neighbours of the rectangle. With `premultiply` the texels blend premultiplied (client_premultiplied) and
+// the tap is premultiplied; otherwise they blend as they are.
 fn client_bilinear_rect(tex: texture_2d_array<f32>, layer: i32, origin: vec2<i32>, extent: vec2<i32>,
-    px: vec2<f32>, wrap: bool) -> vec4<f32> {
+    px: vec2<f32>, wrap: bool, premultiply: bool) -> vec4<f32> {
   let corner = px - vec2<f32>(0.5);
   let first = vec2<i32>(floor(corner));
   let weight = corner - floor(corner);
   let t0 = client_rect_texel(first, extent, wrap);
   let t1 = client_rect_texel(first + vec2<i32>(1), extent, wrap);
-  let c00 = textureLoad(tex, origin + t0, layer, 0);
-  let c10 = textureLoad(tex, origin + vec2<i32>(t1.x, t0.y), layer, 0);
-  let c01 = textureLoad(tex, origin + vec2<i32>(t0.x, t1.y), layer, 0);
-  let c11 = textureLoad(tex, origin + t1, layer, 0);
+  var c00 = textureLoad(tex, origin + t0, layer, 0);
+  var c10 = textureLoad(tex, origin + vec2<i32>(t1.x, t0.y), layer, 0);
+  var c01 = textureLoad(tex, origin + vec2<i32>(t0.x, t1.y), layer, 0);
+  var c11 = textureLoad(tex, origin + t1, layer, 0);
+  if (premultiply) {
+    c00 = client_premultiplied(c00);
+    c10 = client_premultiplied(c10);
+    c01 = client_premultiplied(c01);
+    c11 = client_premultiplied(c11);
+  }
   return mix(mix(c00, c10, weight.x), mix(c01, c11, weight.x), weight.y);
 }
 
@@ -80,19 +102,22 @@ fn client_mip_box(dx_texels: vec2<f32>, dy_texels: vec2<f32>, client_view_scale:
   );
 }
 
-// The client's filter on a rectangle: one bilinear tap, or the emulated mip box of four. `dx_texels` and
+// The client's filter on a sprite's rectangle: one bilinear tap, or the emulated mip box of four. `dx_texels` and
 // `dy_texels` are the screen derivatives of `px`, taken before any wrap. Every tap loads its own texels, for
-// textures bound without a bilinear sampler (the sprite atlas's samples nearest).
+// textures bound without a bilinear sampler (the sprite atlas's samples nearest). The texels are straight alpha
+// and blend premultiplied, so an edge keeps its own colour instead of darkening towards the transparent texels'
+// black; the result is straight alpha, its alpha the plain filter's.
 fn client_filtered_rect(tex: texture_2d_array<f32>, layer: i32, origin: vec2<i32>, extent: vec2<i32>,
     px: vec2<f32>, wrap: bool, dx_texels: vec2<f32>, dy_texels: vec2<f32>, client_view_scale: f32) -> vec4<f32> {
   let box = client_mip_box(dx_texels, dy_texels, client_view_scale);
   if (!box.enabled) {
-    return client_bilinear_rect(tex, layer, origin, extent, px, wrap);
+    return client_straight(client_bilinear_rect(tex, layer, origin, extent, px, wrap, true));
   }
-  return (client_bilinear_rect(tex, layer, origin, extent, px - box.offset_x - box.offset_y, wrap)
-    + client_bilinear_rect(tex, layer, origin, extent, px + box.offset_x - box.offset_y, wrap)
-    + client_bilinear_rect(tex, layer, origin, extent, px - box.offset_x + box.offset_y, wrap)
-    + client_bilinear_rect(tex, layer, origin, extent, px + box.offset_x + box.offset_y, wrap)) * CLIENT_FILTER_BOX_TAP_WEIGHT;
+  return client_straight((client_bilinear_rect(tex, layer, origin, extent, px - box.offset_x - box.offset_y, wrap, true)
+    + client_bilinear_rect(tex, layer, origin, extent, px + box.offset_x - box.offset_y, wrap, true)
+    + client_bilinear_rect(tex, layer, origin, extent, px - box.offset_x + box.offset_y, wrap, true)
+    + client_bilinear_rect(tex, layer, origin, extent, px + box.offset_x + box.offset_y, wrap, true))
+    * CLIENT_FILTER_BOX_TAP_WEIGHT);
 }
 
 // One hardware bilinear tap of a rectangle: the point wrapped into the rectangle when it repeats, then kept
@@ -115,7 +140,7 @@ fn client_filtered_rect_sampled(tex: texture_2d_array<f32>, smp: sampler, layer:
     client_view_scale: f32) -> vec4<f32> {
   let box = client_mip_box(dx_texels, dy_texels, client_view_scale);
   if (!box.enabled) {
-    return client_bilinear_rect(tex, layer, origin, extent, px, wrap);
+    return client_bilinear_rect(tex, layer, origin, extent, px, wrap, false);
   }
   return (client_sampled_rect_tap(tex, smp, layer, origin, extent, px - box.offset_x - box.offset_y, wrap)
     + client_sampled_rect_tap(tex, smp, layer, origin, extent, px + box.offset_x - box.offset_y, wrap)
