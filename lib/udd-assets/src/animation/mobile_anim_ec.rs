@@ -265,7 +265,9 @@ pub struct MobileLayerOffsets {
 /// Every layer gets the body's extra offset and `MOBILE_LAYER_SHIFT_Y`; a mounted mobile adds the
 /// mount's extra offset to every layer, and the mount's rider offset to the body and equipment
 /// layers only (confirmed at instruction level). A PositionOffset frame effect of the mount's frame
-/// would replace the rider offset; no data has one.
+/// would replace the rider offset; no data has one. The y of these positions points up on screen
+/// (measured, not traced): read as y down, body 826's flying walk (extra offset 125) sinks 200-300 px
+/// below its cell and every body stands 30 px above its Classic frames.
 pub fn mobile_layer_offsets(
     body: &MobileAnimEcAnimationRecord,
     mount: Option<&MobileAnimEcAnimationRecord>,

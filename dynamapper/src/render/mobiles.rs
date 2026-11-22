@@ -282,9 +282,9 @@ fn enhanced_choice(package: &MobileAnimEcPackage, strides: Option<&mut MobileStr
     if let Some(body_record) = record(appearance.body, body_action) {
         let mount_record = mount.and_then(|(mount, _)| record(mount, mount_action));
         let offsets = anim_ec::mobile_layer_offsets(body_record, mount_record);
-        choice.body_offset_px = (offsets.body.0 as f32, offsets.body.1 as f32);
+        choice.body_offset_px = layer_screen_offset_px(offsets.body);
         if let Some(mount_offset) = offsets.mount {
-            choice.mount_offset_px = (mount_offset.0 as f32, mount_offset.1 as f32);
+            choice.mount_offset_px = layer_screen_offset_px(mount_offset);
         }
     }
     // The rider and the mount keep in step, paced by the steps on the move: by the mount's stride, or by eye
@@ -305,7 +305,33 @@ fn enhanced_choice(package: &MobileAnimEcPackage, strides: Option<&mut MobileStr
 }
 
 /// The packages as `Arc`s, for the clip decodes on the background pool.
+/// The screen offset (x right, y down) of an Enhanced layer at `mobile_layer_offsets`' position, whose y points up: the
+/// client's -15 lowers every layer, and the one extra offset in the data, the stygian dragon's +125 on its flying walk,
+/// lifts frames that reach 100-190 px below their anchor off the ground. Read as y down, the dragon walked 200-300 px
+/// underground and every Enhanced body stood 30 px above the Classic one on the same cell.
+fn layer_screen_offset_px((x, y): (i32, i32)) -> (f32, f32) {
+    (x as f32, -(y as f32))
+}
+
 pub fn anim_packages(classic: Option<Arc<MobileAnimCcPackage>>, enhanced: Option<Arc<MobileAnimEcPackage>>)
     -> MobileAnimPackages {
     MobileAnimPackages(AnimPackages { classic, enhanced })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stygian dragon's flying walk (body 826, action 19) carries the data's one extra offset.
+    const STYGIAN_FLYING_EXTRA_OFFSET_Y: i32 = 125;
+
+    #[test]
+    fn an_enhanced_layer_offset_lifts_with_its_y() {
+        let on_foot = (0, anim_ec::MOBILE_LAYER_SHIFT_Y);
+        assert_eq!(layer_screen_offset_px(on_foot), (0.0, -anim_ec::MOBILE_LAYER_SHIFT_Y as f32),
+            "the client's shift lowers a body on foot");
+        let flying = (0, STYGIAN_FLYING_EXTRA_OFFSET_Y + anim_ec::MOBILE_LAYER_SHIFT_Y);
+        let (_, down) = layer_screen_offset_px(flying);
+        assert!(down < 0.0, "the stygian's flying walk is lifted off its cell, not sunk {down} px into it");
+    }
 }
