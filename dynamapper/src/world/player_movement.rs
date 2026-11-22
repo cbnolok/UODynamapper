@@ -8,7 +8,7 @@ use crate::prelude::*;
 use crate::world::coords::UOVec4;
 use crate::world::mobile_motion::{direction_of_step, step_secs, MobileMotion, Movement};
 use crate::world::statics::StaticsStoreRes;
-use crate::world::walk_z::{nearest_floor_z, step_cell, walk_step, MapWalkCells};
+use crate::world::walk_z::{body_step, MapWalkCells};
 use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -273,10 +273,17 @@ fn sys_player_move(
                 let current_pos = player
                     .current_pos
                     .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
-                // A drawn body follows the ground, and turns beside a corner it cannot cut, as the client walks.
-                let (dir, ground_z) = match body.and_then(|_| ground.step(current_pos, dir)) {
-                    Some((dir, z)) => (dir, Some(z)),
-                    None => (dir, None),
+                // A drawn body follows the ground, turns beside a corner it cannot cut and stops where the client
+                // blocks the step, facing it, as the client walks.
+                let (dir, ground_z) = match body.map_or(BodyStep::Unknown, |_| ground.step(current_pos, dir)) {
+                    BodyStep::Walk(dir, z) => (dir, Some(z)),
+                    BodyStep::Blocked => {
+                        if let (Some(mut motion), Some(facing)) = (motion, direction_of_step(dir)) {
+                            motion.facing = facing;
+                        }
+                        continue;
+                    }
+                    BodyStep::Unknown => (dir, None),
                 };
                 if let (Some(mut motion), Some(mounted)) = (motion, body) {
                     motion.step(dir, move_dir.run, mounted);
@@ -346,11 +353,23 @@ struct GroundData<'w> {
     tilemeta: Option<Res<'w, TileMetaPackageRes>>,
 }
 
+/// A drawn body's next step.
+enum BodyStep {
+    /// The step it takes and its z.
+    Walk(IVec2, i8),
+    /// The client blocks it: the body turns towards it and stays.
+    Blocked,
+    /// The map's data is not there: the step goes as asked, at the body's z.
+    Unknown,
+}
+
 impl GroundData<'_> {
-    /// The step of a walker at `pos` towards `dir`: the step it takes and its z (`walk_step`). A step the client
-    /// would block is taken anyway, the viewer being free to go anywhere, onto the floor nearest the walker's z.
-    /// `None` without the map's data.
-    fn step(&self, pos: UOVec4, dir: IVec2) -> Option<(IVec2, i8)> {
+    /// The step of a drawn body at `pos` towards `dir`, as the client walks it (`body_step`).
+    fn step(&self, pos: UOVec4, dir: IVec2) -> BodyStep {
+        self.walk(pos, dir).unwrap_or(BodyStep::Unknown)
+    }
+
+    fn walk(&self, pos: UOVec4, dir: IVec2) -> Option<BodyStep> {
         let direction = direction_of_step(dir)?;
         let map = usize::from(pos.m);
         let plane = self.map_planes.as_ref()?.0.get(map)?.as_ref()?;
@@ -358,14 +377,11 @@ impl GroundData<'_> {
         let tilemeta = &self.tilemeta.as_ref()?.0;
         let mut cells = MapWalkCells::new(plane.package(), plane.size_cells(), &mut statics, tilemeta);
         let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
-        let (dir, z) = match walk_step(&mut cells, x, y, z, direction) {
-            Some((_, to_x, to_y, to_z)) => (IVec2::new(to_x - x, to_y - y), to_z),
-            None => {
-                let (to_x, to_y) = step_cell(x, y, direction);
-                (dir, nearest_floor_z(&mut cells, to_x, to_y, z).unwrap_or(z))
-            }
-        };
-        Some((dir, z.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8))
+        Some(match body_step(&mut cells, x, y, z, direction) {
+            Some((to_x, to_y, to_z)) => BodyStep::Walk(IVec2::new(to_x - x, to_y - y),
+                to_z.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8),
+            None => BodyStep::Blocked,
+        })
     }
 }
 
@@ -408,13 +424,44 @@ fn sys_smooth_player_transform(
             return;
         }
         let max_cells = time.delta_secs() / step_secs.max(f32::EPSILON);
-        let towards = |from: f32, to: f32| from + (to - from).clamp(-max_cells, max_cells);
-        transform.translation.x = towards(transform.translation.x, target.x);
-        transform.translation.z = towards(transform.translation.z, target.z);
-        transform.translation.y = target.y;
+        transform.translation = slide_towards(transform.translation, target, max_cells);
         return;
     }
 
     let smoothing = (time.delta_secs() * 14.0).clamp(0.0, 1.0);
     transform.translation = transform.translation.lerp(target, smoothing);
+}
+
+/// A drawn body's slide from `from` towards `target` by at most `max_cells` along each map axis. Its height follows
+/// the slide evenly, as the client raises or lowers a stepping mobile over its step (ClassicUO `Mobile.ProcessSteps`,
+/// `Offset.Z`): a body stepping up a stair or a slope neither floats over its cell nor sinks into the next one.
+/// A change of height alone is made at once.
+fn slide_towards(from: Vec3, target: Vec3, max_cells: f32) -> Vec3 {
+    let towards = |from: f32, to: f32| from + (to - from).clamp(-max_cells, max_cells);
+    let (x, z) = (towards(from.x, target.x), towards(from.z, target.z));
+    let cells_left = |x: f32, z: f32| (target.x - x).abs().max((target.z - z).abs());
+    let (before, after) = (cells_left(from.x, from.z), cells_left(x, z));
+    let y = if before > 0.0 { target.y - (target.y - from.y) * (after / before) } else { target.y };
+    Vec3::new(x, y, z)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stepping_body_rises_with_its_slide() {
+        let rise = crate::world::coords::scale_uo_z_to_bevy_units(10.0);
+        let (from, target) = (Vec3::ZERO, Vec3::new(1.0, rise, 0.0));
+        let quarter = slide_towards(from, target, 0.25);
+        assert!((quarter.x - 0.25).abs() < 1e-6 && (quarter.y - rise * 0.25).abs() < 1e-6, "{quarter}");
+        let half = slide_towards(quarter, target, 0.25);
+        assert!((half.y - rise * 0.5).abs() < 1e-6, "{half}");
+        assert_eq!(slide_towards(half, target, 1.0), target);
+        // A diagonal step: the height follows the longer axis.
+        let diagonal = slide_towards(from, Vec3::new(1.0, rise, 1.0), 0.5);
+        assert!((diagonal.y - rise * 0.5).abs() < 1e-6, "{diagonal}");
+        // A height change alone: at once.
+        assert_eq!(slide_towards(target, target + Vec3::Y, 0.25), target + Vec3::Y);
+    }
 }

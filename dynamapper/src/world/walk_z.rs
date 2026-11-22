@@ -250,6 +250,22 @@ pub fn walk_step(cells: &mut impl WalkCells, x: i32, y: i32, z: i32, direction: 
     DIAGONAL_TURNS.iter().find_map(|&turn| attempt(cells, beside(turn)))
 }
 
+/// A drawn body's step from (`x`, `y`, `z`) in `direction`: the cell and z of the step the client takes
+/// (`walk_step`), or `None` where it blocks every try, so that the body turns and stays. A body the client lets out
+/// in no direction, as one set inside a rock or into a river, steps as asked onto the floor nearest its z
+/// (`nearest_floor_z`) instead, so that the viewer is never stuck.
+pub fn body_step(cells: &mut impl WalkCells, x: i32, y: i32, z: i32, direction: u8) -> Option<(i32, i32, i32)> {
+    if let Some((_, to_x, to_y, to_z)) = walk_step(cells, x, y, z, direction) {
+        return Some((to_x, to_y, to_z));
+    }
+    let directions = 0..DIRECTION_OFFSETS.len() as u8;
+    let boxed_in = directions.into_iter().all(|other| walk_step(cells, x, y, z, other).is_none());
+    boxed_in.then(|| {
+        let (to_x, to_y) = step_cell(x, y, direction);
+        (to_x, to_y, nearest_floor_z(cells, to_x, to_y, z).unwrap_or(z))
+    })
+}
+
 /// The floor of the cell (`x`, `y`) nearest to `z`: its land, even water or rock, or the top of a static a walker
 /// stands on. For a walker set where the client would not step, as into a river; `None` when the cell has neither.
 pub fn nearest_floor_z(cells: &mut impl WalkCells, x: i32, y: i32, z: i32) -> Option<i32> {
@@ -434,6 +450,45 @@ mod tests {
         }
         assert_eq!(walk_z(&mut River, 1, 0, -1, EAST), None);
         assert_eq!(nearest_floor_z(&mut River, 1, 0, -1), Some(-5));
+    }
+
+    #[test]
+    fn a_body_stops_at_an_impassable_planter_and_walks_on_beside_it() {
+        // Britain's planter (1480..=1481, 1722..=1724, map 1): flower beds 0x4B22.. at z 0, 5 high, Impassable.
+        let bed = WalkStatic { z: 0, height: 5, flags: TaeFlag::Impassable.bits() };
+        let mut cells = Cells::flat(0);
+        cells.statics.insert((1, 0), vec![bed]);
+        assert_eq!(body_step(&mut cells, 0, 0, 0, EAST), None);
+        assert_eq!(body_step(&mut cells, 0, 1, 0, EAST), Some((1, 1, 0)));
+        // A body set inside it walks out.
+        assert_eq!(body_step(&mut cells, 1, 0, 0, EAST), Some((2, 0, 0)));
+    }
+
+    #[test]
+    fn a_body_stops_at_the_statue_and_climbs_its_pedestal() {
+        // Britain's black statue (1480..=1481, 1713..=1714, map 1) on stone pedestals 0x0750: z 0, 10 high, Surface
+        // and Bridge. The statue's pieces 0x139E.. stand on them at z 6, Impassable.
+        let pedestal = WalkStatic { z: 0, height: 10, flags: (TaeFlag::Surface | TaeFlag::Bridge).bits() };
+        let statue = WalkStatic { z: 6, height: 15, flags: TaeFlag::Impassable.bits() };
+        let mut cells = Cells::flat(0);
+        cells.statics.insert((1, 0), vec![pedestal]);
+        cells.statics.insert((2, 0), vec![pedestal, statue]);
+        assert_eq!(body_step(&mut cells, 0, 0, 0, EAST), Some((1, 0, 5)), "onto the pedestal's half height");
+        assert_eq!(body_step(&mut cells, 1, 0, 5, EAST), None, "into the statue");
+    }
+
+    #[test]
+    fn a_body_boxed_in_steps_as_asked_onto_the_nearest_floor() {
+        let wall = WalkStatic { z: 0, height: 20, flags: TaeFlag::Impassable.bits() };
+        let mut cells = Cells::flat(0);
+        for y in -1..=1 {
+            for x in -1..=1 {
+                if (x, y) != (0, 0) {
+                    cells.statics.insert((x, y), vec![wall]);
+                }
+            }
+        }
+        assert_eq!(body_step(&mut cells, 0, 0, 0, EAST), Some((1, 0, 0)));
     }
 
     #[test]
