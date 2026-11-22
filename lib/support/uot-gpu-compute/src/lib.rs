@@ -6,6 +6,7 @@
 //! pipelines ahead of use (the block encoder compiles on its own). Shaders and weights are embedded in the binary.
 
 pub mod block_encode;
+pub mod frame_upscales;
 pub mod in_betweens;
 pub mod rife;
 pub mod strides;

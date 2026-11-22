@@ -212,6 +212,42 @@ crossfade, RIFE x2 and x4 (scripts and captures in `uodynamapper-scratch/span-in
   walking then standing): `uodynamapper-scratch/span-ingame/videos/*-off-vs-span.mp4`.
 - The regression harness with upscale off (quick tier) matches the commit before: 76 identical, 15 within tolerance.
 
+## Ahead of time instead of at run time (measured 2026-11-22)
+
+What SPAN 2× and the RIFE in-betweens would cost made by the converter instead of the game, measured by
+`ahead_of_time_motion_costs` (ignored, `lib/udd-conv/src/animation/ahead_of_time_motion.rs`, with
+`uot_gpu_compute::frame_upscales`) on the Radeon 880M. Method: each package's stored clips, split into 8 strata of
+equal 1× texels, 40 random clips from each; every option's frames of a sample packed at the package's page size and
+gutter, BC7-encoded without RDO by the packer's encoder and Zstd 9'd; each stratum scaled by its texels over its
+sample's. Sizes are the ratio to the sample's 1× times the BC7 packages (Classic 867 MB, Enhanced 1.94 GB; the
+sample's own 1× estimate is 3–9 % above them). The 1× frames stay in any package with SPAN, since the game draws
+them below 1.5×; the RIFE sequences replace the clips (×4 is 3.2–3.7×, not 4×, since in-betweens are trimmed).
+Times are GPU time on this machine, by clips, plus 2–25 minutes of packing, BC7 and Zstd on all threads. The upscaler
+submits and reads back each frame alone, 1.6–1.8× the game's cost model; a batched path could approach that
+(SPAN alone: Classic 32, Enhanced 56 minutes).
+
+| option | Classic package | Enhanced package | both | conversion (both) |
+|---|---:|---:|---:|---:|
+| 1× (BC7 + Zstd 9) | 0.87 GB | 1.94 GB | 2.8 GB | — |
+| SPAN 2× (+ the 1× frames) | 4.4 GB (5.0×) | 9.3 GB (4.8×) | 13.7 GB | 2.5 h |
+| RIFE ×2 | 1.6 GB (1.9×) | 3.8 GB (2.0×) | 5.5 GB | 2.1 h |
+| RIFE ×4 | 2.7 GB (3.2×) | 7.2 GB (3.7×) | 9.9 GB | 4.9 h |
+| SPAN 2× + RIFE ×2 (+ the ×2 sequences) | 8.2 GB (9.5×) | 18.4 GB (9.5×) | 26.6 GB | 7.0 h |
+| SPAN 2× + RIFE ×4 (+ the ×4 sequences) | 14.2 GB (16.4×) | 34.3 GB (17.7×) | 48.5 GB | 14.5 h |
+
+In game, frames made ahead of time take the same atlas pages as the ones made at run time (the 2× frames 4× the
+texels, in the upscaled pool), so VRAM barely changes: they save the SPAN workspaces (5.6–89 MB each while in use,
+within the driver's 64 MiB blocks with BC7) and the RIFE scratch (6 MiB). What they save is GPU time (up to the 2 ms
+budget a frame while sequences are made) and the time to 2× or to the in-betweens (seconds) for a read and decode of
+about 4× (SPAN) to 13–14× (SPAN with RIFE ×4) the clip's bytes, 2.3–4.5 ms a 4 MiB BC7 page on one thread. They also fix the
+choice: the in-between mode (crossfade, ×2, ×4) and SPAN on or off would be the package's, unless it stored each,
+and in-betweens in a package need a format field the clips lack (their frame timing).
+
+Kept at run time: RIFE and SPAN both fit the shared 2 ms budget with frame time within noise, and the packages stay
+2.8 GB. Ahead of time, RIFE ×2 alone (+2.7 GB) is the only option of the size of one more package, and it would
+still remove the run-time choice. A frame too large for the run-time SPAN canvas (above 256², the stygian) would be
+the case for a few upscales made ahead of time.
+
 ## Sharpening
 
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU

@@ -3458,6 +3458,10 @@ pub fn serialize_body_manifest(bodies: &[MobileAnimEcBodyRecord]) -> eyre::Resul
 }
 
 #[cfg(test)]
+#[path = "ahead_of_time_motion.rs"]
+mod ahead_of_time_motion;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use udd_assets::MobileAnimEcPackage;
