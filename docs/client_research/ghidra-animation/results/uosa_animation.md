@@ -465,6 +465,31 @@ Over the zeroed atlas, a single layer gives: solid = (R, G, B, 255); edge with f
 (R*f >> 4, G*f >> 4, B*f >> 4, 255*f >> 4). That is premultiplied over black. The straight-alpha
 equivalent is (R, G, B, 255*f >> 4).
 
+### Drawing a mobile: the card and its ground strips
+
+UOSA 2.58.0.6. `MobAnimTriShape::RenderImmediate` 0x004328b0 is slot +0x88 of the shape's vtable 0x00c9f9ac (read
+from memory); the shape is built by 0x00435140. The shadow shape's slot +0x88 (vtable 0x00c9fa54) is 0x00432110.
+
+- The bounds are the composite's, from `GetLayerBounds` (above). It subtracts the layer offsets, so a positive y
+  offset moves a layer up the screen. This confirms by trace the sign `render/mobiles.rs` `layer_screen_offset_px`
+  had taken from measurement (2026-11-22, motion note).
+- The cut is 8 pixels above the anchor (-8, y down from the anchor). If the frame's bottom is above that line
+  (bottom < -7), the cut is the bottom. A seated mobile also cuts at its bottom.
+- The main quad runs from the top of the bounds down to the cut. It is a camera-facing card at the mobile's position,
+  in units of `scale(+0xac) * 0.021427423` per frame pixel.
+- Below the cut come 4 strips (i = 1..4). Each is 1.414 world units tall (one cell's diagonal; 65.990204 / scale frame
+  pixels of the texture). Strip i moves by world (i, 0, -i), which is UO (x + i, y + i): 2i rows nearer. The strips
+  tile the screen under the cut without a gap. Anything below the fourth strip is not drawn. A seated mobile's
+  strips have zero size.
+- The main shape carries alpha, texturing, vertex colour and stencil properties but no `NiZBufferProperty`, so
+  Gamebryo's default applies: depth test and write on. The shadow tests depth but does not write it.
+
+So the land in front of a mobile, which lies behind the mobile's lower pixels, never covers them: each strip is as
+near as the land of the rows it lies over. The renderer follows this for the Enhanced frames
+(`render/mobiles/draw.rs` `MobileGroundStrips`, art/depth.wesl `mobile_ground_strip`). ClassicUO does the same for
+the Classic frames (`MobileView.DrawInternal`): the frame above its anchor one row nearer, then each slice below it,
+as tall as that part, two rows nearer than the one above.
+
 ### Frame-set loading per layer
 
 `UOAnimations::LoadLayerFrameSet` 0x00439b70 (owner, out, id, any-action flag, animation definition

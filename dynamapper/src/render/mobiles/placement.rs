@@ -6,7 +6,7 @@ use crate::render::statics::static_placement::{StaticBillboardBounds, CC_TILE_PI
     CC_WORLD_Y_PER_PIXEL};
 
 /// The pixels from a cell's near vertex up to its centre on screen: half the tile's 44-pixel diamond.
-const CELL_CENTRE_ABOVE_NEAR_VERTEX_PX: f32 = CC_TILE_PIXEL_WIDTH * 0.5;
+pub(crate) const CELL_CENTRE_ABOVE_NEAR_VERTEX_PX: f32 = CC_TILE_PIXEL_WIDTH * 0.5;
 
 /// A frame as placed on screen: its size and its anchor, in pixels from its top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq)]

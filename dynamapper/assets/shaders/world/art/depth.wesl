@@ -80,6 +80,18 @@ fn sprite_priority_view_z(tile_xy: vec2<f32>, priority_z: f32, tie_level: f32) -
     return logical_view_z(tile_xy, priority_logical_height(priority_z, tie_level));
 }
 
+// The ground strip of a mobile's card that a fragment at `local_y` on it falls in (MobileGroundStrips,
+// render/mobiles/draw.rs): 0 above `cut_local_y`, then 1 to `strips`, each `strip_height` tall, the last one taking
+// everything below. The fragment is ordered that many cells nearer in each map axis, two rows a strip, as the
+// Enhanced client draws the part of a mobile below its anchor: the land of the rows in front, which lies behind those
+// pixels, would otherwise cover them. No strips (0) keeps the whole card at its anchor.
+fn mobile_ground_strip(local_y: f32, cut_local_y: f32, strip_height: f32, strips: u32) -> f32 {
+    if (strips == 0u) {
+        return 0.0;
+    }
+    return clamp(ceil((cut_local_y - local_y) / strip_height), 0.0, f32(strips));
+}
+
 // The view z of a fragment at world `world_xz` of a surface lying over its cell at `priority_z`, as the land and the
 // projected shadows: its cell's anchor at tie level 0, one depth for the whole cell.
 fn cell_priority_view_z(world_xz: vec2<f32>, priority_z: f32) -> f32 {

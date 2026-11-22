@@ -439,3 +439,42 @@ The visual harness hides the player and cannot walk a body, so unit tests guard 
 after videos are in `uodynamapper-scratch/mobile-ground/`: `stygian-before-after.mp4` (KR-like, Enhanced,
 UOD-Painterly), `human-foot-before-after.mp4` and `human-horse-before-after.mp4` (Classic, KR-like) and
 `human-styles-before-after.mp4` (Enhanced, UOD-Painterly).
+
+### The legs of a ridden Enhanced horse under the land in front (2026-11-22)
+
+After the layer offsets were made to point up, the user saw the legs of a ridden horse in Enhanced hidden by the
+land for some frames of its walk. Measured on the recordings (rider 400 on horse 200, walking east): in about half of
+each stride the front hooves were cut along a cell edge, where they reached right of and below the cell's centre.
+The same happened in KR-like and UOD-Painterly, which draw the Enhanced frames, and not in Classic.
+
+- **Cause.** A mobile's card had one depth: its depth cell's row, priority z + 1 (`render/mobiles/draw.rs`). The
+  land of a nearer row (row + 1 at its z - 2) is nearer than the whole card. Its diamond starts at the anchor's
+  height, one cell right or left of it, so it covered every pixel of the card below the anchor that lies over it.
+  The Enhanced frames reach well below their anchor (a ridden horse's hooves 20-40 pixels, more after the -15 shift
+  was made to lower the layers), the Classic frames hardly at all. Standing still, the hooves stay over the mobile's
+  own cell and show. Walking, the front hooves reach past it, as far as cell x + 2 while the depth cell moves one
+  cell at a time, so they show or hide with the stride.
+- **What the clients do.** The Enhanced client (UOSA `MobAnimTriShape::RenderImmediate`, traced in
+  [uosa_animation.md](../client_research/ghidra-animation/results/uosa_animation.md#drawing-a-mobile-the-card-and-its-ground-strips))
+  draws the frame down to 8 pixels above its anchor at the mobile, then 4 strips of one diagonal cell each, every one
+  moved one cell nearer in x and y. ClassicUO slices the Classic frame at its anchor the same way, two rows a slice.
+  Both draw the lower part as near as the land it lies over.
+- **Fix.** The Enhanced frames' fragments below the cut take the depth of their strip
+  (`MobileGroundStrips`, art/depth.wesl `mobile_ground_strip`, applied in art/main.wesl with `MOBILE_FRAMES`): row + 2
+  per strip, the same priority z and tie level, so the rider stays over its mount. Below the fourth strip the client
+  draws nothing; here the fourth strip takes it, so no frame loses pixels. The depth is per fragment, not per card, so
+  the card, its crossfade, its client filter, local lights and shadows are untouched. Classic frames keep one card:
+  they do not reach far enough below the anchor, and ClassicUO's slices would change their order against statics.
+  A unit test walks every pixel of the strips' reach, at rest and sliding: no flat land at the mobile's z covers it.
+- **Kept.** The stygian dragon's flight and the human's height are unchanged. A pixel is never ordered farther than
+  before, so the strips only show more of a body. Land rising in front still covers it (a cell of the strip's rows
+  more than 3 z above the body, or any cell of a nearer row), as in the client. On a slope this can cover one strip
+  and not the one below it, leaving a straight edge across a low wing (the stygian dragon walking up the slope west
+  of Britain). Before the fix the land hid both strips there.
+- **Statics.** Britain's planter, statue and pedestal still cover a horse stopped behind them, in all four styles,
+  as before. A strip is as near as the land of its rows, so a static one row in front whose art reaches below the
+  cut would draw behind the legs there, as in both clients.
+- **Evidence.** Before | after videos in `uodynamapper-scratch/ec-mount-legs/` (scripts in `scripts/`):
+  `horse-enhanced-before-after.mp4` (walk and run in six directions, slopes, the planter, the statue and its
+  pedestal), `horse-other-styles-before-after.mp4` (KR-like, UOD-Painterly, Classic unchanged),
+  `stygian-before-after.mp4` and `foot-before-after.mp4` (the human on foot and an unridden horse).

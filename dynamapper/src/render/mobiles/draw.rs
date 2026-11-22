@@ -15,7 +15,7 @@ use crate::render::lighting::static_lights::RenderStaticLightInstances;
 use crate::render::scene::SceneStateData;
 use crate::render::statics::statics_collect::static_art_billboard_local_light_corners;
 use crate::render::statics::static_placement::{apply_cc_static_world_anchor_translation, StaticDepthClass,
-    STATIC_ART_Y_BIAS};
+    CC_TILE_PIXEL_WIDTH, CC_WORLD_Y_PER_PIXEL, STATIC_ART_Y_BIAS};
 use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
 use crate::world::mobile_motion::MobileMotion;
@@ -23,7 +23,7 @@ use crate::world::player::Player;
 use super::clips::{AnimSource, AtlasEntry, ClipKey, MobileClips};
 use super::frame_atlas::{AtlasFormat, MobileFrameAtlas};
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
-use super::placement::mobile_card_bounds;
+use super::placement::{mobile_card_bounds, CELL_CENTRE_ABOVE_NEAR_VERTEX_PX};
 use super::rife_in_betweens::MobileInBetweens;
 use super::upscales::{atlas_pages_wanted, upscale_key, MobileUpscale, MobileUpscaleGate, MobileUpscaleSwitches,
     MobileUpscales, UpscalePriority, UpscaleSwitch};
@@ -43,15 +43,60 @@ const MOBILE_PIXEL_RATIO: f32 = 1.0;
 /// How far into a cell a sliding mobile must be for its depth to take that cell: below this, the float error of a
 /// mobile at rest on its cell.
 const DEPTH_CELL_SLIDE_EPSILON: f32 = 1.0 / 1024.0;
+/// The Enhanced client's cut above a mobile's anchor, in screen pixels, below which it draws the frame in ground strips
+/// (UOSA 2.58 `MobAnimTriShape::RenderImmediate` 0x004328b0: -8, y down, from the anchor).
+const ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX: f32 = 8.0;
+/// The height of a ground strip, in screen pixels: one diagonal cell (the client's 1.414 world units), the step
+/// between the centres of two cells one row apart in each map axis.
+const ENHANCED_GROUND_STRIP_PX: f32 = CC_TILE_PIXEL_WIDTH;
+/// The Enhanced client's ground strips; below the last, it draws nothing (here the last strip takes it).
+const ENHANCED_GROUND_STRIPS: u32 = 4;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
-/// statics' sprite instance, then the crossfade of its frames.
+/// statics' sprite instance, the crossfade of its frames and its ground strips.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MobileSpriteInstance {
     pub sprite: SpriteInstance,
     pub crossfade: FrameCrossfade,
+    pub ground: MobileGroundStrips,
+}
+
+/// Where a mobile's card is ordered nearer than its anchor (art/depth.wesl `mobile_ground_strip`), in the card's local
+/// world y: below `cut_local_y`, `strips` strips `strip_height` tall, each one cell nearer in both map axes than the
+/// one above it.
+///
+/// The Enhanced client draws the part of a mobile below its anchor so (UOSA `MobAnimTriShape::RenderImmediate`): the
+/// frame down to 8 pixels above its anchor as one card at the mobile, then 4 strips, each one diagonal cell tall and
+/// moved one cell nearer in x and y, and nothing below. Each strip so lies over the land of the rows it covers, which
+/// drawn flat behind the mobile would otherwise cover its legs: the Enhanced frames reach well below their anchor (a
+/// ridden horse's hooves, after the layer offsets point up). The Classic frames keep one card at the anchor.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct MobileGroundStrips {
+    pub cut_local_y: f32,
+    pub strip_height: f32,
+    pub strips: u32,
+    pub _pad: u32,
+}
+
+impl MobileGroundStrips {
+    /// The strips of a frame from `source`, on a card whose anchor sits on its cell's centre (placement.rs). The cut
+    /// is the mobile's anchor's, whatever the layer's offset: the client cuts the composite's bounds, which hold the
+    /// layers' offsets, at the mobile's position.
+    fn of(source: AnimSource) -> Self {
+        match source {
+            AnimSource::Enhanced => Self {
+                cut_local_y: (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX + ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX)
+                    * CC_WORLD_Y_PER_PIXEL,
+                strip_height: ENHANCED_GROUND_STRIP_PX * CC_WORLD_Y_PER_PIXEL,
+                strips: ENHANCED_GROUND_STRIPS,
+                _pad: 0,
+            },
+            AnimSource::Classic => Self::default(),
+        }
+    }
 }
 
 /// What a mobile looks like: its body, and the body of its mount, if it rides one, and the actions they show.
@@ -402,7 +447,7 @@ fn mobile_instance(
             true, lights, map_id, world_x, world_z, translation.y, bounds, false)),
         color_rgba: OPAQUE_COLOR,
     };
-    MobileSpriteInstance { sprite, crossfade: frames.crossfade }
+    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ground: MobileGroundStrips::of(source) }
 }
 
 /// The cell a mobile at (`x`, `z`) is ordered from: its own at rest, and while it slides between two cells, the
@@ -429,11 +474,81 @@ mod tests {
 
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
-        // A SpriteInstance (144 bytes, aligned to its vec4) then a FrameCrossfade (48), on a 16-byte stride.
+        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48) and MobileGroundStrips (16), on a
+        // 16-byte stride.
         const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
-        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 192;
+        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 208;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
+    }
+
+    /// art/depth.wesl `mobile_ground_strip`.
+    fn ground_strip(ground: MobileGroundStrips, local_y: f32) -> f32 {
+        if ground.strips == 0 {
+            return 0.0;
+        }
+        ((ground.cut_local_y - local_y) / ground.strip_height).ceil().clamp(0.0, ground.strips as f32)
+    }
+
+    /// The logical distance (static_placement.rs `logical_draw_distance`) of a mobile's pixel `below_anchor_px` screen
+    /// pixels below its anchor, the mobile at (`x`, `y`) and z 0, and of the flat land at z 0 under that pixel,
+    /// `right_px` right of the anchor.
+    fn mobile_and_land_distances(ground: MobileGroundStrips, x: f32, y: f32, right_px: f32, below_anchor_px: f32)
+        -> (f64, f64) {
+        use crate::render::statics::static_placement::logical_draw_distance;
+        use crate::util_lib::wesl_source::wesl_f32_const;
+        let land_priority_offset = wesl_f32_const(include_str!("../../../assets/shaders/world/art/depth.wesl"),
+            "LAND_PRIORITY_Z_OFFSET");
+        let local_y = (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_anchor_px) * CC_WORLD_Y_PER_PIXEL;
+        let strip = ground_strip(ground, local_y);
+        let (depth_x, depth_y) = mobile_depth_cell(x, y);
+        let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x + strip, depth_y + strip);
+        let mobile = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(MOBILE_PRIORITY_Z_OFFSET),
+            MOUNT_TIE_LEVEL);
+        // The screen point's map position: a cell east moves it 22 pixels right and down, a cell south 22 left and
+        // down; the cells' centres lie on whole coordinates.
+        let half_tile = CC_TILE_PIXEL_WIDTH * 0.5;
+        let (east, south) = ((right_px + below_anchor_px) / (2.0 * half_tile), (below_anchor_px - right_px) / (2.0 * half_tile));
+        let (cell_x, cell_y) = ((x + east).round(), (y + south).round());
+        let (land_x, land_y) = apply_cc_static_world_anchor_translation(cell_x, cell_y);
+        let land = logical_draw_distance(f64::from(land_x + land_y), f64::from(land_priority_offset), 0);
+        (mobile, land)
+    }
+
+    #[test]
+    fn the_enhanced_legs_lie_over_the_flat_land_in_front() {
+        // Screen pixels around the anchor: as far as an Enhanced frame reaches sideways and the strips reach down.
+        const REACH_RIGHT_PX: i32 = 120;
+        const STEP_PX: usize = 2;
+        let reach_down_px =
+            ENHANCED_GROUND_STRIPS as f32 * ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX;
+        let ground = MobileGroundStrips::of(AnimSource::Enhanced);
+        // At rest, and sliding east, south-east and north-west.
+        for (x, y) in [(1473.0, 1722.0), (1473.4, 1722.0), (1473.5, 1722.5), (1472.75, 1721.75)] {
+            for right_px in (-REACH_RIGHT_PX..=REACH_RIGHT_PX).step_by(STEP_PX) {
+                for below_px in (-80..reach_down_px as i32).step_by(STEP_PX) {
+                    let (mobile, land) = mobile_and_land_distances(ground, x, y, right_px as f32, below_px as f32);
+                    assert!(mobile > land, "({x}, {y}): the land covers the pixel {right_px}, {below_px}");
+                }
+            }
+        }
+        // Without the strips, the land of the next row covers what lies below the anchor beside it: a hoof.
+        let (mobile, land) = mobile_and_land_distances(MobileGroundStrips::default(), 1473.0, 1722.0, 30.0, 10.0);
+        assert!(mobile < land);
+    }
+
+    #[test]
+    fn only_the_enhanced_frames_below_the_cut_come_nearer() {
+        let ground = MobileGroundStrips::of(AnimSource::Enhanced);
+        let at = |below_anchor_px: f32| ground_strip(ground,
+            (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_anchor_px) * CC_WORLD_Y_PER_PIXEL);
+        assert_eq!(at(-30.0), 0.0, "the body, over its anchor");
+        assert_eq!(at(-ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX + 0.5), 1.0, "just below the cut");
+        assert_eq!(at(ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX - 0.5), 1.0);
+        assert_eq!(at(ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX + 0.5), 2.0);
+        assert_eq!(at(1000.0), ENHANCED_GROUND_STRIPS as f32, "the last strip takes what lies below");
+        let classic = MobileGroundStrips::of(AnimSource::Classic);
+        assert_eq!(ground_strip(classic, -1000.0), 0.0, "a Classic frame keeps one card");
     }
 
     #[test]

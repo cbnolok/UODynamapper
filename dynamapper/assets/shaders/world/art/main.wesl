@@ -48,7 +48,7 @@ import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priority_view_z, view_z_depth,
     cave_lifted_view_z, cave_outside_rgb, perspective_cap_may_move, perspective_cap_row_shift,
-    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL};
+    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL, mobile_ground_strip};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 import package::shaders::world::srgb::decode_srgb;
 
@@ -295,6 +295,18 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             out.depth = view_z_depth(cave_lifted_view_z(sprite_priority_view_z(
                 vec2<f32>(inst.tile_x + row_shift, inst.tile_y),
                 perspective_cap_priority_z(inst.priority_z_units, top_z), PERSPECTIVE_CAP_TIE_LEVEL), inst.is_wet_flags));
+        }
+    }
+    @if(MOBILE_FRAMES) {
+        // A mobile's pixels below its anchor, in the strip of the rows in front that they lie over (art/depth.wesl).
+        let ground = mobile_instances[in.instance_index].ground;
+        let strip = mobile_ground_strip(in.world_pos.y - inst.world_y, ground.cut_local_y, ground.strip_height,
+            ground.strips);
+        if (strip > 0.0 && sprite_params.pass_mode != PASS_MODE_SHADOW
+            && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
+            out.depth = view_z_depth(cave_lifted_view_z(sprite_priority_view_z(
+                vec2<f32>(inst.tile_x + strip, inst.tile_y + strip), inst.priority_z_units,
+                f32(inst.sort_bias_ordinal)), inst.is_wet_flags));
         }
     }
     var uv = in.uv;
