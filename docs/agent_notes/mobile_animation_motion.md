@@ -310,6 +310,116 @@ Kept at run time: RIFE and SPAN both fit the shared 2 ms budget with frame time 
 still remove the run-time choice. A frame too large for the run-time SPAN canvas (above 256², the stygian) would be
 the case for a few upscales made ahead of time.
 
+## Faster networks: GPU kernels and CPU inference (measured 2026-11-22)
+
+Whether RIFE and SPAN run faster with more aggressive GPU kernels, and whether a CPU inference (AVX2 or AVX-512)
+could add throughput, on the Radeon 880M (RADV, Mesa 26.2.7, wave64) and the Ryzen AI 9 365 (4 Zen 5 + 6 Zen 5c
+cores, 20 threads, AVX-512, boost off: 2.0 GHz). GPU times are timestamp queries of uot-gpu-compute's ignored
+`benchmark` tests; CPU times are wall time of a scratch prototype (`uodynamapper-scratch/cpu-gpu-nets/`) and of
+PyTorch 2 on oneDNN. Other agents' jobs loaded the CPU during the CPU runs (load average up to 33), so the
+multi-thread CPU numbers are pessimistic; the one-thread ones are steady.
+
+**Shipped: SPAN on the matrix units** (`ConvUnits::Matrix`, `shaders/upscale/conv_matrix.wgsl`). Where the device
+has wgpu's experimental cooperative matrices with 16×16×16 fp16 products into f32 sums (AMD WMMA on RDNA 3, NVIDIA
+tensor cores), SPAN's 3×3 and 1×1 convolutions run as an implicit GEMM on them: a workgroup of 256 threads (4 wave64
+subgroups) makes 64 pixels × 48 channels, staging 16 input rows (channel × tap) at a time in workgroup memory as fp16,
+pixel-major for A and channel-major for B, rows padded by 4 halves; the next step's loads go to registers while the
+current one multiplies; bias, SiLU and the attention residual are the epilogue. The device is asked for the features
+where the adapter has them (`own_device_and_units`; Bevy's render device has all adapter features already), and the
+adapter's cooperative-matrix properties decide (`ConvUnits::of`), since wgpu enables the feature for any shape.
+Elsewhere the f32 shader-core kernels run as before. dynamapper's cost model needs no change: its `CostScale` learns
+the faster convolutions from the timestamps.
+
+SPAN, one frame (the canvas, with its border), ms:
+
+| canvas | GPU f32 (before) | GPU matrix (shipped) | PyTorch CPU fp32 1 / 4 / 10 threads | Rust AVX2 1T / AVX-512 1T | Rust AVX-512 4T / 10T |
+|---|---:|---:|---:|---:|---:|
+| 48×40 | 1.63 | 0.80 (2.0×) | — | — | — |
+| 64² (Rust: 68²) | — | — | 82 / 30 / 27 | 197 / 132 | 127 / 148 |
+| 80×85 | 5.0 | 2.53 (2.0×) | — | — | — |
+| 128² | 7.8–8.2 | 5.57 (1.4×) | 277 / 81 / 76 | 758 / 474 | 414 / 385 |
+| 256² | 28.4–29.6 | 20.8 (1.4×) | 1135 / 350 / 273 | 2698 / 1851 | 1223–1252 / 818–862 |
+
+- Throughput: f32 shader cores 600–1000 GMAC/s, matrix 1240–1400 GMAC/s (the kernel is bound by its loads and
+  barriers, not by WMMA). CPU: the Rust kernels reach 10–12 GMAC/s a thread with AVX2 and 15–20 with AVX-512 (about
+  half the 2.0 GHz core's FMA peak), PyTorch 10 threads about 100.
+- Error against PyTorch's fp32 (dog 45×36, horse 80×85): matrix 0.20 and 0.29/255 max (fp16 operands, f32 sums), f32
+  shader cores 0.0004/255, Rust CPU 0.0004/255. The reference test allows 0.5/255 for the matrix path.
+- Cold compile (empty Mesa cache): the matrix pipelines take 110–290 ms for their 6 compiles against 800–890 ms for
+  the f32 upscale pipelines' 10, so the warm-up is about 0.6 s shorter (1.02 s in all with the matrix path).
+- In game (dev build, 1900×1000, zoom 0.4, the Enhanced daemon 9 walking then standing, the four styles, RGBA8888
+  and BC7 packages; the same build with the shader cores forced, alternated with it): with crossfade (SPAN alone) its
+  two actions reach 2× in 1.1–1.8 s instead of 1.7–3.1 s in Enhanced, KR-like and Painterly, about 1.7× sooner, in
+  fewer submissions; the cost scale settles at 0.7–1.4 instead of 1.0–1.5. In the Classic style the scale sits near 2
+  with either units and the times (0.1–5.7 s) show no clear change; with RIFE ×2 the time to 2× follows RIFE's own
+  (unchanged) and stays 0.1–8.7 s either way. The budget holds as before (median 1.45–1.6 ms timed, rare peaks of
+  2.5–5 ms), and frame time is the same: 60 fps (vsync) in Classic, Enhanced and KR-like, 18–22 ms in Painterly, with
+  one 34 ms and one 25 ms sample of the matrix runs that the other package's run did not repeat. Captures look as the
+  f32 path's (scripts in `uodynamapper-scratch/cpu-gpu-nets/ingame/`).
+- Tuning on 256²: 16 rows a step (32: 21.0–21.4 ms, 64: 23.4, 96: 32.6); 128 threads as fast (20.6), 512 slower
+  (23–25); rows padded by 4 halves (2: 4× slower from misaligned loads, 8: slower). Without padding (bank conflicts)
+  38.9 ms; the first, row-major A/B kernel 85 ms. Same results under wave32 (`RADV_PERFTEST=cswave32`).
+
+RIFE v4.25, one in-between (Head encode of both frames included), ms; CPU Rust is its convolutions alone (random
+weights, same shapes), PyTorch the whole network:
+
+| frame | GPU f32 (unchanged) | PyTorch CPU fp32 1 / 4 / 10 threads | Rust AVX2 1T / AVX-512 1T | Rust AVX-512 4T / 10T |
+|---|---:|---:|---:|---:|
+| 64² | 1.39 | 19.6 / 15.2 / 11.8 | 11.7 / 7.9 | 9.0 / 7.8 |
+| 128² | 2.00 | 48.9 / 27.7 / 21.1 | 35.8 / 23.1 | 21.9 / 17.9 |
+| 256² | 4.78 | 154 / 65 / 63 | 125 / 79 | 79–176 / 236–322 |
+| 576×512 | 17.0 | 608 / 286 / 245 | 550 / 321 | 338–430 / 354–685 |
+
+- RIFE on the GPU is dispatch-bound below 256²: about 120 dispatches an in-between at about 10 µs each are 1.2 of the
+  1.3 ms at 64². At 576×512 the five blocks take 0.86 / 1.36 / 2.38 / 4.38 / 5.46 ms, and the last two (64 and 32
+  channels over most pixels) run at 300–400 GMAC/s, the f32 kernels' worst case.
+- The Rust convolutions do not scale past a few threads at RIFE's low-resolution blocks (a few rows each, one rayon
+  task per row) and under the other jobs' load; one thread is the steady figure.
+
+**bf16 / fp16 on the CPU: rejected on quality.** PyTorch's bf16 autocast is 1.1–1.8× faster than fp32 but its error
+is far past the 0.64/255 colour tolerance: SPAN 2.4–3.0/255 max (0.36/255 mean); RIFE on the reference frames (dog,
+wyrm, t = ¼, ½, ¾) 1.5–33/255 max on the merged frame and up to 0.47 px of flow. fp16 operands with f32 sums (the
+matrix path) are fine for SPAN; fp16 sums were not tried: the error grows with the 432 products a 3×3 output
+over 48 channels adds up.
+
+**Evaluated, not shipped:**
+
+- *Shared-memory tiling, register blocking, channel-last layouts, workgroup tuning*: the matrix kernel is all of them
+  (tuning above). The f32 kernels already tile in workgroup memory and block outputs in registers; they were not
+  retuned.
+- *Packed fp16 dot products / fp16 shader-core arithmetic*: on RDNA 3 WMMA is the packed fp16 path (1.4–2× above);
+  a `dot`-of-`vec2<f16>` kernel would be for devices with fp16 but no matrix units, where it would also need its
+  own error check. Not written.
+- *Subgroup operations* beyond the cooperative matrices (which are subgroup-scoped): not needed, as the kernels
+  share inputs through workgroup memory.
+- *Winograd F(2,3)*: 2.25× fewer multiplies for SPAN's 3×3 convolutions, but the matrix kernel is load-bound, not
+  multiply-bound, and the transforms add loads and fp16 error; on the f32 path it would be a third kernel family. Not
+  written.
+- *Fusing small dispatches* (RIFE's 120 an in-between): the gain is up to ~1 ms of the 1.4 ms at 64², which the 2 ms
+  budget already absorbs (several sequences a frame); a persistent kernel per block is a large change. Not done.
+- *RIFE on the matrix units*: estimated from its blocks' rates, 576×512 would go from 14.8 to about 10 ms an
+  in-between (blocks 3 and 4 at SPAN's matrix rate); its convolutions take 15 or 28 input channels, have strides of 2
+  and transposed convolutions of 52×4 outputs, so it needs its own tiles and split-K.
+  The follow-up if RIFE on large frames matters; small frames would not gain.
+
+**A CPU worker: not worth it.** Even with 10 cores the CPU is 8–14× slower than this iGPU (PyTorch, the better of
+the two CPU paths), and the game has no cores to spare at those rates: the background pool also decodes, unpacks
+(Zstd) and builds statics, whose spikes are the walks' CPU cost. On 4 threads, about what the pool could give,
+a CPU worker as fast as oneDNN would add about 3 SPAN frames of 256² a second (the Rust prototype 0.8), or about 3.5
+RIFE in-betweens of 576×512, against the GPU's 8–16 or 10–20 in its 2 ms a frame at 80–160 fps: a fifth to a third
+more, for 4 cores kept busy. Raising the GPU budget from 2 to 2.5 ms a frame gives as much for nothing on the CPU.
+A weaker GPU (no matrix units, an older iGPU) is still several times this CPU, and one without compute is not a
+dynamapper target (wgpu). The udd tools' ahead-of-time path runs on the GPU too.
+
+**The swap model would take a slower worker as is.** A clip plays plain until its whole RIFE sequence is made, then
+switches to it (the sequence spans the clip's cycle, so it lands on the same point); a layer switches to its 2×
+frames only when all are made and only as its sequence starts over (`UpscaleSwitch`). Nothing waits on a job, so a
+CPU job would only show its result later. What it would take: the source frames in RAM (they only live in the GPU
+atlas now, so a second decode of the package's frames), the networks in Rust (SPAN's convolutions are the ~400 lines
+of the prototype; RIFE adds its warps, transposed convolutions, flow and mask merging), the results uploaded into the
+atlas and BC7-encoded there, and a scheduler sharing jobs between the two. For at most a third more throughput,
+which a larger GPU budget gives too, it is not worth that.
+
 ## Sharpening
 
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU
