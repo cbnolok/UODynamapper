@@ -548,6 +548,9 @@ impl UddConvApp {
                         EC_LOSSY_SINGLE_GUMP_FORMAT,
                         GUMPS_CC_BC7_REFUSAL,
                     );
+                    if settings.gumps_cc_bc1 {
+                        draw_bc1_encode_cell(ui, "gumps_cc", &mut settings.bc_encode_device);
+                    }
                     draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_cc);
                     draw_gump_upscale_cell(
                         ui,
@@ -630,6 +633,9 @@ impl UddConvApp {
                         CC_LOSSY_SINGLE_GUMP_FORMAT,
                         GUMPS_EC_BC1_REFUSAL,
                     );
+                    if settings.gumps_ec_bc7 {
+                        draw_bc1_encode_cell(ui, "gumps_ec", &mut settings.bc_encode_device);
+                    }
                     draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_ec);
                     draw_gump_upscale_cell(
                         ui,
@@ -1028,6 +1034,13 @@ fn draw_gump_format_cell(
                 }
             }
         });
+    });
+}
+
+/// Where the single gumps' BC1 is encoded: the BC encode device the BC7 cards choose too.
+fn draw_bc1_encode_cell(ui: &mut egui::Ui, id: &str, device: &mut ComputeDevice) {
+    draw_control_cell(ui, "BC1 Encode", BC7_DEVICE_CELL_WIDTH, |ui| {
+        draw_device_combo(ui, format!("{id}_bc_encode_device"), device).on_hover_text(BC1_ENCODE_DEVICE_TOOLTIP);
     });
 }
 
@@ -1501,7 +1514,10 @@ const RDO_DEVICE_COMBO_WIDTH: f32 = 62.0;
 const BC7_DEVICE_CELL_WIDTH: f32 = 80.0;
 const BC_ENCODE_DEVICE_TOOLTIP: &str = "Where the BC7 pages are encoded (--bc-encode-device). Auto: the GPU when there is \
 one, else the CPU. The GPU encoder comes to about the CPU's quality with blocks of its own; GPU fails the job without \
-one. Shared by every job; BC1 stays on the CPU.";
+one. Shared by every job, the BC1 gumps' too.";
+const BC1_ENCODE_DEVICE_TOOLTIP: &str = "Where the single gumps' BC1 is encoded (--bc-encode-device). Auto: the GPU \
+when there is one, else the CPU. The GPU encoder is ten times faster, half a dB below the CPU's colour, with the same \
+one bit of alpha; GPU fails the job without one. Shared by every job, the BC7 pages' too.";
 const BC7_RDO_DEVICE_TOOLTIP: &str = "Where the BC7 RDO runs (--bc7-rdo-device), after the encode. Auto: the GPU when \
 there is one, else the CPU. The GPU RDO comes to about the CPU's size and error with blocks of its own; GPU fails the \
 job without one. Shared by every job.";

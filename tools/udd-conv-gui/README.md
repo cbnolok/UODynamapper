@@ -91,7 +91,9 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 The global `--bc-encode-device` and `--bc7-rdo-device` are the BC7 Encode and
 BC7 RDO device combos (Auto, CPU, GPU) on the BC7 cards: art, land, the
 auxiliary textures and the mobile animations. The encode combo appears with a
-BC7 format, and the RDO combo is beside the RDO settings. Both choices are
+BC7 format, and the RDO combo is beside the RDO settings. The encode device is
+also the BC1 Encode combo on the gump cards packing lossy: their single
+Classic gumps are BC1. Both choices are
 shared by every job, Quick Convert included, and each job sets them when it
 starts. They are saved as `bc_encode_device` and `bc7_rdo_device`. An older
 settings file without them loads both as Auto, the CLI's default.

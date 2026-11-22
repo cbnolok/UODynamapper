@@ -1,16 +1,19 @@
-//! Where the packers' BC7 page encode runs: on the GPU (uot_gpu_compute::page_encode) when a wgpu adapter is there,
-//! on the CPU otherwise, or on the one the run asks for ([`set_bc_encode_device`]). The GPU encodes at
-//! [`GPU_BC7_QUALITY`], the profile whose quality matches the CPU encoder's, with blocks of its own; both give the
-//! same blocks from run to run. The device starts at the first page encoded and stays for the process; the pages
-//! encoded at once share it. The BC7 RDO runs after the encode, on its own device (`bc7_rdo_device`). BC1 stays on
-//! the CPU.
+//! Where the packers' BC7 page encode and BC1 gump encode run: on the GPU (uot_gpu_compute::page_encode) when a wgpu
+//! adapter is there, on the CPU otherwise, or on the one the run asks for ([`set_bc_encode_device`]). The GPU encodes
+//! BC7 at [`GPU_BC7_QUALITY`], the profile whose quality matches the CPU encoder's, with blocks of its own; both give
+//! the same blocks from run to run. The GPU's BC1 ([`encode_bc1_on_device`]: the single Classic gumps) keeps the
+//! CPU's one bit of alpha on every texel, ten times faster, half a dB below its colour
+//! (docs/agent_notes/atlas_page_compression.md, "GPU block encoding"). The device starts at the first image encoded and
+//! stays for the process, compiling each format's pipeline at its first image; the images encoded at once share it.
+//! The BC7 RDO runs after the encode, on its own device (`bc7_rdo_device`).
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::atlas::bc7_rdo_device::on_bc7_rdo_device;
 use uot_gpu_compute::block_encode::Bc7Quality;
-use uot_gpu_compute::page_encode::Bc7PageEncoderGpu;
+use uot_gpu_compute::page_encode::PageEncoderGpu;
+use uot_texture_codecs::bc1::encode_bc1;
 use uot_texture_codecs::bc7::{
     encode_to_bc7_with_rdo_options_and_stage_progress, preferred_bc7_encoder_backend, Bc7EncodeAccelerator,
     Bc7RdoOptions, ImageExtent, RawImageFormat, DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, NO_BC7_RDO_LAMBDA,
@@ -23,7 +26,7 @@ const BLOCK_BYTES: usize = 16;
 /// pages (docs/agent_notes/atlas_page_compression.md, "BC7 encode on the GPU").
 pub const GPU_BC7_QUALITY: Bc7Quality = Bc7Quality::UltraFast;
 
-/// Where the BC7 page encode runs.
+/// Where the BC7 page encode and the BC1 gump encode run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BcEncodeDevice {
@@ -77,14 +80,39 @@ pub fn on_bc7_devices(options: Bc7RdoOptions) -> Bc7RdoOptions {
     on_bc_encode_device(on_bc7_rdo_device(options))
 }
 
+/// Encodes `rgba` (straight RGBA8888 of `extent`) to BC1 blocks on the device [`bc_encode_device`] names: the GPU's
+/// BC1 or the CPU's, both with BC1's one bit of alpha (below one half is transparent black). Auto falls back on the CPU
+/// as the BC7 encode does.
+pub fn encode_bc1_on_device(rgba: &[u8], extent: ImageExtent) -> Result<Vec<u8>, String> {
+    let fall_back = match bc_encode_device() {
+        BcEncodeDevice::Cpu => return encode_bc1(rgba, extent).map_err(|error| error.to_string()),
+        BcEncodeDevice::Auto => true,
+        BcEncodeDevice::Gpu => false,
+    };
+    let result = match gpu() {
+        Ok(gpu) => gpu.encode_bc1(rgba, extent.width(), extent.height())
+            .map(|blocks| blocks.as_flattened().to_vec()).map_err(|error| format!("{error:#}")),
+        Err(error) => Err(error.clone()),
+    };
+    match result {
+        Err(error) if fall_back => {
+            if gpu().is_ok() {
+                log::warn!("BC1 encode on the GPU failed, the CPU encodes the image: {error}");
+            }
+            encode_bc1(rgba, extent).map_err(|error| error.to_string())
+        }
+        result => result,
+    }
+}
+
 /// The process's GPU encoder, or why there is none.
-fn gpu() -> &'static Result<Bc7PageEncoderGpu, String> {
-    static GPU: OnceLock<Result<Bc7PageEncoderGpu, String>> = OnceLock::new();
+fn gpu() -> &'static Result<PageEncoderGpu, String> {
+    static GPU: OnceLock<Result<PageEncoderGpu, String>> = OnceLock::new();
     GPU.get_or_init(|| {
-        let gpu = Bc7PageEncoderGpu::new().map_err(|error| format!("{error:#}"));
+        let gpu = PageEncoderGpu::new().map_err(|error| format!("{error:#}"));
         match &gpu {
-            Ok(gpu) => log::info!("BC7 encode on the GPU: {}", gpu.adapter()),
-            Err(error) => log::warn!("BC7 encode: no GPU ({error})"),
+            Ok(gpu) => log::info!("BC encode on the GPU: {}", gpu.adapter()),
+            Err(error) => log::warn!("BC encode: no GPU ({error})"),
         }
         gpu
     })

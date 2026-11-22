@@ -11,8 +11,9 @@
 //! - bc1.wgsl, its BC1 kernel with BC1's one bit of alpha added (the crate's encodes colour only).
 //!
 //! The BC7 blocks are the crate's byte for byte, and the opaque BC1 blocks the crate's BC1 ones (`tests.rs`).
-//! [`MobileBlockEncoder::compile`] compiles BC7 UltraFast with alpha, Dynamapper's format; every other format compiles
-//! the first time a frame of it is added, or ahead with [`MobileBlockEncoder::compile_format`].
+//! [`MobileBlockEncoder::compile`] compiles BC7 UltraFast with alpha, Dynamapper's format, and
+//! [`MobileBlockEncoder::lazy`] nothing; every other format compiles the first time a frame of it is added, or ahead
+//! with [`MobileBlockEncoder::compile_format`].
 //!
 //! A frame to encode lies at the left edge of a texture whose view is a non-sRGB RGBA8 format (`Rgba8Unorm`) holding
 //! the frame's sRGB-encoded, straight-alpha bytes: an `Rgba8UnormSrgb` texture needs `Rgba8Unorm` among its
@@ -314,13 +315,19 @@ impl MobileBlockEncoder {
 
     /// [`MobileBlockEncoder::new`], telling `report` of each of [`BLOCK_ENCODER_COMPILES`].
     pub fn compile(device: &wgpu::Device, _queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
-        let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment);
-        let mut encoder = Self {
-            device: device.clone(), kernels: HashMap::new(),
-            uniform_stride: FRAME_UNIFORM_BYTES.div_ceil(alignment) * alignment, frames: Vec::new(),
-        };
+        let mut encoder = Self::lazy(device);
         encoder.compile_format(WARM_BLOCK_FORMAT, report);
         encoder
+    }
+
+    /// An encoder with no pipeline compiled: each format compiles at its first frame, so a converter pays only for the
+    /// formats its pages take.
+    pub fn lazy(device: &wgpu::Device) -> Self {
+        let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment);
+        Self {
+            device: device.clone(), kernels: HashMap::new(),
+            uniform_stride: FRAME_UNIFORM_BYTES.div_ceil(alignment) * alignment, frames: Vec::new(),
+        }
     }
 
     /// Compiles `format`'s pipeline unless it is compiled already, telling `report` of it (one compile) if it compiles.

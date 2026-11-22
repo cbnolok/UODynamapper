@@ -23,8 +23,11 @@ use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataTy
 pub use udd_assets::gumps::GumpPixelFormat;
 use udd_assets::gumps::{
     decode_single_gump_payload, encode_shared_classic_gump_table, encode_single_gump_payload, gump_image_hash,
-    GumpImage, GumpsPackage, SharedClassicGump, SHARED_CLASSIC_GUMP_TABLE_ID,
+    single_gump_payload_from_pixels, GumpImage, GumpsPackage, SharedClassicGump, SHARED_CLASSIC_GUMP_TABLE_ID,
 };
+use uot_texture_codecs::bc7::ImageExtent;
+
+use crate::atlas::bc_encode_device::encode_bc1_on_device;
 
 /// The Zstd level of BC1 single gumps unless the packer is asked for another: the level of the measurements.
 pub const BC1_SINGLE_GUMP_ZSTD_LEVEL: i32 = 19;
@@ -216,12 +219,7 @@ fn compare_with_classic(
         return Ok(ClassicShare::Shared(gump_image_hash(&classic_image)));
     }
     if classic_format != GumpPixelFormat::Rgba8888 && classic_format != format {
-        let through_classic_format = decode_single_gump_payload(&encode_single_gump_payload(
-            gump.width,
-            gump.height,
-            &gump.rgba,
-            classic_format,
-        )?)?;
+        let through_classic_format = decode_single_gump_payload(&encode_payload(gump, classic_format)?)?;
         if gump_images_draw_the_same(gump.gump_id, classic_pixels, GumpPixels::of(&through_classic_format)) {
             return Ok(ClassicShare::KeptClassicLossier);
         }
@@ -234,6 +232,19 @@ struct PendingSingleGump {
     width: u32,
     height: u32,
     rgba: Vec<u8>,
+}
+
+/// `gump`'s payload in `format`, its BC1 blocks encoded on the BC encode device (the GPU or the CPU), its other formats
+/// on the CPU.
+fn encode_payload(gump: &PendingSingleGump, format: GumpPixelFormat) -> eyre::Result<Vec<u8>> {
+    match (format, ImageExtent::new(gump.width, gump.height)) {
+        (GumpPixelFormat::Bc1, Ok(extent)) => {
+            let blocks = encode_bc1_on_device(&gump.rgba, extent)
+                .map_err(|error| eyre::eyre!("single gump {}x{}: BC1: {error}", gump.width, gump.height))?;
+            single_gump_payload_from_pixels(gump.width, gump.height, format, &blocks)
+        }
+        _ => encode_single_gump_payload(gump.width, gump.height, &gump.rgba, format),
+    }
 }
 
 /// Adds single gumps to a package in `format`, encoding them in batches on the rayon pool, in the order given.
@@ -365,7 +376,7 @@ impl SingleGumpWriter {
                     (false, None) => format,
                 };
                 let classic_colour_space = classic_format.is_some();
-                let payload = encode_single_gump_payload(gump.width, gump.height, &gump.rgba, gump_format)
+                let payload = encode_payload(&gump, gump_format)
                     .map_err(|error| error.wrap_err(format!("encode single gump {}", gump.gump_id)))?;
                 let share = match shared_with {
                     Some(classic) => compare_with_classic(classic, &gump, gump_format, &payload)
@@ -717,5 +728,94 @@ mod tests {
         let (summary, standalone) = write(lossless(), &enhanced_gumps);
         assert_eq!((summary.shared_classic_count, standalone.shared_classic_gump_count()), (0, 0));
         assert!(standalone.package().find_by_sparse_id(SHARED_CLASSIC_GUMP_TABLE_ID).is_none());
+    }
+
+    /// The GPU's BC1 (uot_gpu_compute::page_encode) against the CPU's on the single gumps of a lossless gumps_cc
+    /// (`pack-gumps --raw`) at the path in `LOSSLESS_GUMPS_CC`, the paperdoll body gumps left out as a lossy
+    /// pack does: the encode's wall time with the gumps encoded side by side as the writer does, their Zstd size at the
+    /// packer's level, and the RGB PSNR of the opaque texels. Both must keep BC1's one bit of alpha exactly, and the
+    /// GPU's PSNR and size stay within `GPU_BC1_PSNR_TOLERANCE_DB` and `GPU_BC1_SIZE_TOLERANCE` of the CPU's.
+    #[test]
+    #[ignore = "requires a GPU adapter and a lossless gumps_cc.uddp in LOSSLESS_GUMPS_CC; run explicitly for BC1 \
+                encoder changes"]
+    fn the_gpu_bc1_gumps_match_the_cpus() {
+        use std::time::Instant;
+        use uot_gpu_compute::page_encode::PageEncoderGpu;
+        use uot_texture_codecs::bc1::{decode_bc1_to_rgba8888, encode_bc1};
+
+        const LOSSLESS_GUMPS_CC_VARIABLE: &str = "LOSSLESS_GUMPS_CC";
+        /// BC1 decodes a texel opaque from this alpha up.
+        const BC1_OPAQUE_FROM: u8 = 128;
+        /// The GPU's BC1 is the ISPC kernel's, block_compression's (with one bit of alpha added), which sits 0.5 to
+        /// 0.75 dB below the CPU's (the dds crate at its best quality) on opaque and punch-through blocks alike: 32.07
+        /// dB against 32.59 on the clients' 3397 single gumps (2026-11-22). The tolerance of uot-gpu-compute's BC1
+        /// test.
+        const GPU_BC1_PSNR_TOLERANCE_DB: f64 = 1.0;
+        /// The GPU's blocks came 0.2 % smaller after Zstd there.
+        const GPU_BC1_SIZE_TOLERANCE: f64 = 0.02;
+        const PEAK_SQUARED: f64 = 255.0 * 255.0;
+        const DECIBELS: f64 = 10.0;
+
+        let Some(path) = std::env::var_os(LOSSLESS_GUMPS_CC_VARIABLE) else {
+            println!("skipped: {LOSSLESS_GUMPS_CC_VARIABLE} is not set");
+            return;
+        };
+        let package = GumpsPackage::load(&path).unwrap();
+        let gumps: Vec<(u32, u32, Vec<u8>)> = package.available_gump_ids().into_iter()
+            .filter(|&gump_id| !is_paperdoll_body_gump_id(gump_id))
+            .filter_map(|gump_id| package.read_single_gump_image(gump_id).unwrap().map(|(format, image)| {
+                assert_eq!(format, GumpPixelFormat::Rgba8888, "a lossless gumps_cc");
+                let image = image.into_whole();
+                (image.physical_width, image.physical_height, image.stored_rgba)
+            }))
+            .filter(|(width, height, _)| *width > 0 && *height > 0)
+            .collect();
+        let texels: u64 = gumps.iter().map(|(width, height, _)| u64::from(*width) * u64::from(*height)).sum();
+        println!("{} single gumps, {:.1} Mpx, {} threads", gumps.len(), texels as f64 / 1e6,
+            rayon::current_num_threads());
+        let extent = |width: u32, height: u32| ImageExtent::new(width, height).unwrap();
+
+        let started = Instant::now();
+        let cpu: Vec<Vec<u8>> = gumps.par_iter()
+            .map(|(width, height, rgba)| encode_bc1(rgba, extent(*width, *height)).unwrap()).collect();
+        println!("CPU: {:.2} s", started.elapsed().as_secs_f64());
+        let gpu_encoder = PageEncoderGpu::new().unwrap();
+        let mut gpu = Vec::new();
+        for run in ["first, its pipeline compiled", "second"] {
+            let started = Instant::now();
+            gpu = gumps.par_iter().map(|(width, height, rgba)| {
+                gpu_encoder.encode_bc1(rgba, *width, *height).unwrap().as_flattened().to_vec()
+            }).collect();
+            println!("GPU ({run}): {:.2} s on {}", started.elapsed().as_secs_f64(), gpu_encoder.adapter());
+        }
+
+        let mut results = Vec::new();
+        for (name, encoded) in [("CPU", &cpu), ("GPU", &gpu)] {
+            let (mut squared, mut channels, mut alpha_differs, mut not_black, mut bytes) = (0f64, 0u64, 0u64, 0u64, 0);
+            for ((width, height, rgba), blocks) in gumps.iter().zip(encoded) {
+                bytes += zstd::bulk::compress(blocks, BC1_SINGLE_GUMP_ZSTD_LEVEL).unwrap().len();
+                let decoded = decode_bc1_to_rgba8888(blocks, extent(*width, *height)).unwrap();
+                for (source, texel) in rgba.chunks_exact(RGBA_CHANNELS).zip(decoded.chunks_exact(RGBA_CHANNELS)) {
+                    let opaque = source[ALPHA_CHANNEL] >= BC1_OPAQUE_FROM;
+                    alpha_differs += u64::from((texel[ALPHA_CHANNEL] == u8::MAX) != opaque);
+                    if !opaque {
+                        not_black += u64::from(texel != [0; RGBA_CHANNELS]);
+                        continue;
+                    }
+                    for channel in 0..ALPHA_CHANNEL {
+                        squared += f64::from(texel[channel].abs_diff(source[channel])).powi(2);
+                    }
+                    channels += ALPHA_CHANNEL as u64;
+                }
+            }
+            let psnr = DECIBELS * (PEAK_SQUARED / (squared / channels as f64)).log10();
+            println!("{name}: Zstd {BC1_SINGLE_GUMP_ZSTD_LEVEL} {bytes} bytes, RGB PSNR {psnr:.2} dB, alpha differing \
+                {alpha_differs}, transparent not black {not_black}");
+            assert_eq!((alpha_differs, not_black), (0, 0), "{name} keeps BC1's one bit of alpha");
+            results.push((psnr, bytes as f64));
+        }
+        let [(cpu_psnr, cpu_bytes), (gpu_psnr, gpu_bytes)] = results[..] else { unreachable!() };
+        assert!(gpu_psnr >= cpu_psnr - GPU_BC1_PSNR_TOLERANCE_DB, "GPU {gpu_psnr:.2} dB, CPU {cpu_psnr:.2} dB");
+        assert!(gpu_bytes <= cpu_bytes * (1.0 + GPU_BC1_SIZE_TOLERANCE), "GPU {gpu_bytes} bytes, CPU {cpu_bytes}");
     }
 }

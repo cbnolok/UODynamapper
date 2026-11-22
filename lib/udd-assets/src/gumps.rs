@@ -196,21 +196,40 @@ pub fn encode_single_gump_payload(
         "single gump {width}x{height}: expected {expected_rgba_len} RGBA bytes, got {}",
         rgba.len()
     );
-    let mut payload = Vec::with_capacity(SINGLE_GUMP_HEADER_BYTES + format.pixel_byte_len(width, height));
+    let pixels = match (format, gump_extent(width, height)) {
+        (_, None) => Cow::Borrowed(&[][..]),
+        (GumpPixelFormat::Rgba8888, Some(_)) => Cow::Borrowed(rgba),
+        (GumpPixelFormat::Bc1, Some(extent)) => Cow::Owned(
+            encode_bc1(rgba, extent).map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?,
+        ),
+        (GumpPixelFormat::Bc7, Some(extent)) => Cow::Owned(
+            encode_premultiplied_bc7(rgba, extent)
+                .map_err(|error| error.wrap_err(format!("single gump {width}x{height}")))?,
+        ),
+    };
+    single_gump_payload_from_pixels(width, height, format, &pixels)
+}
+
+/// A single gump's payload from its pixels already in `format` (BC7 of premultiplied colour), for a packer that
+/// encodes them itself: the BC1 blocks of the converter's GPU encode.
+pub fn single_gump_payload_from_pixels(
+    width: u32,
+    height: u32,
+    format: GumpPixelFormat,
+    pixels: &[u8],
+) -> eyre::Result<Vec<u8>> {
+    let expected_len = format.pixel_byte_len(width, height);
+    eyre::ensure!(
+        pixels.len() == expected_len,
+        "single gump {width}x{height}: expected {expected_len} {} bytes, got {}",
+        format.label(),
+        pixels.len()
+    );
+    let mut payload = Vec::with_capacity(SINGLE_GUMP_HEADER_BYTES + pixels.len());
     payload.write_u32::<LittleEndian>(width)?;
     payload.write_u32::<LittleEndian>(height)?;
     payload.write_u8(format as u8)?;
-    match (format, gump_extent(width, height)) {
-        (_, None) => {}
-        (GumpPixelFormat::Rgba8888, Some(_)) => payload.extend_from_slice(rgba),
-        (GumpPixelFormat::Bc1, Some(extent)) => payload.extend_from_slice(
-            &encode_bc1(rgba, extent).map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?,
-        ),
-        (GumpPixelFormat::Bc7, Some(extent)) => payload.extend_from_slice(
-            &encode_premultiplied_bc7(rgba, extent)
-                .map_err(|error| error.wrap_err(format!("single gump {width}x{height}")))?,
-        ),
-    }
+    payload.extend_from_slice(pixels);
     Ok(payload)
 }
 
