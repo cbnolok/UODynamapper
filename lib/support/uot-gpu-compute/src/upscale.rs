@@ -1,8 +1,9 @@
 //! The SPAN 4x super-resolution network (Wan et al., "Swift Parameter-free Attention Network for Efficient
 //! Super-Resolution", CVPR 2024 NTIRE workshop) with the 4xmssim_span_pretrain weights (Philip Hofmann, CC-BY-4.0), as
 //! wgpu compute shaders: it turns an Enhanced/KR mobile frame of the atlas into a 2x frame (the 4x result averaged
-//! 2x2), ready to copy into an atlas. Weights are fp16 on the GPU and the arithmetic is f32; every tensor stays on the
-//! GPU, so a caller reads nothing back.
+//! 2x2), ready to copy into an atlas. Weights are fp16 on the GPU and the arithmetic is f32 (on the matrix units,
+//! [`ConvUnits::Matrix`], the convolutions multiply fp16 activations into f32 sums); every tensor stays on the GPU, so
+//! a caller reads nothing back.
 //!
 //! [`UpscaleModel`] holds the weights and pipelines, once per device. [`UpscaleWorkspace`] holds the buffers of one
 //! canvas size and the dispatches that run on them, as lists a scheduler can spread over several frames: the input
@@ -25,6 +26,7 @@ use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
 use crate::network_shader_module;
 use crate::warm_up::CompileReport;
+use crate::{ConvUnits, MATRIX_EXTENSIONS, MATRIX_SIDE};
 
 /// The transparent texels around the frame on the canvas: Catmull-Rom alpha reaches 1.5 texels past the last opaque
 /// one.
@@ -77,6 +79,11 @@ const PIXEL_THREADS: u32 = 64;
 const F32_BYTES: u64 = 4;
 const CONV_SHADER: &str = include_str!("../shaders/upscale/conv.wgsl");
 const PIXEL_SHADER: &str = include_str!("../shaders/upscale/pixel.wgsl");
+const MATRIX_CONV_SHADER: &str = include_str!("../shaders/upscale/conv_matrix.wgsl");
+/// conv_matrix.wgsl's threads per workgroup and rows of the sum staged at a time, the fastest on a Radeon 880M
+/// (128 and 512 threads, 32 to 96 rows: 0 to 60% slower).
+const MATRIX_THREADS: u32 = 256;
+const MATRIX_TILE_K: u32 = 16;
 
 /// A convolution workgroup's tile: `m` pixels by `n` output channels, `k` rows of the sum staged at a time, each
 /// thread keeping `micro_m` by `micro_n` sums. Every layer has 48 output channels, one tile wide.
@@ -151,13 +158,22 @@ struct PixelUniform {
     _pad: [u32; 3],
 }
 
-/// The compiles [`UpscalePipelines::new`] reports: a convolution variant and tile each, then the per-pixel steps.
-pub const UPSCALE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + PIXEL_STEP_COMPILES;
+/// The compiles [`UpscalePipelines::new`] reports for the convolutions on `units`: a convolution variant and tile
+/// each (one tile on the matrix units), then the per-pixel steps.
+pub const fn upscale_compiles(units: ConvUnits) -> usize {
+    let tiles = match units {
+        ConvUnits::ShaderCores => TILES.len(),
+        ConvUnits::Matrix => 1,
+    };
+    CONV_VARIANTS.len() * tiles + PIXEL_STEP_COMPILES
+}
 /// The pixel steps' pipelines: prepare and finish.
 const PIXEL_STEP_COMPILES: usize = 2;
 
 /// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
 pub struct UpscalePipelines {
+    /// The pixels of a workgroup of conv_matrix.wgsl, when the convolutions run on the matrix units.
+    matrix_tile_m: Option<u32>,
     conv_layout: wgpu::BindGroupLayout,
     prepare_layout: wgpu::BindGroupLayout,
     finish_layout: wgpu::BindGroupLayout,
@@ -168,6 +184,7 @@ pub struct UpscalePipelines {
 
 /// The weights and pipelines, once per device.
 pub struct UpscaleModel {
+    matrix_tile_m: Option<u32>,
     params: wgpu::Buffer,
     packed: PackedParams,
     conv_layout: wgpu::BindGroupLayout,
@@ -213,8 +230,9 @@ fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::Sh
 }
 
 impl UpscalePipelines {
-    /// Compiles the pipelines, telling `report` of each of [`UPSCALE_COMPILES`].
-    pub fn new(device: &wgpu::Device, report: &mut CompileReport) -> Self {
+    /// Compiles the pipelines, the convolutions for `units` ([`ConvUnits::of`] the device), telling `report` of each
+    /// of the [`upscale_compiles`].
+    pub fn new(device: &wgpu::Device, units: ConvUnits, report: &mut CompileReport) -> Self {
         let conv_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("upscale convolution"),
             entries: &[uniform_entry(), storage_entry(1, true), storage_entry(2, false)],
@@ -230,7 +248,28 @@ impl UpscalePipelines {
         });
         let conv_pipeline_layout = pipeline_layout(&conv_layout);
         let mut conv_pipelines = Vec::new();
+        // A workgroup on the matrix units has a strip of pixels for each subgroup it has with the largest subgroups.
+        let matrix_strips = MATRIX_THREADS / device.adapter_info().subgroup_max_size.max(1);
+        let matrix_tile_m = (units == ConvUnits::Matrix).then_some(MATRIX_SIDE * matrix_strips);
         for (side, epilogue) in CONV_VARIANTS {
+            if matrix_tile_m.is_some() {
+                let constants = format!(
+                    "{MATRIX_EXTENSIONS}const THREADS: u32 = {MATRIX_THREADS}u;\n\
+                     const STRIPS: u32 = {matrix_strips}u;\nconst TILE_K: u32 = {MATRIX_TILE_K}u;\n\
+                     const KERNEL_SIDE: u32 = {side}u;\nconst EPILOGUE: u32 = {}u;\n",
+                    epilogue as u32);
+                let name = format!("upscale matrix conv {side}x{side}/{epilogue:?}");
+                let pipeline = report.compile(&name, || {
+                    let module = shader_module(device, &name, constants + MATRIX_CONV_SHADER);
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some(&name), layout: Some(&conv_pipeline_layout), module: &module,
+                        entry_point: Some("main"), compilation_options: Default::default(), cache: None,
+                    })
+                });
+                // Kept under the wide tile, the one the planner asks for on the matrix units.
+                conv_pipelines.push(((side, epilogue, WIDE_TILE), pipeline));
+                continue;
+            }
             for tile in TILES {
                 let constants = format!(
                     "const THREADS: u32 = {CONV_THREADS}u;\nconst TILE_M: u32 = {}u;\nconst TILE_N: u32 = {}u;\n\
@@ -258,14 +297,17 @@ impl UpscalePipelines {
         };
         let prepare_pipeline = pixel_pipeline(&prepare_layout, "prepare");
         let finish_pipeline = pixel_pipeline(&finish_layout, "finish");
-        Self { conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline }
+        Self {
+            matrix_tile_m, conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline,
+        }
     }
 }
 
 impl UpscaleModel {
-    /// Uploads the bundled weights and compiles the pipelines.
-    pub fn new(device: &wgpu::Device) -> Result<Self, String> {
-        Self::with_pipelines(device, UpscalePipelines::new(device, &mut CompileReport::silent(UPSCALE_COMPILES)))
+    /// Uploads the bundled weights and compiles the pipelines, the convolutions for `units`.
+    pub fn new(device: &wgpu::Device, units: ConvUnits) -> Result<Self, String> {
+        let pipelines = UpscalePipelines::new(device, units, &mut CompileReport::silent(upscale_compiles(units)));
+        Self::with_pipelines(device, pipelines)
     }
 
     /// Uploads the bundled weights for pipelines compiled already ([`crate::warm_up`]).
@@ -275,10 +317,11 @@ impl UpscaleModel {
             label: Some("upscale weights"), contents: bytemuck::cast_slice(&packed.halves), usage: wgpu::BufferUsages::STORAGE,
         });
         let UpscalePipelines {
-            conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline,
+            matrix_tile_m, conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline,
         } = pipelines;
         Ok(Self {
-            params, packed, conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline,
+            matrix_tile_m, params, packed, conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline,
+            finish_pipeline,
         })
     }
 
@@ -358,7 +401,8 @@ impl Planner<'_> {
     /// Plans a layer's dispatch.
     fn conv(&mut self, layer: ConvLayer) -> Result<(), String> {
         let pixels = self.width * self.height;
-        let tile = if pixels.div_ceil(WIDE_TILE.m) >= NARROW_BELOW_WORKGROUPS { WIDE_TILE } else { NARROW_TILE };
+        let wide = self.model.matrix_tile_m.is_some() || pixels.div_ceil(WIDE_TILE.m) >= NARROW_BELOW_WORKGROUPS;
+        let tile = if wide { WIDE_TILE } else { NARROW_TILE };
         let packed = &self.model.packed;
         let uniform = ConvUniform {
             width: self.width, height: self.height, pixels, in_channels: layer.in_channels,
@@ -371,7 +415,10 @@ impl Planner<'_> {
         self.pending.push(PendingDispatch {
             pipeline: self.model.conv_pipeline(layer.side, layer.epilogue, tile).clone(),
             uniform: bytemuck::bytes_of(&uniform).to_vec(),
-            workgroups: [pixels.div_ceil(tile.m), FEATURES.div_ceil(tile.n), 1],
+            workgroups: match self.model.matrix_tile_m {
+                Some(tile_m) => [pixels.div_ceil(tile_m), 1, 1],
+                None => [pixels.div_ceil(tile.m), FEATURES.div_ceil(tile.n), 1],
+            },
             multiply_adds: (pixels * FEATURES) as u64 * (layer.in_channels * layer.side * layer.side) as u64,
             name: layer.name,
         });

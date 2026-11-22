@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::TextureId;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 use parking_lot::Mutex;
@@ -24,7 +24,7 @@ use crate::render::shader_compiles::begin_shader_compile;
 use uot_gpu_compute::block_encode::record_copy_to_layer;
 use uot_gpu_compute::upscale::{UpscaleDispatch, UpscaleModel, UpscalePipelines, UpscaleWorkspace,
     UPSCALE_FRAME_SLOTS};
-use uot_gpu_compute::SourceRect;
+use uot_gpu_compute::{ConvUnits, SourceRect};
 use super::super::bc7_encoding::{bc7_encode_ms, scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder,
     BC7_SCRATCH_SIDE, MOBILE_BLOCK_FORMAT};
 use super::super::clips::AtlasEntry;
@@ -35,8 +35,9 @@ use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas};
 use super::{MobileUpscales, UpscaleFrame, UpscaleJob};
 
 /// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to uot-gpu-compute's
-/// upscale::tests::benchmark on the Radeon 880M (a frame, 25 dispatches: 1.63 ms at 48x40, 8.1 ms at 128x128, 28 to
-/// 31 ms at 256x256, about 0.43 million multiply-adds per canvas pixel).
+/// upscale::tests::benchmark on the Radeon 880M with the convolutions on the shader cores (a frame, 25 dispatches:
+/// 1.63 ms at 48x40, 8.1 ms at 128x128, 28 to 31 ms at 256x256, about 0.43 million multiply-adds per canvas pixel);
+/// on its matrix units a frame takes 0.5 to 0.7 of that, which the timed cost scale learns.
 const UPSCALE_DISPATCH_MS: f64 = 0.027;
 const UPSCALE_MS_PER_GIGA_MULTIPLY_ADD: f64 = 1.0;
 /// The prepare's and the finish's estimated cost per million pixels of the canvas, besides the fixed part.
@@ -50,13 +51,14 @@ const WORKSPACE_IDLE_RELEASE: Duration = Duration::from_secs(20);
 /// before the submission runs; a frame started in an earlier submission may still hold one more.
 const FRAMES_STARTED_PER_SUBMISSION: usize = UPSCALE_FRAME_SLOTS - 1;
 
-/// The network on `pipelines` warmed ahead, or on pipelines compiled now.
-fn load_network(device: &wgpu::Device, pipelines: Option<UpscalePipelines>) -> Result<UpscaleModel, String> {
+/// The network on `pipelines` warmed ahead, or on pipelines compiled now for `units`.
+fn load_network(device: &wgpu::Device, units: ConvUnits, pipelines: Option<UpscalePipelines>)
+    -> Result<UpscaleModel, String> {
     match pipelines {
         Some(pipelines) => UpscaleModel::with_pipelines(device, pipelines),
         None => {
             let _compile = begin_shader_compile("SPAN upscales: network");
-            UpscaleModel::new(device)
+            UpscaleModel::new(device, units)
         }
     }
 }
@@ -190,6 +192,7 @@ pub fn sys_extract_mobile_upscales(
 pub fn sys_render_mobile_upscales(
     mut state: ResMut<RenderUpscales>,
     gpu_images: Res<RenderAssets<GpuImage>>,
+    render_adapter: Res<RenderAdapter>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut warm_up: ResMut<ComputeWarmUp>,
@@ -205,8 +208,9 @@ pub fn sys_render_mobile_upscales(
             Warm::Unavailable => None,
         };
         let device = device.clone();
+        let units = ConvUnits::of(&render_adapter, &device);
         state.gpu = GpuState::Loading(background_pool().spawn(Priority::Visible, "span network load",
-            move || load_network(&device, pipelines)));
+            move || load_network(&device, units, pipelines)));
     }
     if let GpuState::Loading(task) = &mut state.gpu {
         state.gpu = match task.poll() {

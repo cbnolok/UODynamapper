@@ -10,6 +10,9 @@ const REFERENCE_DIR_VARIABLE: &str = "UPSCALE_REFERENCE_DIR";
 const POLL_TIMEOUT: Duration = Duration::from_secs(60);
 /// fp16 against fp32 weights alone moves the output by up to 0.08/255; the port should stay well inside this.
 const OUTPUT_TOLERANCE: f32 = 0.25 / 255.0;
+/// On the matrix units, the activations rounded to fp16 too (0.2 to 0.3/255 on the references); inside the 0.64/255
+/// the in-game colour is allowed.
+const MATRIX_OUTPUT_TOLERANCE: f32 = 0.5 / 255.0;
 /// The input planes: the shader rounds the sRGB decode and encode back to the atlas's bytes.
 const INPUT_TOLERANCE: f32 = 1e-6;
 /// The 2x texels against the CPU's, in 8-bit steps (rounding of nearly equal values).
@@ -33,6 +36,8 @@ struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
     timestamps: bool,
+    /// Where the convolutions can run: the shader cores, and the matrix units when the device has them.
+    units: Vec<ConvUnits>,
 }
 
 fn gpu() -> Option<Gpu> {
@@ -45,10 +50,19 @@ fn gpu() -> Option<Gpu> {
         println!("adapter: {} ({:?}, {})", info.name, info.backend, info.driver_info);
         let timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: if timestamps { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() },
-            required_limits: adapter.limits(), ..Default::default()
+            required_features: (if timestamps { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() })
+                | (adapter.features() & ConvUnits::MATRIX_FEATURES),
+            required_limits: adapter.limits(),
+            // SAFETY: the cooperative matrices are a wgpu experimental feature, used only where ConvUnits::of finds
+            // them supported.
+            experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+            ..Default::default()
         }).await.ok()?;
-        Some(Gpu { device, queue, timestamps })
+        let mut units = vec![ConvUnits::ShaderCores];
+        if ConvUnits::of(&adapter, &device) == ConvUnits::Matrix {
+            units.push(ConvUnits::Matrix);
+        }
+        Some(Gpu { device, queue, timestamps, units })
     })
 }
 
@@ -143,33 +157,39 @@ fn matches_pytorch_reference() {
         return;
     };
     let index: serde_json::Value = serde_json::from_slice(&std::fs::read(directory.join("reference.json")).unwrap()).unwrap();
-    let model = UpscaleModel::new(&gpu.device).unwrap();
     let (_texture, source) = atlas_texture(&gpu, (1, 1, 1), &[0; UPSCALE_OUTPUT_TEXEL_BYTES as usize]);
     let mut failures = Vec::new();
-    for (case, entry) in index.as_object().unwrap() {
-        let width = entry["width"].as_u64().unwrap() as u32;
-        let height = entry["height"].as_u64().unwrap() as u32;
-        assert_eq!(entry["scale"].as_u64(), Some(NETWORK_SCALE as u64));
-        // The reference runs on the frame alone, so the canvas is the frame and the input goes straight in.
-        let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
-        let plane_bytes = (width * height) as u64 * F32_BYTES;
-        let input = read_f32(&directory.join(format!("{case}_input.f32")));
-        gpu.queue.write_buffer(&workspace.arena, INPUT_PLANE as u64 * plane_bytes, bytemuck::cast_slice(&input));
-        let network_bytes = UPSAMPLER_CHANNELS as u64 * plane_bytes;
-        let readback = readback_buffer(&gpu, network_bytes);
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        record(&mut encoder, &mut workspace.network().iter());
-        encoder.copy_buffer_to_buffer(&workspace.arena, NETWORK_OUTPUT_PLANE as u64 * plane_bytes, &readback, 0,
-            network_bytes);
-        gpu.queue.submit([encoder.finish()]);
-        let network: Vec<f32> = bytemuck::cast_slice(&read_back(&gpu, &readback)).to_vec();
-        let actual = pixel_shuffle(&network, width as usize, height as usize);
-        let expected = read_f32(&directory.join(format!("{case}_output.f32")));
-        let (max, mean) = errors(&actual, &expected);
-        println!("{case} {width}x{height}: 4x RGB max {max:.6} ({:.4}/255) mean {mean:.7} ({:.5}/255), {} dispatches",
-            max * BYTE_MAX, mean * BYTE_MAX, workspace.network().len());
-        if max > OUTPUT_TOLERANCE {
-            failures.push(format!("{case}: max {max} > {OUTPUT_TOLERANCE}"));
+    for &units in &gpu.units {
+        let model = UpscaleModel::new(&gpu.device, units).unwrap();
+        let tolerance = match units {
+            ConvUnits::ShaderCores => OUTPUT_TOLERANCE,
+            ConvUnits::Matrix => MATRIX_OUTPUT_TOLERANCE,
+        };
+        for (case, entry) in index.as_object().unwrap() {
+            let width = entry["width"].as_u64().unwrap() as u32;
+            let height = entry["height"].as_u64().unwrap() as u32;
+            assert_eq!(entry["scale"].as_u64(), Some(NETWORK_SCALE as u64));
+            // The reference runs on the frame alone, so the canvas is the frame and the input goes straight in.
+            let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
+            let plane_bytes = (width * height) as u64 * F32_BYTES;
+            let input = read_f32(&directory.join(format!("{case}_input.f32")));
+            gpu.queue.write_buffer(&workspace.arena, INPUT_PLANE as u64 * plane_bytes, bytemuck::cast_slice(&input));
+            let network_bytes = UPSAMPLER_CHANNELS as u64 * plane_bytes;
+            let readback = readback_buffer(&gpu, network_bytes);
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            record(&mut encoder, &mut workspace.network().iter());
+            encoder.copy_buffer_to_buffer(&workspace.arena, NETWORK_OUTPUT_PLANE as u64 * plane_bytes, &readback, 0,
+                network_bytes);
+            gpu.queue.submit([encoder.finish()]);
+            let network: Vec<f32> = bytemuck::cast_slice(&read_back(&gpu, &readback)).to_vec();
+            let actual = pixel_shuffle(&network, width as usize, height as usize);
+            let expected = read_f32(&directory.join(format!("{case}_output.f32")));
+            let (max, mean) = errors(&actual, &expected);
+            println!("{units:?}, {case} {width}x{height}: 4x RGB max {max:.6} ({:.4}/255) mean {mean:.7} ({:.5}/255), {} \
+                dispatches", max * BYTE_MAX, mean * BYTE_MAX, workspace.network().len());
+            if max > tolerance {
+                failures.push(format!("{units:?}, {case}: max {max} > {tolerance}"));
+            }
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
@@ -268,7 +288,7 @@ fn frame_steps_match_cpu() {
         println!("skipped: no GPU adapter");
         return;
     };
-    let model = UpscaleModel::new(&gpu.device).unwrap();
+    let model = UpscaleModel::new(&gpu.device, *gpu.units.last().unwrap()).unwrap();
     let (atlas_width, atlas_height, layers) = TEST_ATLAS_SIZE;
     let frame = TEST_FRAME;
     let frame_texels = synthetic_frame(frame.width, frame.height);
@@ -412,36 +432,39 @@ fn benchmark() {
         println!("skipped: no GPU adapter");
         return;
     };
-    let model = UpscaleModel::new(&gpu.device).unwrap();
-    println!("weights on the GPU: {:.2} MiB; GPU timestamps: {}", model.weight_bytes() as f64 / BYTES_PER_MIB, gpu.timestamps);
     let (atlas_width, atlas_height) = BENCHMARK_FRAMES.iter().fold((0, 0), |(w, h), &(fw, fh)| (w.max(fw), h.max(fh)));
     let texels: Vec<u8> = (0..atlas_width * atlas_height * UPSCALE_OUTPUT_TEXEL_BYTES)
         .map(|index| ((index as f32 * BENCHMARK_INPUT_STEP).fract() * BYTE_MAX) as u8).collect();
     let (_texture, source) = atlas_texture(&gpu, (atlas_width, atlas_height, 1), &texels);
-    for (frame_width, frame_height) in BENCHMARK_FRAMES {
-        let (width, height) = upscale_canvas_size(frame_width, frame_height);
-        let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
-        workspace.set_frame(&gpu.queue, 0, SourceRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height },
-            false)
-            .unwrap();
-        let stages: Vec<Vec<&UpscaleDispatch>> = vec![
-            workspace.prepare(0).iter().collect(), workspace.network().iter().collect(), workspace.finish(0).iter().collect(),
-            workspace.upscale(0).collect(),
-        ];
-        let (stage, wall) = time_passes(&gpu, &stages);
-        let single: Vec<&UpscaleDispatch> = workspace.upscale(0).collect();
-        let (single_ms, _) = time_passes(&gpu, &single.iter().map(|&dispatch| vec![dispatch]).collect::<Vec<_>>());
-        let mut slowest: Vec<(f64, &UpscaleDispatch)> = single_ms.into_iter().zip(single.iter().copied()).collect();
-        slowest.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let gmac = workspace.network().iter().map(UpscaleDispatch::multiply_adds).sum::<u64>() as f64 / 1e9;
-        println!("{frame_width}x{frame_height} (canvas {width}x{height}): GPU frame {:.3} ms (prepare {:.3} + network \
-            {:.3} + finish {:.3}), wall {wall:.3} ms", stage[3], stage[0], stage[1], stage[2]);
-        println!("  dispatches {} (network {}); {gmac:.3} GMAC, {:.0} GMAC/s; workspace {:.2} MiB",
-            workspace.upscale(0).count(), workspace.network().len(), gmac / (stage[1] / 1e3),
-            workspace.working_bytes() as f64 / BYTES_PER_MIB);
-        for (ms, dispatch) in &slowest[..SLOWEST_DISPATCHES] {
-            println!("    {ms:.3} ms {} {:?} workgroups, {:.1} MMAC", dispatch.name(), dispatch.workgroups(),
-                dispatch.multiply_adds() as f64 / 1e6);
+    for &units in &gpu.units {
+        let model = UpscaleModel::new(&gpu.device, units).unwrap();
+        println!("convolutions on the {units:?}; weights on the GPU: {:.2} MiB; GPU timestamps: {}",
+            model.weight_bytes() as f64 / BYTES_PER_MIB, gpu.timestamps);
+        for (frame_width, frame_height) in BENCHMARK_FRAMES {
+            let (width, height) = upscale_canvas_size(frame_width, frame_height);
+            let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
+            workspace.set_frame(&gpu.queue, 0, SourceRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height },
+                false)
+                .unwrap();
+            let stages: Vec<Vec<&UpscaleDispatch>> = vec![
+                workspace.prepare(0).iter().collect(), workspace.network().iter().collect(), workspace.finish(0).iter().collect(),
+                workspace.upscale(0).collect(),
+            ];
+            let (stage, wall) = time_passes(&gpu, &stages);
+            let single: Vec<&UpscaleDispatch> = workspace.upscale(0).collect();
+            let (single_ms, _) = time_passes(&gpu, &single.iter().map(|&dispatch| vec![dispatch]).collect::<Vec<_>>());
+            let mut slowest: Vec<(f64, &UpscaleDispatch)> = single_ms.into_iter().zip(single.iter().copied()).collect();
+            slowest.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let gmac = workspace.network().iter().map(UpscaleDispatch::multiply_adds).sum::<u64>() as f64 / 1e9;
+            println!("{frame_width}x{frame_height} (canvas {width}x{height}): GPU frame {:.3} ms (prepare {:.3} + network \
+                {:.3} + finish {:.3}), wall {wall:.3} ms", stage[3], stage[0], stage[1], stage[2]);
+            println!("  dispatches {} (network {}); {gmac:.3} GMAC, {:.0} GMAC/s; workspace {:.2} MiB",
+                workspace.upscale(0).count(), workspace.network().len(), gmac / (stage[1] / 1e3),
+                workspace.working_bytes() as f64 / BYTES_PER_MIB);
+            for (ms, dispatch) in &slowest[..SLOWEST_DISPATCHES] {
+                println!("    {ms:.3} ms {} {:?} workgroups, {:.1} MMAC", dispatch.name(), dispatch.workgroups(),
+                    dispatch.multiply_adds() as f64 / 1e6);
+            }
         }
     }
 }

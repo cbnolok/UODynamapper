@@ -8,21 +8,25 @@
 //! shorter; this crate keeps no pipeline cache of its own.
 //!
 //! The callback hears each compile twice, as it starts and as it ends, with its name, its place among the
-//! [`WARM_UP_COMPILES`] (or the block encoder's [`crate::block_encode::BLOCK_ENCODER_COMPILES`]) and, at the end, its
+//! [`warm_up_compiles`] (or the block encoder's [`crate::block_encode::BLOCK_ENCODER_COMPILES`]) and, at the end, its
 //! time: enough for a progress display.
 
 use std::time::{Duration, Instant};
 use crate::rife::{RifePipelines, RIFE_COMPILES};
-use crate::upscale::{UpscalePipelines, UPSCALE_COMPILES};
+use crate::upscale::{upscale_compiles, UpscalePipelines};
+use crate::ConvUnits;
 
-/// The compiles [`warm_up`] reports.
-pub const WARM_UP_COMPILES: usize = RIFE_COMPILES + UPSCALE_COMPILES;
+/// The compiles [`warm_up`] reports for the convolutions on `units`.
+pub const fn warm_up_compiles(units: ConvUnits) -> usize {
+    RIFE_COMPILES + upscale_compiles(units)
+}
 
 /// A compile starting or ending.
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineCompile<'a> {
     /// What compiles, as the pipeline's label: `"RIFE conv Stride1/Leaky tile 64x32"`, `"RIFE pixel step: merge"`,
-    /// `"upscale conv 3x3/Silu tile 64x48"`, `"upscale prepare"`, `"BC7 encoder (UltraFast)"` (the block
+    /// `"upscale conv 3x3/Silu tile 64x48"` (on the matrix units `"upscale matrix conv 3x3/Silu"`),
+    /// `"upscale prepare"`, `"BC7 encoder (UltraFast)"` (the block
     /// encoder's others: [`crate::block_encode::MobileBlockFormat::compile_name`]). A RIFE conv compiles two
     /// pipelines of one shader (`main` and `reduce`).
     pub name: &'a str,
@@ -71,12 +75,12 @@ pub struct WarmPipelines {
     pub upscale: UpscalePipelines,
 }
 
-/// Compiles the networks' pipelines on `device`, telling `callback` of each of the [`WARM_UP_COMPILES`] as it starts
-/// and ends.
-pub fn warm_up(device: &wgpu::Device, callback: impl FnMut(PipelineCompile)) -> WarmPipelines {
-    let mut report = CompileReport::new(WARM_UP_COMPILES, callback);
+/// Compiles the networks' pipelines on `device`, the convolutions for `units` ([`ConvUnits::of`] the device), telling
+/// `callback` of each of the [`warm_up_compiles`] as it starts and ends.
+pub fn warm_up(device: &wgpu::Device, units: ConvUnits, callback: impl FnMut(PipelineCompile)) -> WarmPipelines {
+    let mut report = CompileReport::new(warm_up_compiles(units), callback);
     let rife = RifePipelines::new(device, &mut report);
-    let upscale = UpscalePipelines::new(device, &mut report);
+    let upscale = UpscalePipelines::new(device, units, &mut report);
     WarmPipelines { rife, upscale }
 }
 
@@ -107,20 +111,15 @@ mod tests {
     #[test]
     #[ignore = "requires a GPU adapter; run explicitly to time the warm-up"]
     fn time_the_warm_up() {
-        let Some((device, queue)) = pollster::block_on(async {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-            let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()
-            }).await.ok()?;
-            adapter.request_device(&wgpu::DeviceDescriptor::default()).await.ok()
-        }) else {
+        let Ok((crate::Gpu { device, queue }, _, units)) = crate::own_device_and_units() else {
             println!("skipped: no GPU adapter");
             return;
         };
         let started = Instant::now();
         let ended = Cell::new(0);
-        warm_up(&device, printer(WARM_UP_COMPILES, &ended));
-        assert_eq!(ended.get(), WARM_UP_COMPILES);
+        warm_up(&device, units, printer(warm_up_compiles(units), &ended));
+        assert_eq!(ended.get(), warm_up_compiles(units));
+        println!("convolutions on the {units:?}");
         println!("warm-up: {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
         let started = Instant::now();
         let ended = Cell::new(0);

@@ -13,13 +13,13 @@
 
 use std::thread::JoinHandle;
 use bevy::prelude::*;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
 use bevy::render::Extract;
 use uot_gpu_compute::block_encode::{MobileBlockEncoder, BLOCK_ENCODER_COMPILES};
 use uot_gpu_compute::rife::{RifePipelines, RIFE_COMPILES};
-use uot_gpu_compute::upscale::{UpscalePipelines, UPSCALE_COMPILES};
+use uot_gpu_compute::upscale::{upscale_compiles, UpscalePipelines};
 use uot_gpu_compute::warm_up::CompileReport;
-use uot_gpu_compute::PipelineCompile;
+use uot_gpu_compute::{ConvUnits, PipelineCompile};
 use crate::render::shader_compiles::{shader_compile_ended, shader_compile_started};
 use super::frame_atlas::AtlasFormat;
 use super::MobileAnimPackages;
@@ -156,6 +156,7 @@ pub fn sys_extract_block_encoder_wanted(
 /// wanted.
 pub fn sys_start_compute_warm_up(
     mut warm_up: ResMut<ComputeWarmUp>,
+    render_adapter: Res<RenderAdapter>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
@@ -172,11 +173,13 @@ pub fn sys_start_compute_warm_up(
     }
     if let Compile::NotStarted = warm_up.upscale {
         let device = device.clone();
+        let units = ConvUnits::of(&render_adapter, &device);
         warm_up.upscale.start(UPSCALE_THREAD_NAME, move || {
             let started = std::time::Instant::now();
-            let pipelines =
-                UpscalePipelines::new(&device, &mut CompileReport::new(UPSCALE_COMPILES, compile_reporter()));
-            info!("The SPAN upscaler pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
+            let pipelines = UpscalePipelines::new(&device, units,
+                &mut CompileReport::new(upscale_compiles(units), compile_reporter()));
+            info!("The SPAN upscaler pipelines are compiled for the {units:?}, in {:.1} s.",
+                started.elapsed().as_secs_f32());
             Some(pipelines)
         });
     }

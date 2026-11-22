@@ -9,7 +9,7 @@ use crate::in_betweens::SequenceFrame;
 use crate::strides::StrideFrame;
 use crate::upscale::{upscale_canvas_size, UpscaleModel, UpscaleWorkspace, UPSCALE_BORDER, UPSCALE_OUTPUT_SCALE,
     UPSCALE_OUTPUT_TEXEL_BYTES};
-use crate::{own_device, Gpu, SourceRect};
+use crate::{own_device_and_units, Gpu, SourceRect};
 
 /// Canvas sides are rounded up to this, so frames of nearly one size share a workspace (as the game does).
 const CANVAS_SIZE_STEP: u32 = 8;
@@ -31,8 +31,8 @@ pub struct FrameUpscaler {
 impl FrameUpscaler {
     /// Starts a device of its own and compiles SPAN on it, with room for frames up to `max_side` texels a side.
     pub fn new(max_side: u32) -> eyre::Result<Self> {
-        let (gpu, adapter) = own_device()?;
-        let model = UpscaleModel::new(&gpu.device).map_err(|error| eyre::eyre!("SPAN: {error}"))?;
+        let (gpu, adapter, units) = own_device_and_units()?;
+        let model = UpscaleModel::new(&gpu.device, units).map_err(|error| eyre::eyre!("SPAN: {error}"))?;
         let source = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("frame to upscale"),
             size: wgpu::Extent3d { width: max_side, height: max_side, depth_or_array_layers: 1 },
