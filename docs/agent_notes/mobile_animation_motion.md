@@ -77,15 +77,17 @@ those entries are the Enhanced client's, which times every body by them (`GetAct
 stores that fps on the UOP animation records; MUL records and UOP bodies without an entry keep 80 ms.
 
 Choice (user, from `pace_compare.py` videos): **measured stride** over the Enhanced clip timing and over borrowing the
-Classic body's cycle. A walk/run cycle lasts stride_tiles × step_secs, clamped to 0.5–2× the clip's own cycle speed;
-"client timing" stays as a setting.
+Classic body's cycle. A walk/run cycle lasts stride_tiles × step_secs (on a screen-diagonal facing √2 times that,
+[below](#planted-foot-measurement-2026-11-22)), clamped to a third to three times the clip's own cycle speed (half to
+twice until 2026-11-22); "client timing" stays as a setting.
 
-Measuring the stride (`stride_measure.py`): RIFE flow between consecutive frames at t = 0.5; in the lowest 20% of the
-silhouette, the most backward motion (10th percentile) along the facing's screen direction is the planted foot, i.e.
-the body's travel; summed over the cycle and divided by the tile's screen length in that facing. Only the side facings
-(server directions 4, 5, 6) agree with each other (within ~25% on horses, wyrms, ogres, daemons); facings toward or
-away from the camera and all small creatures (dogs, rats, cats) give unusable numbers, which the clamp absorbs. So the
-strides are measured offline over every body into a table, not guessed per frame at run time.
+Measuring the stride, first (`stride_measure.py`; replaced on 2026-11-22 by the
+[planted foot](#planted-foot-measurement-2026-11-22)): RIFE flow between consecutive frames at t = 0.5; in the lowest
+20% of the silhouette, the most backward motion (10th percentile) along the facing's screen direction is the planted
+foot, i.e. the body's travel; summed over the cycle and divided by the tile's screen length in that facing. Only the
+side facings (server directions 4, 5, 6) agree with each other (within ~25% on horses, wyrms, ogres, daemons); facings
+toward or away from the camera and all small creatures (dogs, rats, cats) give unusable numbers, which the clamp
+absorbs. So the strides are measured offline over every body into a table, not guessed per frame at run time.
 
 A rider and its mount keep one shared cycle, paced by the mount's stride. The sequences already aim for this: a mount's
 ridden run is set to 12 fps instead of 9 so that its bounce stays in step with the rider (UOP animation editor's
@@ -105,17 +107,19 @@ until the hash matches, for good when it doesn't (one debug log per clip). The c
 clip, once a session, nearly all of it reading the atlas pages (the hash itself is under 2 ms on a 17 MB clip). A
 package without the entry loads fine and keeps the client timing for every clip.
 
-The GPU port of the prototype writes them: `udd-cli tool strides measure changed|full FILE...` (`just
-measure-mobile-strides`; `--body N` repeatable, `--output DIR`, `--report DIR`), on the measurement core of
+`udd-cli tool strides measure changed|full FILE...` writes them (`just measure-mobile-strides`; `--body N`
+repeatable, `--output DIR`, `--report DIR`), by the planted foot since 2026-11-22 and before by the GPU port of the
+prototype (`--method flow`), on the measurement core of
 `lib/support/uot-gpu-compute` (`strides.rs`: plain RGBA frames and anchors) driven over the packages by
 `udd_conv::animation::mobile_strides`, which the inspector's strides panel and the converter GUI's measure step run too.
 It blends the in-between with Practical-RIFE's bilinear warp, as the prototype did, not the in-betweens' nearest one:
 the in-between's alpha picks the feet, and the nearest warp's other edges moved Classic body 1's west walk from 1.919
 to 1.935 tiles.
 Dynamapper only reads the strides. It hashes every
-clip on all threads (13 s for both packages), then measures on the GPU only what it must: `changed` the clips with new
+clip on all threads (13 s for both packages), then measures only what it must: `changed` the clips with new
 or other frames than their stride's (a clip sharing the frames of a kept one takes its measurement), dropping the
-strides of clips gone; `full` everything again (about 40 minutes on a Radeon 880M). It rewrites a package only when
+strides of clips gone; `full` everything again (by the flow about 40 minutes on a Radeon 880M, by the planted foot
+about two and a half on the CPU). It rewrites a package only when
 its strides changed, copying the other entries as stored (3 s for the 2.7 GB Enhanced package, warm cache), and prints
 what it measured, unchanged, changed, new, removed and rejected. By hand, `udd-cli tool strides export|import|status`
 writes a package's strides as a tab-separated table (`source body action south south-west west stride hash`), imports
@@ -130,7 +134,8 @@ user judged from the prototype videos (Enhanced wyrm 46, stygian 826) and most E
 each facing's stride, and the generator prints their spread for inspection. A clip whose median is not positive or
 under a quarter tile is recorded without a stride and keeps the client timing: bodies without planted feet (gazers,
 slimes, wisps) and the smallest creatures measure a few hundredths of a tile, and the clamp would play them at twice
-their speed. The 2026-11-21 strides pace 882 of 1914 Classic clips with frames and 1627 of 4125 Enhanced ones. Riders never use a stride of their own: an Enhanced mount's clip is
+their speed. The 2026-11-21 strides pace 882 of 1914 Classic clips with frames and 1627 of 4125 Enhanced ones; the
+planted foot's 1339 and 2649. Riders never use a stride of their own: an Enhanced mount's clip is
 paced from the mount's stride (a Classic mount's from its run's own time, see below) and the rider shows the same point
 of that cycle, with the by-eye Enhanced mounted cycles as the fallback. The cycle position is a phase accumulator (`MobileCycleClock`), so a cycle length that changes
 mid-walk doesn't make the frame jump.
@@ -186,10 +191,10 @@ The big bodies come close and the small and middle ones measure 0.6–0.8 of the
 strides measured by hand (`HAND_STRIDES` in `render/mobiles/pace.rs`). The table covers the Classic walk and run and
 the Enhanced walk, run and war walk of bodies 400–403, 605 and 606; the elves' flow numbers match the humans' to 1%,
 and so do their contacts. A hand stride replaces the package's stride for the clip, still checked against the package
-record's frame hash, and paces the cycle outside the 0.5–2× clamp, which only bounds a flow number: the Enhanced
-run's 0.35 s cycle is a third of its own. A better measurement for every body is still open: the flow's 10th
-percentile over the lowest fifth of the silhouette (`uot-gpu-compute` `strides.rs`) needs checking against the hand
-counts, and the diagonal facings 4 and 6 measure shorter than 5.
+record's frame hash, and paces the cycle outside the clamp, which only bounds a measured number: the Enhanced
+run's 0.35 s cycle is a third of its own. The [planted-foot measurement](#planted-foot-measurement-2026-11-22)
+reproduces these within about 0.1 tiles except the Enhanced run, so they stay; the diagonal facings 4 and 6 measured
+shorter than 5 because the flow divided their travel by a diagonal step's 31.1 px instead of a side step's 44.
 
 The clients (Ghidra): Classic 7.0.103.0 locks the frames to the steps. The frame counter +0x1a0 moves once a tick,
 only while a step runs, and a step lasts the `animinfo.mul` ticks, 4 walking and 2 running for every body; missing
@@ -199,6 +204,98 @@ second. Enhanced 4.0.102.3 plays 1 / fps of the sequence, and nothing on the way
 ([classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#walk-pace),
 [uosa_animation.md](../client_research/ghidra-animation/results/uosa_animation.md)). Neither client matches feet to
 the ground, so client timing stays as it is and keeps its own speed.
+
+### Planted-foot measurement (2026-11-22)
+
+`udd-cli tool strides measure` now follows the planted foot by default (`--method planted-foot`; `--method flow` is
+the GPU flow above), deterministically on all CPU threads: both test packages in 46 s (Classic) and 89 s (Enhanced)
+instead of about 40 minutes of RIFE. Code: `lib/support/uot-gpu-compute/src/strides/planted_foot.rs` (no GPU, kept
+beside the flow because it shares the clip and measurement types). For each pair of frames on the anchor-aligned
+canvas (the last with the first too), every opaque pixel of the ground band (the lowest 15% of the silhouette across
+the travel; a diagonal facing's band runs 30 degrees off the horizontal) finds where its 5x5 patch went in the next
+frame among the backward shifts (side facing: along the screen x, ±1.5 px vertically; diagonal: within a 10–60
+degree cone). Pixels whose best patch is within a mean RGBA difference of 20 vote for its backward x; the pair's
+travel is the most voted shift (at least 4 votes), refined by the votes' mean over it and its two neighbours. The
+still body votes for no shift and the forward swing for none backward, so the most voted one is the largest region
+sliding rigidly back: the planted foot. A facing's stride is the median pair travel × the frames, over the side
+tile's screen x along the facing (it needs a travel on 30% of the pairs); the clip's is the median of the facings.
+
+Strides are now in side tiles: the planted foot's screen travel a cycle over the 44 px of a step along the screen's
+horizontal, in every facing. The art moves the feet as far on the screen in every facing, but a step along a screen
+diagonal (server directions 0, 2, 4, 6) covers 31.1 px, so the app (`step_side_tiles` in `render/mobiles/pace.rs`)
+takes √2 times as many steps for a cycle on those facings. The flow divided a diagonal facing's travel by 31.1 px
+and the app used every stride as tiles per step, which is why the diagonal facings measured "shorter" and why a
+creature walking east played its cycle √2 too fast.
+
+Where the hand numbers came from: they were not measured by a tool. An agent dumped the clips' frames, read the
+planted foot's ground contact off the images frame by frame on the south-west facing (eye and pixel counting), and
+cross-checked with a throwaway template match of the ground blobs; several Enhanced numbers are that match's
+medians, and it misread the Classic horse's trot. They carry about ±0.1–0.2 tiles. The prototype
+(`planted_proto.py`, scratch) tried blob tracking and the vote; the vote was ported, and its band, tolerance, votes,
+per-pair reduction (median, mean, interquartile mean) and sub-pixel refinement were tuned in Rust over 92 settings
+against the hand table (`stride_hand_compare.py`). Reproduce: `udd-cli tool strides measure full
+mobile_anim_cc.uddp mobile_anim_ec.uddp --report DIR` (or `--body N` for these bodies with `--output DIR`), then
+`python3 stride_hand_compare.py DIR/*.tsv`.
+
+| Clip | Hand | Planted foot (S, SW, W → stride) | Δ | Flow |
+|---|---|---|---|---|
+| Classic 400 walk (0) | 1.30 | 1.33 1.34 1.68 → 1.34 | +0.04 | 0.78 |
+| Classic 400 run (2) | 2.15 | 1.96 2.10 2.43 → 2.10 | −0.05 | 1.40 |
+| Classic 401 walk (0) | 1.30 | 1.29 1.34 1.67 → 1.34 | +0.04 | 0.87 |
+| Classic 401 run (2) | 2.15 | 1.97 2.04 2.18 → 2.04 | −0.11 | 1.55 |
+| Enhanced 400 walk (1) | 1.40 | 1.38 1.40 1.35 → 1.38 | −0.02 | 1.16 |
+| Enhanced 400 run (3) | 1.75 | 1.74 2.14 1.83 → 1.83 | +0.08 | 1.24 |
+| Enhanced 400 war walk (15) | 1.30 | 1.20 1.21 1.17 → 1.20 | −0.10 | 1.09 |
+| Enhanced 401 walk (1) | 1.40 | 1.42 1.43 1.35 → 1.42 | +0.02 | 1.24 |
+| Enhanced 401 run (3) | 1.75 | 2.03 2.15 1.76 → 2.03 | +0.28 | 1.19 |
+| Classic horse 200 trot (0) | 1.05 | 1.08 1.38 1.73 → 1.38 | +0.33 | 0.90 |
+| Classic horse 200 gallop (1) | 2.40 | 2.40 2.27 5.16 → 2.40 | 0.00 | 1.08 |
+| Classic dog 217 walk (0) | 0.95 | 0.64 0.52 0.64 → 0.64 | −0.31 | none |
+| Classic wolf 225 walk (0) | 1.00 | 1.11 0.69 0.93 → 0.93 | −0.07 | 0.52 |
+| Classic orc 17 walk (0) | 1.30 | 1.31 1.49 2.12 → 1.49 | +0.19 | 0.88 |
+| Classic ogre 1 walk (0) | 2.25 | 2.86 2.43 2.22 → 2.43 | +0.18 | 1.92 |
+| Classic daemon 9 walk (0) | 2.80 | 3.01 3.34 3.04 → 3.04 | +0.24 | 2.79 |
+| Enhanced horse 200 walk (22) | 1.36 | 1.59 1.36 1.47 → 1.47 | +0.11 | 1.44 |
+| Enhanced horse 200 run (24) | 3.80 | 3.48 4.02 5.35 → 4.02 | +0.22 | 2.33 |
+| Enhanced dog 217 walk (22) | 0.91 | 1.03 0.88 0.98 → 0.98 | +0.07 | 0.68 |
+| Enhanced wolf 225 walk (22) | 1.55 | 1.54 1.36 1.49 → 1.49 | −0.06 | 1.04 |
+| Enhanced orc 17 walk (22) | 2.40 | 2.51 2.48 2.33 → 2.48 | +0.08 | 1.55 |
+| Enhanced ogre 1 walk (22) | 2.55 | 2.88 2.37 2.54 → 2.54 | −0.01 | 1.83 |
+| Enhanced daemon 9 walk (22) | 3.13 | 2.71 2.98 2.75 → 2.75 | −0.38 | 2.73 |
+
+Mean |Δ| 0.13 (flow 0.50), 12 of 23 within 0.1 (flow 2), 18 within 0.25, largest 0.38; the BC7 test package gives
+0.133. Where it disagrees: the hand numbers are the south-west facing alone while the stride is the facings' median
+(the Classic orc's SW 1.49 against the hand's 1.3 is a real disagreement, its S 1.31 agrees; the Classic trot's SW
+1.38 against 1.05, which the hand table already doubted); the Enhanced human run has a planted foot in only about
+half its frame pairs and their travels spread 3–12 px (the hand count read 8.5 px a frame, the vote 9–10.5); the
+Classic dog's feet are a few pixels, so the band holds little else than the body; the Enhanced daemon's wings reach
+into the band. Five-frame Classic runs (wolf, dog) jump 20–40 px a frame and mostly find no planted foot on two
+facings: they get no stride and keep the client timing, about right for their two-tile gallops, where the flow's
+0.4–0.6 played them at the clamp's fastest.
+
+Decisions: planted foot is the default (packers, `udd-cli tool strides measure`, the inspector and the converter GUI);
+the human `HAND_STRIDES` stay, since the Enhanced run does not reproduce; the clamp is now a third to three times
+the clip's own speed (`MIN_OWN_CYCLE_FRACTION`, `MAX_OWN_CYCLE_FRACTION`): the planted foot only needs a guard
+against outliers, and a Classic monster runs its walk at the run's 0.2 s steps (the orc: 0.37 of its own cycle on a
+side facing), which half would hold back. Re-measured in place with `full`: `/home/claudio/test/uddp` (1339 of 1914
+Classic clips with frames have a stride, 2649 of 4125 Enhanced; the flow's 882 and 1627) and the BC7 atlas test
+packages (1349, 2613).
+
+The Classic orc (the user found it too fast on the walk-pace clip): recorded walking and running east, a screen
+diagonal, on the test packages before and after (`video_pace.py` on the recordings: the ground's scroll and the
+silhouette's period). The ground was right, 2.47 tiles/s walking and 4.5–4.7 running (the 0.4 and 0.2 s steps; the
+run climbs a slope), and the run used the right clip: Classic monsters run their walk (action 0) at the run's steps,
+as ClassicUO does. The legs were not: walk and run both played 2.50 cycles a second, the flow's 0.88 tiles × 0.4 s
+held at the clamp's 0.4 s (twice the clip's own 0.8 s) and its run likewise. The planted foot covers 1.49 side tiles
+a cycle, 2.11 tiles along a diagonal, so the legs went at 5.3 tiles/s over a 2.5 tiles/s ground: twice too fast
+walking, 1.06 times running. Now the walk plays 1.19 cycles a second and the run 2.38 (measured; 1.18 and 2.37
+expected), the legs at the ground's speed. The Enhanced orc (walk 22, run 24) went from 1.61 and 2.60 cycles a second
+to 0.71 (expected; the walk's period outlasts the recording's segment) and 1.54 (measured). The recordings' foot
+tracker (`video_feet.py`) reads the planted foot moving with the ground in every segment, before and after alike: it
+locks on the ground showing through the mask, so slip is computed from the measured cycles and the strides instead.
+Small creatures (wolf, dog) have too little colour for the silhouette period; their rates follow from the strides:
+the Classic wolf's walk from 4.8 cycles a second (the flow's 0.52 tiles at the clamp) to 1.9, its run from 5 to the
+clip's own 2.5.
 
 ## Upscaling when zoomed
 
