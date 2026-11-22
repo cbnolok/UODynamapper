@@ -46,7 +46,7 @@ use crate::package_progress::{
     build_and_write_package_with_progress,
 };
 use crate::conversion_tables::{EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
-use crate::page_compression::{atlas_page_compression, LOSSLESS_PAGE_COMPRESSION};
+use crate::page_compression::{atlas_page_compression, BC7_PAGE_COMPRESSION};
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use uocf::utils::bundled_files;
@@ -150,7 +150,7 @@ use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
 /// The Zstd level of BC7 land blocks unless the packer is asked for another: the lossy Enhanced land (BC7 with fix C,
 /// no RDO, straight colour; decided 2026-11-05, `docs/agent_notes/uddp_anim_format_requirements.md` section 8).
-pub const BC7_LAND_PAGE_ZSTD_LEVEL: i32 = 19;
+pub const BC7_LAND_PAGE_ZSTD_LEVEL: i32 = crate::page_compression::BC7_PAGE_ZSTD_LEVEL;
 
 /// The land tile ids the runtime resolves to render layers: dynamapper's land page lookup capacity.
 const LAND_TILE_ID_COUNT: u32 = 0x4000;
@@ -192,7 +192,7 @@ impl Default for TexLandEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: LOSSLESS_PAGE_COMPRESSION,
+            compression: BC7_PAGE_COMPRESSION,
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),
@@ -202,7 +202,7 @@ impl Default for TexLandEcAtlasOptions {
             upscale_256_passes: Vec::new(),
             upscale_512_passes: Vec::new(),
             upscale_profile: None,
-            pixel_format: PagePixelFormat::Rgba8888,
+            pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::NO_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,

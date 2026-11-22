@@ -46,8 +46,13 @@ the client of every Kingdom Reborn terrain definition, texture and route. Packag
 `tex_land_kr.uddp`, `tilemeta_kr.uddp`, `tex_art_kr.uddp` and `tex_aux_kr.uddp` (`pack-kr-land`, removed), are
 not read: repack the Enhanced packages and remove them.
 
-Without a format flag, the art, land and auxiliary texture packers write lossless RGBA8888
-pages with Zstd 19 per page; `--zstd=LEVEL` picks another level.
+Without a format flag the packers write block-compressed textures with Zstd, RDO off: the art,
+Enhanced land and auxiliary texture pages BC7 with Zstd 19, the mobile animation pages BC7 with
+Zstd 9, the single gumps BC1 (Classic) or BC7 (Enhanced) with Zstd 19, and the effects textures
+BC7; `--zstd=LEVEL` picks another level. `--raw --zstd=19` (`--art-raw`, `--land-raw` in
+`pack-ec-textures`) writes the lossless RGBA8888 pages, and `--raw` the lossless single gumps
+and effects textures. Classic land (`pack-texmaps`), the gump paperdoll atlas pages and
+`pack-ec-paperdoll` stay lossless.
 
 ### Enhanced paperdoll: what a robe takes off
 

@@ -57,7 +57,7 @@ use crate::bc7::{
     ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::package_progress::build_and_write_package_with_progress;
-use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::page_compression::BC7_PAGE_COMPRESSION;
 use crate::source_paths::find_first_existing_file;
 use crate::upscale_pipeline::{apply_upscale_passes_owned, UpscalePass};
 use uot_image_postprocess::upscaling::UpscaleFilter;
@@ -99,8 +99,8 @@ pub struct TexAuxEcPackOptions {
 impl Default for TexAuxEcPackOptions {
     fn default() -> Self {
         Self {
-            compression: LOSSLESS_PAGE_COMPRESSION,
-            pixel_format: PagePixelFormat::Rgba8888,
+            compression: BC7_PAGE_COMPRESSION,
+            pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale: UpscaleFilter::None,

@@ -278,7 +278,7 @@ Every page of the 2026-11-19 repack, one thread, best of 5 (Zstd 19 one frame ag
 | `tex_art_ec`, RGBA (default) | 9 | +52.3–73.1 % | 28–83 → 10–34 ms | 0 |
 | `tex_art_cc`, RGBA (default) | 46 | +43.8–130.5 % | 5.1–12.3 → 3.0–6.0 ms | 0 |
 
-- **Only one page is LZ4 HC at 1×:** the default packages are lossless RGBA, where LZ4 HC costs 44–131 %, so they come
+- **Only one page is LZ4 HC at 1×:** the default packages were lossless RGBA (BC7 since 2026-11-22), where LZ4 HC costs 44–131 %, so they come
   out byte for byte as before (`tex_land_cc` and `gumps_ec` changed only by the strips rule and the gump packer, which
   they predated). Of the BC7 pages, most of the art lands just above the limit (+21–25 %), and the land further.
 - **The rule pays on upscaled block pages,** where LZ4 HC was +20 % on 4× Enhanced BC7 RDO 1 (above), and on the

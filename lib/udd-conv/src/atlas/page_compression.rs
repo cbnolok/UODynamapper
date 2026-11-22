@@ -21,6 +21,24 @@ pub const LOSSLESS_PAGE_ZSTD_LEVEL: i32 = 19;
 /// The builder codec of a lossless gump, land or art page unless the packer is asked for another.
 pub const LOSSLESS_PAGE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDictLevel(LOSSLESS_PAGE_ZSTD_LEVEL);
 
+/// The Zstd level of the BC7 art, land and auxiliary texture pages unless the packer is asked for another. BC7 (with
+/// Zstd, RDO off) is every packer's default where the package takes it (the user, 2026-11-22: "at this point in the
+/// converter I'd always default to block compressed textures"); Classic land stays lossless
+/// (`tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL`).
+pub const BC7_PAGE_ZSTD_LEVEL: i32 = 19;
+
+/// The builder codec of a BC7 art, land or auxiliary texture page unless the packer is asked for another.
+pub const BC7_PAGE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDictLevel(BC7_PAGE_ZSTD_LEVEL);
+
+/// The Zstd level of the BC7 mobile animation pages unless the packer is asked for another. Measured on every 16th page
+/// of the BC7 packages (2026-11-22): level 19 is 2.9 % (EC) to 3.6 % (CC) smaller than 9 for 15–18 times its
+/// compression time (about 5 minutes more for EC), level 7 0.6–0.8 % larger; decoding takes 2.3–4.5 ms a page at
+/// every level.
+pub const MOBILE_ANIM_PAGE_ZSTD_LEVEL: i32 = 9;
+
+/// The builder codec of a mobile animation page unless the packer is asked for another.
+pub const MOBILE_ANIM_PAGE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDictLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL);
+
 /// Rows of pixels in each independently compressed strip of an atlas page: 16 strips on a 2048-row page. A multiple of
 /// 8, so a strip holds whole block rows of BC7 and of 4x4 and 8x8 ASTC, and a decoded strip can be uploaded to its own
 /// rows of a block-compressed texture.
@@ -85,5 +103,59 @@ mod tests {
         assert_eq!(strip(PagePixelFormat::Bc7, 4096), 1024 * 16 * (PAGE_STRIP_ROWS / 4));
         assert_eq!(strip(PagePixelFormat::Bc7, 4094), strip(PagePixelFormat::Bc7, 4096));
         assert_eq!(atlas_page_compression(CompressionFlag::None, PagePixelFormat::Rgba8888, 64), CompressionFlag::None);
+    }
+
+    /// Every packer defaults to block-compressed textures with Zstd and no RDO where its package takes them; Classic
+    /// land, the gump atlas pages, the paperdoll frames and the Kingdom Reborn material textures stay lossless.
+    #[test]
+    fn packers_default_to_block_compressed_textures_with_zstd() {
+        use crate::bc7::NO_BC7_RDO_LAMBDA;
+        use crate::single_gumps::default_single_gump_compression;
+        use crate::{cc_gumps, ec_gumps, effects_ec, mobile_anim_cc, mobile_anim_ec, paperdoll_ec};
+        use crate::{kr_items, tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, tex_land_ec};
+
+        let art_cc = tex_art_cc::TexArtCcAtlasOptions::default();
+        let art_ec = tex_art_ec::TexArtEcAtlasOptions::default();
+        let land_ec = tex_land_ec::TexLandEcAtlasOptions::default();
+        let aux_ec = tex_aux_ec::TexAuxEcPackOptions::default();
+        for (package, pixel_format, compression, rdo_lambda) in [
+            ("tex_art_cc", art_cc.pixel_format, art_cc.compression, art_cc.bc7_rdo_lambda),
+            ("tex_art_ec", art_ec.pixel_format, art_ec.compression, art_ec.bc7_rdo_lambda),
+            ("tex_land_ec", land_ec.pixel_format, land_ec.compression, land_ec.bc7_rdo_lambda),
+            ("tex_aux_ec", aux_ec.pixel_format, aux_ec.compression, aux_ec.bc7_rdo_lambda),
+        ] {
+            assert_eq!(pixel_format, PagePixelFormat::Bc7, "{package}");
+            assert_eq!(compression, BC7_PAGE_COMPRESSION, "{package}");
+            assert_eq!(rdo_lambda, NO_BC7_RDO_LAMBDA, "{package}");
+        }
+        let mobile_cc = mobile_anim_cc::MobileAnimCcAtlasOptions::default();
+        let mobile_ec = mobile_anim_ec::MobileAnimEcAtlasOptions::default();
+        for (package, pixel_format, compression, rdo_lambda) in [
+            ("mobile_anim_cc", mobile_cc.pixel_format, mobile_cc.compression, mobile_cc.bc7_rdo_lambda),
+            ("mobile_anim_ec", mobile_ec.pixel_format, mobile_ec.compression, mobile_ec.bc7_rdo_lambda),
+        ] {
+            assert_eq!(pixel_format, PagePixelFormat::Bc7, "{package}");
+            assert_eq!(compression, MOBILE_ANIM_PAGE_COMPRESSION, "{package}");
+            assert_eq!(rdo_lambda, NO_BC7_RDO_LAMBDA, "{package}");
+        }
+        let gumps_cc = cc_gumps::CcGumpsOptions::default();
+        let gumps_ec = ec_gumps::EcGumpsOptions::default();
+        for (package, single, compression, atlas, lossy) in [
+            ("gumps_cc", gumps_cc.single_pixel_format, gumps_cc.compression, gumps_cc.atlas_compression,
+                cc_gumps::CC_LOSSY_SINGLE_GUMP_FORMAT),
+            ("gumps_ec", gumps_ec.single_pixel_format, gumps_ec.compression, gumps_ec.atlas_compression,
+                ec_gumps::EC_LOSSY_SINGLE_GUMP_FORMAT),
+        ] {
+            assert_eq!(single, lossy, "{package}");
+            assert_eq!(compression, default_single_gump_compression(lossy), "{package}");
+            assert_eq!(atlas, LOSSLESS_PAGE_COMPRESSION, "{package}");
+        }
+        assert!(effects_ec::EffectsEcPackOptions::default().bc7);
+
+        let land_cc = tex_land_cc::TexLandCcAtlasOptions::default();
+        assert_eq!((land_cc.pixel_format, land_cc.compression), (PagePixelFormat::Rgba8888, LOSSLESS_PAGE_COMPRESSION));
+        assert_eq!(paperdoll_ec::PaperdollEcPackOptions::default().compression, LOSSLESS_PAGE_COMPRESSION);
+        let kr_aux = kr_items::kr_aux_options();
+        assert_eq!((kr_aux.pixel_format, kr_aux.compression), (PagePixelFormat::Rgba8888, LOSSLESS_PAGE_COMPRESSION));
     }
 }

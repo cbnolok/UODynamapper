@@ -14,8 +14,8 @@
 //!   the items whose world art differs from the Enhanced Client's ([`compare_world_art`]: the Enhanced Client lacks
 //!   the item, its record names another texture, window, draw offset, kind or sprite descriptor (but for the legacy
 //!   window, which the slot never draws), or the image differs where the item draws it beyond its
-//!   [`TextureUse::threshold`]), lossless RGBA8888 with Zstd. The Enhanced records it is compared with have taken
-//!   Kingdom Reborn's world-art window where both name the same image at the same scale
+//!   [`TextureUse::threshold`]), in the Enhanced art's page format ([`kr_art_options`]). The Enhanced records it is
+//!   compared with have taken Kingdom Reborn's world-art window where both name the same image at the same scale
 //!   ([`adopt_kr_world_windows`]), so those windows are not differences. It lists the other items with
 //!   world art, drawn from `tex_art_ec.uddp`, with their image's measured difference. The items kept for another
 //!   texture, window, kind or descriptor keep Kingdom Reborn's records, offsets and descriptors; their pixels are the
@@ -23,8 +23,9 @@
 //! - [`pack_kr_aux`] writes the section of `tex_aux_ec.uddp`, an overlay over that package
 //!   (`tex_aux_ec::pack_tex_aux_ec_overlay`): of KR's material inputs (masks, noise, water maps), its `missing.tga`,
 //!   atmosphere maps and light textures, those whose image differs from the Enhanced Client's by more than
-//!   [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] (or that `tex_aux_ec` lacks), lossless RGBA8888 with Zstd. The others are read
-//!   from `tex_aux_ec.uddp`; the overlay lists them with their measured difference.
+//!   [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] (or that `tex_aux_ec` lacks), lossless RGBA8888 with Zstd
+//!   ([`kr_aux_options`]). The others are read from `tex_aux_ec.uddp`; the overlay lists them with their measured
+//!   difference.
 //!
 //! An overlay is nested in the package it is measured against, packed from the same Enhanced Client in the same run,
 //! so it cannot be read over another one.
@@ -54,6 +55,8 @@ use uocf::enhanced::tileart::{ArtData, ArtTexture, TaeFlag, TileType, TILEART_UO
 use crate::textures::tex_aux_ec::{
     pack_tex_aux_ec_overlay, tex_aux_ec_texture_keys, TexAuxEcOverlayBase, TexAuxEcOverlaySummary, TexAuxEcPackOptions,
 };
+use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::PagePixelFormat;
 
 /// The largest [`image_difference`], in 8-bit levels, between a Kingdom Reborn image and the Enhanced Client's image
 /// of the same name that still counts as the same image re-encoded, for an image measured whole ([`TextureUse::Whole`]:
@@ -525,6 +528,16 @@ pub fn kr_art_options(ec_art_options: &TexArtEcAtlasOptions) -> TexArtEcAtlasOpt
     }
 }
 
+/// The Kingdom Reborn material textures' options: lossless RGBA8888 with Zstd, whatever `tex_aux_ec` takes (BC7 by
+/// default); they are few, and each texture keeps its own format.
+pub fn kr_aux_options() -> TexAuxEcPackOptions {
+    TexAuxEcPackOptions {
+        compression: LOSSLESS_PAGE_COMPRESSION,
+        pixel_format: PagePixelFormat::Rgba8888,
+        ..TexAuxEcPackOptions::default()
+    }
+}
+
 /// Where [`pack_kr_art_and_tilemeta`] writes the Kingdom Reborn tile data: `out`, with the Classic `tiledata.mul` (and
 /// `radarcol.mul`) of `cc_dir` as the Enhanced tilemeta takes them.
 pub struct KrTilemetaOutput<'a> {
@@ -589,8 +602,7 @@ pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Pa
         keys: tex_aux_ec_texture_keys(&ec_refs, &ec_lights)?,
         max_difference: KR_IMAGE_EQUIVALENCE_THRESHOLD,
     };
-    let aux = pack_tex_aux_ec_overlay(&[kr_dir.to_path_buf()], kr_tilemeta, aux_out, &TexAuxEcPackOptions::default(),
-        &base)?;
+    let aux = pack_tex_aux_ec_overlay(&[kr_dir.to_path_buf()], kr_tilemeta, aux_out, &kr_aux_options(), &base)?;
     log_aux(&aux);
     info!("Kingdom Reborn items: {} material textures, {} left to tex_aux_ec.uddp", aux.kept.len(),
         aux.equivalents.len());

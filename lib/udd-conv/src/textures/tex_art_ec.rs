@@ -50,7 +50,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
-use crate::page_compression::{atlas_page_compression, LOSSLESS_PAGE_COMPRESSION};
+use crate::page_compression::{atlas_page_compression, BC7_PAGE_COMPRESSION};
 use crate::rgba_bounds::nonzero_alpha_bounds_in_rect;
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::common::EcOverlayTable;
@@ -108,11 +108,11 @@ impl Default for TexArtEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: LOSSLESS_PAGE_COMPRESSION,
+            compression: BC7_PAGE_COMPRESSION,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
             upscale_profile: None,
-            pixel_format: PagePixelFormat::Rgba8888,
+            pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::NO_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         }

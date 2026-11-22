@@ -37,8 +37,8 @@ pub struct CcGumpsBuildSummary {
 pub const CC_LOSSY_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc1;
 
 pub struct CcGumpsOptions {
-    /// How single gumps are stored: lossless RGBA8888, or BC1 when packing lossy. Paperdoll gumps stay lossless: Classic
-    /// partial hue needs exact greys.
+    /// How single gumps are stored: BC1 when packing lossy (the default), or lossless RGBA8888. Paperdoll gumps stay
+    /// lossless: Classic partial hue needs exact greys.
     pub single_pixel_format: GumpPixelFormat,
     /// The builder codec of single gumps.
     pub compression: CompressionFlag,
@@ -52,8 +52,8 @@ pub struct CcGumpsOptions {
 impl Default for CcGumpsOptions {
     fn default() -> Self {
         Self {
-            single_pixel_format: GumpPixelFormat::Rgba8888,
-            compression: default_single_gump_compression(GumpPixelFormat::Rgba8888),
+            single_pixel_format: CC_LOSSY_SINGLE_GUMP_FORMAT,
+            compression: default_single_gump_compression(CC_LOSSY_SINGLE_GUMP_FORMAT),
             atlas_compression: LOSSLESS_PAGE_COMPRESSION,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),

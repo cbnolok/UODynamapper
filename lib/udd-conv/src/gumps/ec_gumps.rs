@@ -51,8 +51,8 @@ const TRANSPARENT_BLACK: [u8; RGBA_BYTES] = [0; RGBA_BYTES];
 
 pub struct EcGumpsOptions {
     pub max_id: u32,
-    /// How single gumps are stored: lossless RGBA8888, or BC7 when packing lossy, with the gumps in the Classic colour
-    /// space as BC1. Paperdoll gumps stay lossless: the Enhanced client hues exact greys only
+    /// How single gumps are stored: BC7 when packing lossy (the default), with the gumps in the Classic colour space as
+    /// BC1, or lossless RGBA8888. Paperdoll gumps stay lossless: the Enhanced client hues exact greys only
     /// (`UOPaperdoll::DrawGumpLayer`).
     pub single_pixel_format: GumpPixelFormat,
     /// The builder codec of single gumps.
@@ -71,8 +71,8 @@ impl Default for EcGumpsOptions {
     fn default() -> Self {
         Self {
             max_id: EC_GUMP_DEFAULT_MAX_ID,
-            single_pixel_format: GumpPixelFormat::Rgba8888,
-            compression: default_single_gump_compression(GumpPixelFormat::Rgba8888),
+            single_pixel_format: EC_LOSSY_SINGLE_GUMP_FORMAT,
+            compression: default_single_gump_compression(EC_LOSSY_SINGLE_GUMP_FORMAT),
             atlas_compression: LOSSLESS_PAGE_COMPRESSION,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
@@ -878,15 +878,15 @@ mod tests {
         const CLASSIC_OPAQUE: [u8; 4] = [248, 0, 120, 255];
         const ENHANCED_OPAQUE: [u8; 4] = [247, 0, 120, 255];
         let gumps = [(CLASSIC_GUMP_ID, CLASSIC_OPAQUE), (ENHANCED_GUMP_ID, ENHANCED_OPAQUE)];
-        let lossy = EcGumpsOptions {
-            single_pixel_format: EC_LOSSY_SINGLE_GUMP_FORMAT,
-            compression: default_single_gump_compression(EC_LOSSY_SINGLE_GUMP_FORMAT),
+        let lossless = EcGumpsOptions {
+            single_pixel_format: GumpPixelFormat::Rgba8888,
+            compression: default_single_gump_compression(GumpPixelFormat::Rgba8888),
             ..EcGumpsOptions::default()
         };
 
         for (options, classic_format, enhanced_format) in [
-            (&lossy, EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT, EC_LOSSY_SINGLE_GUMP_FORMAT),
-            (&EcGumpsOptions::default(), GumpPixelFormat::Rgba8888, GumpPixelFormat::Rgba8888),
+            (&EcGumpsOptions::default(), EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT, EC_LOSSY_SINGLE_GUMP_FORMAT),
+            (&lossless, GumpPixelFormat::Rgba8888, GumpPixelFormat::Rgba8888),
         ] {
             let mut builder = UddpBuilder::new(LookupMode::SparseId);
             let mut writer = single_gump_writer(options, None);

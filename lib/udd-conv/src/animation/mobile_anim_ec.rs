@@ -195,7 +195,7 @@ impl Default for MobileAnimEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::ZstdNoDict,
+            compression: crate::page_compression::MOBILE_ANIM_PAGE_COMPRESSION,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,

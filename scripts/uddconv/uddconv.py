@@ -10,7 +10,8 @@ from pathlib import Path
 WORKSPACE_JUSTFILE = str(Path(__file__).resolve().parents[2] / "justfile")
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
-# No format flag: the packer's default, lossless Zstd 19 atlas pages.
+# No format flag: the packer's default, lossy single gumps (BC1 Classic, BC7 Enhanced) with Zstd 19 and lossless Zstd 19
+# atlas pages.
 DEFAULT_GUMP_ARGS: list[str] = []
 # The Classic gump package, which gumps_ec.uddp shares the Classic gumps with unless --no-gump-sharing.
 GUMPS_CC_FILE_NAME = "gumps_cc.uddp"
@@ -18,9 +19,6 @@ NO_GUMP_SHARING_HELP = (
     "pack gumps_ec.uddp standalone, keeping the Classic gumps it repeats, instead of leaving them out for the "
     "gumps_cc.uddp in the output folder to draw"
 )
-# Mobile animation pages without a format flag: lossless RGBA8888 with Zstd 19, as the art, land and gump pages.
-LOSSLESS_ANIM_FORMAT = "raw"
-LOSSLESS_ZSTD_LEVEL = "19"
 DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
 
 
@@ -308,7 +306,7 @@ def run_all(
             f"{output_dir}/tex_aux_ec.uddp",
         )
         run_pack("pack-ec-effects", *non_texture_zstd, *source_args, "--output", f"{output_dir}/effects_ec.uddp")
-        # Without a requested level, the packer's lossless Zstd 19 frames.
+        # Without a requested level, the packer's lossless Zstd 19 frames (the paperdoll has no lossy build).
         run_pack(
             "pack-ec-paperdoll",
             *(paperdoll_zstd or []),
@@ -383,21 +381,18 @@ def main() -> int:
             args.ecdir,
             args.output_dir,
             args.maps,
-            # No format flag: the packers' default, lossless Zstd 19 art pages.
+            # No format flag: the packers' defaults, BC7 with Zstd 19 art and Enhanced land pages, lossless Classic land,
+            # BC7 with Zstd 9 mobile animation pages.
             format_and_zstd_args(args, prefix="cc-art-", global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="cc-land-", global_zstd=global_zstd),
             format_and_zstd_args(
                 args,
                 prefix="cc-anim-",
-                default_format=LOSSLESS_ANIM_FORMAT,
-                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
                 global_zstd=global_zstd,
             ),
             format_and_zstd_args(
                 args,
                 prefix="ec-anim-",
-                default_format=LOSSLESS_ANIM_FORMAT,
-                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
                 global_zstd=global_zstd,
             ),
             format_and_zstd_args(args, prefix="art-", cli_prefix="art-", global_zstd=global_zstd),
@@ -418,15 +413,11 @@ def main() -> int:
             format_and_zstd_args(
                 args,
                 prefix="cc-",
-                default_format=LOSSLESS_ANIM_FORMAT,
-                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
                 global_zstd=global_zstd,
             ),
             format_and_zstd_args(
                 args,
                 prefix="ec-",
-                default_format=LOSSLESS_ANIM_FORMAT,
-                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
                 global_zstd=global_zstd,
             ),
             args.tables,

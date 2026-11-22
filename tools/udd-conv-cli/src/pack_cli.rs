@@ -33,7 +33,7 @@ use udd_conv::{
     },
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
-    page_compression::LOSSLESS_PAGE_ZSTD_LEVEL,
+    page_compression::{BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_ZSTD_LEVEL},
     single_gumps::{default_single_gump_compression, GumpPixelFormat},
     cc_statics::{
         convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches,
@@ -102,16 +102,20 @@ use udd_conv::bc7::NO_BC7_RDO_LAMBDA;
 /// The level of a bare `--zstd` where it adds a pass over another encoding (BC7, raw texture pages).
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
+/// A bare mobile animation `--zstd`: [`MOBILE_ANIM_PAGE_ZSTD_LEVEL`], the level of the pages without the flag.
+const MOBILE_ANIM_ZSTD_LEVEL_VALUE: &str = "9";
 const CHUNK_ZSTD_HELP: &str = "Zstd level of the chunks (--zstd=LEVEL). Chunks are compressed with plain Zstd unless --stored; without a level (or without the flag) map chunks use level 19 and statics chunks level 7.";
 const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runtime read, for a package about 6.6x (map) or 2.8x (statics) larger.";
-const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
+const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which are lossless RGBA8888 with Zstd 19 (Classic land stays lossless); with --raw, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
 const CLASSIC_LAND_BC7_HELP: &str = "Refused, with the reason: Classic land stays lossless.";
-const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 (19 with --bc1 or --bc7) and atlas pages, lossless RGBA8888, level 19. A bare --zstd keeps these levels.";
-const ART_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one.";
-const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one.";
-const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
-const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
-const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
+const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and of the atlas pages (--zstd=LEVEL). Without it single gumps use level 19 (7 with --raw) and atlas pages, lossless RGBA8888, level 19. A bare --zstd keeps these levels.";
+const ART_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding (none without --zstd). A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one. Lossless pages: --raw --zstd=19.";
+const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding (none without --zstd). A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one. Lossless textures: --raw --zstd=19.";
+const MOBILE_ANIM_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 9; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding (none without --zstd). A bare --zstd is level 9.";
+const MOBILE_ANIM_BC7_HELP: &str = "Write BC7 atlas pages without BC7 RDO and, without --zstd, without Zstd. The default is BC7 without RDO with Zstd 9.";
+const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888 instead of the lossy default, with Zstd 7 unless --zstd=LEVEL.";
+const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1, the default: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
+const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, the default, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
 const GUMP_SHARE_WITH_HELP: &str = "Share with this gumps_cc.uddp: leave out each single gump it draws the same (the Classic gumps Interface.uop repeats; colour under fully clear texels aside, except on the paperdoll body gumps) and list it, with a hash of the gumps_cc image, for Dynamapper to draw from the Classic source. The package then needs that gumps_cc.uddp, or the Classic client files, to show those gumps under Enhanced. Without it the package is standalone.";
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
@@ -261,11 +265,11 @@ fn resolve_texture_output_format(
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, bc7, bc7_rdo) {
         (false, false, false) => Ok(TextureOutputFormat {
-            compression: zstd_compression(zstd.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL)),
-            pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: 0.0,
+            compression: zstd_compression(zstd.unwrap_or(BC7_PAGE_ZSTD_LEVEL)),
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks,
-            label: "RGBA8888 Zstd",
+            label: "BC7 + Zstd",
         }),
         (true, false, false) => Ok(TextureOutputFormat {
             compression: if let Some(level) = zstd {
@@ -325,8 +329,8 @@ fn pass_zstd_level(zstd: Option<Option<i32>>) -> Option<i32> {
 }
 
 /// The art and auxiliary texture pages of `pack-art`, `pack-ec-textures` and `pack-ec-tex-aux`: without a format flag,
-/// lossless RGBA8888 with Zstd at `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`] (a bare `--zstd` too), as for gump atlas
-/// pages; after `--raw`, `--bc7` or `--bc7-rdo` a bare `--zstd` is a [`DEFAULT_ZSTD_LEVEL`] pass over that encoding.
+/// BC7 without RDO with Zstd at `--zstd=LEVEL` or [`BC7_PAGE_ZSTD_LEVEL`] (a bare `--zstd` too); after `--raw`, `--bc7`
+/// or `--bc7-rdo` a bare `--zstd` is a [`DEFAULT_ZSTD_LEVEL`] pass over that encoding.
 fn resolve_art_output_format(
     raw: bool,
     zstd: Option<Option<i32>>,
@@ -344,29 +348,39 @@ fn land_zstd_level(zstd: Option<Option<i32>>) -> Option<i32> {
     zstd.map(|level| level.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
 }
 
-/// The land pages of `pack-texmaps` and `pack-ec-textures`: without a format flag, lossless RGBA8888 with Zstd at
-/// `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`]; BC7 blocks with Zstd at `--zstd=LEVEL` or [`BC7_LAND_PAGE_ZSTD_LEVEL`];
-/// `--raw` resolves as for any other texture.
+/// The Enhanced land pages of `pack-ec-textures`: BC7 blocks with Zstd at `--zstd=LEVEL` or [`BC7_LAND_PAGE_ZSTD_LEVEL`],
+/// without a format flag too (no RDO); `--raw` resolves as for any other texture.
 fn resolve_land_output_format(
     args: TextureOutputFormatArgs,
     bc7_rdo_lambda: f32,
     bc7_rdo_lookback_blocks: usize,
 ) -> eyre::Result<TextureOutputFormat> {
-    if args.bc7 || args.bc7_rdo {
-        return resolve_texture_output_format_args(
-            TextureOutputFormatArgs { zstd: Some(args.zstd.unwrap_or(BC7_LAND_PAGE_ZSTD_LEVEL)), ..args },
-            bc7_rdo_lambda,
-            bc7_rdo_lookback_blocks,
-        );
-    }
     if args.raw {
         return resolve_texture_output_format_args(args, bc7_rdo_lambda, bc7_rdo_lookback_blocks);
     }
-    Ok(TextureOutputFormat {
-        compression: zstd_compression(args.zstd.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL)),
-        pixel_format: PagePixelFormat::Rgba8888,
-        bc7_rdo_lambda: 0.0,
+    resolve_texture_output_format_args(
+        TextureOutputFormatArgs { zstd: Some(args.zstd.unwrap_or(BC7_LAND_PAGE_ZSTD_LEVEL)), ..args },
+        bc7_rdo_lambda,
         bc7_rdo_lookback_blocks,
+    )
+}
+
+/// The Classic land pages of `pack-texmaps`: lossless RGBA8888 with Zstd at `--zstd=LEVEL` or
+/// [`LOSSLESS_PAGE_ZSTD_LEVEL`] (Classic land stays lossless, [`CLASSIC_LAND_LOSSY_REFUSAL`]); `--raw` resolves as for any
+/// other texture.
+fn resolve_classic_land_output_format(raw: bool, zstd: Option<i32>) -> eyre::Result<TextureOutputFormat> {
+    if raw {
+        return resolve_texture_output_format_args(
+            TextureOutputFormatArgs { raw, zstd, ..Default::default() },
+            NO_BC7_RDO_LAMBDA,
+            udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+        );
+    }
+    Ok(TextureOutputFormat {
+        compression: zstd_compression(zstd.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL)),
+        pixel_format: PagePixelFormat::Rgba8888,
+        bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         label: "RGBA8888 Zstd",
     })
 }
@@ -385,10 +399,10 @@ fn gump_atlas_compression(zstd: Option<Option<i32>>) -> CompressionFlag {
     zstd_compression(zstd.flatten().unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
 }
 
-/// The single gumps' pixel format: the package's lossy format with `--bc1` (Classic) or `--bc7` (Enhanced), lossless
-/// RGBA8888 otherwise.
-fn single_gump_pixel_format(lossy: bool, lossy_format: GumpPixelFormat) -> GumpPixelFormat {
-    if lossy { lossy_format } else { GumpPixelFormat::Rgba8888 }
+/// The single gumps' pixel format: lossless RGBA8888 with `--raw`, the package's lossy format otherwise (`--bc1` for
+/// Classic and `--bc7` for Enhanced name it).
+fn single_gump_pixel_format(raw: bool, lossy_format: GumpPixelFormat) -> GumpPixelFormat {
+    if raw { GumpPixelFormat::Rgba8888 } else { lossy_format }
 }
 
 /// The single gumps: Zstd at `--zstd=LEVEL`, or the package's default level for their format (a bare `--zstd` too).
@@ -406,15 +420,11 @@ fn resolve_mobile_anim_output_format(
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, bc7, bc7_rdo) {
         (false, false, false) => Ok(TextureOutputFormat {
-            compression: if let Some(level) = zstd {
-                zstd_compression(level)
-            } else {
-                CompressionFlag::None
-            },
+            compression: zstd_compression(zstd.unwrap_or(MOBILE_ANIM_PAGE_ZSTD_LEVEL)),
             pixel_format: PagePixelFormat::Bc7,
-            bc7_rdo_lambda: 0.0,
+            bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks,
-            label: if zstd.is_some() { "BC7 + Zstd" } else { "BC7" },
+            label: "BC7 + Zstd",
         }),
         _ => resolve_texture_output_format(
             raw,
@@ -963,9 +973,9 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = MOBILE_ANIM_ZSTD_LEVEL_VALUE, help = MOBILE_ANIM_ZSTD_HELP)]
         zstd: Option<i32>,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO. This is the default.")]
+        #[arg(long, help = MOBILE_ANIM_BC7_HELP)]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
@@ -995,9 +1005,9 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = MOBILE_ANIM_ZSTD_LEVEL_VALUE, help = MOBILE_ANIM_ZSTD_HELP)]
         zstd: Option<i32>,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO. This is the default.")]
+        #[arg(long, help = MOBILE_ANIM_BC7_HELP)]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
@@ -1062,7 +1072,7 @@ enum Commands {
         land_gutter: u16,
         #[arg(long, help = "Write uncompressed EC RGBA8888 atlas pages.")]
         raw: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the EC art and land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19, as are BC7 land blocks; with another format, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19, except as a pass over another art format, where it is level 7.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the EC art and land pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 19, as are BC7 land blocks with any format flag; with another art format, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19, except as a pass over another art format, where it is level 7. Lossless pages: --raw --zstd=19.")]
         zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
@@ -1070,7 +1080,7 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, help = "Write EC art atlas pages as uncompressed RGBA8888, overriding the shared format flags.")]
         art_raw: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the EC art pages, overriding --zstd: without an art format flag, the level of their lossless RGBA8888 pages' Zstd (default 19); with one, a file-level Zstd pass after that encoding. Optionally pass --art-zstd=LEVEL; a bare --art-zstd keeps level 19, and is a level 7 pass after a format flag.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the EC art pages, overriding --zstd: without an art format flag, the level of their BC7 pages' Zstd (default 19); with one, a file-level Zstd pass after that encoding. Optionally pass --art-zstd=LEVEL; a bare --art-zstd keeps level 19, and is a level 7 pass after a format flag.")]
         art_zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC art atlas pages as BC7 without BC7 RDO, overriding the shared format flags.")]
         art_bc7: bool,
@@ -1078,9 +1088,9 @@ enum Commands {
         art_bc7_rdo: bool,
         #[arg(long, help = "Write EC land atlas pages as uncompressed RGBA8888, overriding the shared format flags.")]
         land_raw: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding; without a land format flag or in BC7, the level of the land pages' Zstd (default 19). Optionally pass --land-zstd=LEVEL; a bare --land-zstd keeps level 19.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding; without a land format flag or in BC7 (the default), the level of the land pages' Zstd (default 19). Optionally pass --land-zstd=LEVEL; a bare --land-zstd keeps level 19.")]
         land_zstd: Option<Option<i32>>,
-        #[arg(long, help = "Write EC land atlas pages as BC7 without BC7 RDO, overriding the shared format flags: the lossy Enhanced land, with Zstd 19 on the blocks unless --land-zstd=LEVEL.")]
+        #[arg(long, help = "Write EC land atlas pages as BC7 without BC7 RDO, overriding the shared format flags: the lossy Enhanced land and the default, with Zstd 19 on the blocks unless --land-zstd=LEVEL.")]
         land_bc7: bool,
         #[arg(long = "land-bc7-rdo", help = "Write EC land atlas pages as BC7 with BC7 RDO, overriding the shared format flags.")]
         land_bc7_rdo: bool,
@@ -1305,8 +1315,10 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[arg(long, default_value = "effects_ec.uddp")]
         output: PathBuf,
-        #[arg(long, help = "Encode uncompressed textures whose size is a multiple of 4 to BC7 (default: RGBA8). DXT1/DXT5 sources stay BC1/BC3.")]
+        #[arg(long, help = "Encode uncompressed textures whose size is a multiple of 4 to BC7: the default. DXT1/DXT5 sources stay BC1/BC3.")]
         bc7: bool,
+        #[arg(long, conflicts_with = "bc7", help = "Keep uncompressed textures RGBA8 instead of the BC7 default.")]
+        raw: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Zstd level of the manifests and textures. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
         #[arg(long, help = "Write every finding of the packer to this file, one line each.")]
@@ -1598,11 +1610,7 @@ where
             refuse_classic_land_bc7(bc7, bc7_rdo)?;
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let output_format = resolve_land_output_format(
-                TextureOutputFormatArgs { raw, zstd: land_zstd_level(zstd), ..Default::default() },
-                NO_BC7_RDO_LAMBDA,
-                udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
-            )?;
+            let output_format = resolve_classic_land_output_format(raw, land_zstd_level(zstd))?;
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &paths[0], // Use the first source dir (usually ccdir)
@@ -2239,14 +2247,14 @@ where
                 kr_aux.equivalents.len()
             );
         }
-        Commands::PackEcEffects { source_dirs: source_dir_args, output, bc7, zstd, report, strict } => {
+        Commands::PackEcEffects { source_dirs: source_dir_args, output, bc7: _, raw, zstd, report, strict } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let summary = pack_effects_ec(
                 &paths,
                 &out_file,
                 &EffectsEcPackOptions {
-                    bc7,
+                    bc7: !raw,
                     compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
                     strict,
                     report,
@@ -2535,8 +2543,8 @@ where
             source_dirs: source_dir_args,
             classic_patches,
             output,
-            raw: _,
-            bc1,
+            raw,
+            bc1: _,
             zstd,
             uop,
             paperdoll_upscale_passes,
@@ -2546,7 +2554,7 @@ where
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
-            let single_pixel_format = single_gump_pixel_format(bc1, CC_LOSSY_SINGLE_GUMP_FORMAT);
+            let single_pixel_format = single_gump_pixel_format(raw, CC_LOSSY_SINGLE_GUMP_FORMAT);
             let summary = convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 &paths,
                 &out_file,
@@ -2580,8 +2588,8 @@ where
             source_dirs: source_dir_args,
             output,
             max_id,
-            raw: _,
-            bc7,
+            raw,
+            bc7: _,
             share_with,
             zstd,
             paperdoll_upscale_passes,
@@ -2591,7 +2599,7 @@ where
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
-            let single_pixel_format = single_gump_pixel_format(bc7, EC_LOSSY_SINGLE_GUMP_FORMAT);
+            let single_pixel_format = single_gump_pixel_format(raw, EC_LOSSY_SINGLE_GUMP_FORMAT);
             let summary = convert_ec_gumps_to_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -2940,11 +2948,12 @@ mod tests {
         format.expect("resolve art output format")
     }
 
-    /// Without a format flag the art and auxiliary texture pages are lossless RGBA8888 with Zstd 19 (the user,
-    /// 2026-11-06), and a bare `--zstd` keeps that level.
+    /// Without a format flag the art and auxiliary texture pages are BC7 without RDO with Zstd 19 (the user,
+    /// 2026-11-22), and a bare `--zstd` keeps that level; `--raw --zstd=19` gives the lossless pages.
     #[test]
-    fn art_and_aux_pages_default_to_lossless_zstd_19() {
+    fn art_and_aux_pages_default_to_bc7_zstd_19() {
         const EXPLICIT_ZSTD_LEVEL: i32 = 5;
+        let bc7_zstd = CompressionFlag::ZstdNoDictLevel(BC7_PAGE_ZSTD_LEVEL);
         let lossless_zstd = CompressionFlag::ZstdNoDictLevel(LOSSLESS_PAGE_ZSTD_LEVEL);
         for (command, flag_prefix) in [
             (["uddpack", "pack-art", "--ccdir", "/cc"].as_slice(), ""),
@@ -2958,9 +2967,13 @@ mod tests {
                 parsed_art_output_format(&args)
             };
             let default = format(&[]);
-            assert_eq!(default.pixel_format, PagePixelFormat::Rgba8888, "{command:?} {flag_prefix}");
-            assert_eq!(default.compression, lossless_zstd, "{command:?} {flag_prefix}");
-            assert_eq!(format(&["zstd"]).compression, lossless_zstd, "{command:?} {flag_prefix}");
+            assert_eq!(default.pixel_format, PagePixelFormat::Bc7, "{command:?} {flag_prefix}");
+            assert_eq!(default.compression, bc7_zstd, "{command:?} {flag_prefix}");
+            assert_eq!(default.bc7_rdo_lambda, NO_BC7_RDO_LAMBDA, "{command:?} {flag_prefix}");
+            assert_eq!(format(&["zstd"]).compression, bc7_zstd, "{command:?} {flag_prefix}");
+            let lossless = format(&["raw", &format!("zstd={LOSSLESS_PAGE_ZSTD_LEVEL}")]);
+            assert_eq!(lossless.pixel_format, PagePixelFormat::Rgba8888, "{command:?} {flag_prefix}");
+            assert_eq!(lossless.compression, lossless_zstd, "{command:?} {flag_prefix}");
             assert_eq!(
                 format(&["zstd=5"]).compression,
                 CompressionFlag::ZstdNoDictLevel(EXPLICIT_ZSTD_LEVEL),
@@ -2969,8 +2982,10 @@ mod tests {
         }
     }
 
+    /// Without a format flag the mobile animation pages are BC7 without RDO with Zstd 9, and a bare `--zstd` keeps
+    /// that level.
     #[test]
-    fn cli_defaults_mobile_animation_output_format_to_bc7() {
+    fn cli_defaults_mobile_animation_output_format_to_bc7_zstd() {
         let cli = Cli::try_parse_from([
             "uddpack",
             "pack-mobile-anims",
@@ -3003,14 +3018,24 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
-                assert_eq!(output_format.compression, CompressionFlag::None);
+                assert_eq!(output_format.compression, CompressionFlag::ZstdNoDictLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL));
+                assert_eq!(output_format.bc7_rdo_lambda, NO_BC7_RDO_LAMBDA);
             }
             _ => panic!("unexpected command parsed"),
         }
+        for command in [["pack-mobile-anims", "--ccdir", "/cc"], ["pack-ec-mobile-anims", "--ecdir", "/ec"]] {
+            let args = ["uddpack"].into_iter().chain(command).chain(["--zstd"]);
+            let zstd = match Cli::try_parse_from(args).expect("parse a bare --zstd").command {
+                Commands::PackMobileAnims { zstd, .. } | Commands::PackEcMobileAnims { zstd, .. } => zstd,
+                _ => panic!("unexpected command parsed"),
+            };
+            assert_eq!(zstd, Some(MOBILE_ANIM_PAGE_ZSTD_LEVEL), "{command:?}");
+        }
     }
 
+    /// Classic land stays lossless RGBA8888 with Zstd 19; the Enhanced land defaults to BC7 without RDO with Zstd 19.
     #[test]
-    fn cli_defaults_land_output_format_to_lossless_zstd() {
+    fn cli_defaults_land_output_format_to_lossless_classic_and_bc7_enhanced() {
         let cli = Cli::try_parse_from(["uddpack", "pack-texmaps", "--ccdir", "/cc"])
             .expect("parse default land texture args");
 
@@ -3023,12 +3048,7 @@ mod tests {
                 ..
             } => {
                 refuse_classic_land_bc7(bc7, bc7_rdo).unwrap();
-                let output_format = resolve_land_output_format(
-                    TextureOutputFormatArgs { raw, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
-                    NO_BC7_RDO_LAMBDA,
-                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
-                )
-                .unwrap();
+                let output_format = resolve_classic_land_output_format(raw, land_zstd_level(zstd)).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(
                     output_format.compression,
@@ -3037,6 +3057,28 @@ mod tests {
             }
             _ => panic!("unexpected command parsed"),
         }
+
+        let cli = Cli::try_parse_from(["uddpack", "pack-ec-textures", "--ecdir", "/ec"])
+            .expect("parse default EC texture args");
+        let Commands::PackEcTextures { raw, zstd, bc7, bc7_rdo, land_raw, land_zstd, land_bc7, land_bc7_rdo, .. } =
+            cli.command
+        else {
+            panic!("unexpected command parsed");
+        };
+        let output_format = resolve_land_output_format(
+            TextureOutputFormatArgs {
+                raw: land_raw || raw,
+                zstd: land_zstd_level(land_zstd.or(zstd)),
+                bc7: land_bc7 || bc7,
+                bc7_rdo: land_bc7_rdo || bc7_rdo,
+            },
+            udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+        )
+        .unwrap();
+        assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
+        assert_eq!(output_format.compression, CompressionFlag::ZstdNoDictLevel(BC7_LAND_PAGE_ZSTD_LEVEL));
+        assert_eq!(output_format.bc7_rdo_lambda, NO_BC7_RDO_LAMBDA);
     }
 
     /// `pack-texmaps` refuses BC7 with the reason, and still parses the flags to say so.
@@ -3109,20 +3151,20 @@ mod tests {
 
     /// A bare `--zstd` keeps each package's own levels, as for map chunks: gump atlas pages and land pages 19, single
     /// gumps the package default.
-    /// `--bc1` stores Classic single gumps as BC1 and `--bc7` Enhanced ones as BC7 (those in the Classic colour space as
-    /// BC1, by the writer), each with Zstd 19 unless a level is
-    /// given; `--raw` is the lossless default, and neither command takes the other's lossy flag.
+    /// Classic single gumps default to BC1 and Enhanced ones to BC7 (those in the Classic colour space as BC1, by the
+    /// writer), each with Zstd 19 unless a level is given, as `--bc1` and `--bc7` name them; `--raw` stores them lossless
+    /// with Zstd 7, and neither command takes the other's lossy flag.
     #[test]
     fn lossy_flags_select_each_package_lossy_single_gumps() {
         use udd_conv::single_gumps::{BC1_SINGLE_GUMP_ZSTD_LEVEL, BC7_SINGLE_GUMP_ZSTD_LEVEL};
         const EXPLICIT_ZSTD_LEVEL: i32 = 5;
         let parse = |args: &[&str]| match Cli::try_parse_from(args).expect("parse gump args").command {
-            Commands::PackGumps { bc1, zstd, .. } => {
-                let format = single_gump_pixel_format(bc1, CC_LOSSY_SINGLE_GUMP_FORMAT);
+            Commands::PackGumps { raw, zstd, .. } => {
+                let format = single_gump_pixel_format(raw, CC_LOSSY_SINGLE_GUMP_FORMAT);
                 (format, single_gump_compression(zstd, format))
             }
-            Commands::PackEcGumps { bc7, zstd, .. } => {
-                let format = single_gump_pixel_format(bc7, EC_LOSSY_SINGLE_GUMP_FORMAT);
+            Commands::PackEcGumps { raw, zstd, .. } => {
+                let format = single_gump_pixel_format(raw, EC_LOSSY_SINGLE_GUMP_FORMAT);
                 (format, single_gump_compression(zstd, format))
             }
             _ => panic!("unexpected command parsed"),
@@ -3131,8 +3173,9 @@ mod tests {
             ("pack-gumps", "--bc1", "--bc7", GumpPixelFormat::Bc1, BC1_SINGLE_GUMP_ZSTD_LEVEL),
             ("pack-ec-gumps", "--bc7", "--bc1", GumpPixelFormat::Bc7, BC7_SINGLE_GUMP_ZSTD_LEVEL),
         ] {
+            assert_eq!(parse(&["uddpack", command]), (format, CompressionFlag::ZstdNoDictLevel(level)));
             assert_eq!(
-                parse(&["uddpack", command]),
+                parse(&["uddpack", command, "--raw"]),
                 (GumpPixelFormat::Rgba8888, CompressionFlag::ZstdNoDict)
             );
             assert_eq!(parse(&["uddpack", command, flag]), (format, CompressionFlag::ZstdNoDictLevel(level)));
@@ -3788,15 +3831,28 @@ mod tests {
         .expect("parse pack-ec-effects");
 
         match cli.command {
-            Commands::PackEcEffects { source_dirs, output, bc7, zstd, report, strict } => {
+            Commands::PackEcEffects { source_dirs, output, bc7, raw, zstd, report, strict } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(output, PathBuf::from("effects_ec.uddp"));
-                assert!(bc7 && strict);
+                assert!(bc7 && strict && !raw);
                 assert_eq!(zstd, Some(12));
                 assert_eq!(report, Some(PathBuf::from("/out/effects_report.txt")));
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    /// The effects textures default to BC7; `--raw` keeps them RGBA8, and conflicts with `--bc7`.
+    #[test]
+    fn ec_effects_default_to_bc7_unless_raw() {
+        let raw = |args: &[&str]| match Cli::try_parse_from(args).expect("parse pack-ec-effects").command {
+            Commands::PackEcEffects { raw, .. } => raw,
+            _ => panic!("unexpected command parsed"),
+        };
+        assert!(!raw(&["uddpack", "pack-ec-effects", "--ecdir", "/ec"]));
+        assert!(raw(&["uddpack", "pack-ec-effects", "--ecdir", "/ec", "--raw"]));
+        assert!(Cli::try_parse_from(["uddpack", "pack-ec-effects", "--ecdir", "/ec", "--raw", "--bc7"]).is_err());
+        assert!(EffectsEcPackOptions::default().bc7);
     }
 
     #[test]

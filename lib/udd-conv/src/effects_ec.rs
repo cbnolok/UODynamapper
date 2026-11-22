@@ -160,7 +160,8 @@ impl fmt::Display for Finding {
 /// Options of [`pack_effects_ec`].
 #[derive(Debug, Clone)]
 pub struct EffectsEcPackOptions {
-    /// Encode uncompressed sources whose size is a multiple of 4 to BC7 (no RDO); otherwise they stay RGBA8.
+    /// Encode uncompressed sources whose size is a multiple of 4 to BC7 (no RDO), the default; otherwise they stay
+    /// RGBA8.
     pub bc7: bool,
     /// Compression of the manifests and texture payloads (system blobs use `Auto`, with the type dictionary).
     pub compression: CompressionFlag,
@@ -172,7 +173,7 @@ pub struct EffectsEcPackOptions {
 
 impl Default for EffectsEcPackOptions {
     fn default() -> Self {
-        Self { bc7: false, compression: CompressionFlag::ZstdNoDict, strict: false, report: None }
+        Self { bc7: true, compression: CompressionFlag::ZstdNoDict, strict: false, report: None }
     }
 }
 
