@@ -1,15 +1,15 @@
 //! The GPU BC7 page encoder (uot_gpu_compute::page_encode) against the packers' CPU encoder (AnalyticalWide) on the
 //! same lossless pages: wall time with the pages encoded at once from the rayon threads (the packers' way), Zstd 9
 //! size of the blocks, RGB PSNR over the texels with alpha > 0 and alpha PSNR, per GPU profile. Times the encoder's
-//! creation first (its pipelines' compile; cold when MESA_SHADER_CACHE_DIR points at an empty folder), and checks
-//! that a second GPU run gives the same blocks.
+//! creation first; each profile's pipeline compiles in its first run (cold when MESA_SHADER_CACHE_DIR points at an
+//! empty folder), which the faster of its two runs leaves out. Checks that a second GPU run gives the same blocks.
 //! Usage: bc7_gpu <uddp dir> <mobile_cc|mobile_ec|art_cc|art_ec|land_ec> <pages> [profiles, comma-separated]
 use rayon::prelude::*;
 use std::time::Instant;
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::{MobileAnimCcPackage, MobileAnimEcPackage, TexArtCcPackage, TexArtEcPackage, TexLandEcPackage};
 use uot_gpu_compute::block_encode::Bc7Quality;
-use uot_gpu_compute::page_encode::Bc7PageEncoderGpu;
+use uot_gpu_compute::page_encode::PageEncoderGpu;
 use uot_texture_codecs::bc7::{decode_bc7_to_rgba8888, encode_to_bc7, Bc7EncoderBackend, ImageExtent, RawImageFormat};
 
 const ZSTD_LEVEL: i32 = 9;
@@ -182,8 +182,8 @@ fn main() {
     println!("{set}: {} pages, {:.1} Mpx, {} threads", pages.len(), texels / 1e6, rayon::current_num_threads());
 
     let started = Instant::now();
-    let gpu = Bc7PageEncoderGpu::new().unwrap();
-    println!("encoder created (compile) in {:.1} ms on {}", started.elapsed().as_secs_f64() * 1e3, gpu.adapter());
+    let gpu = PageEncoderGpu::new().unwrap();
+    println!("encoder created in {:.1} ms on {}", started.elapsed().as_secs_f64() * 1e3, gpu.adapter());
 
     let started = Instant::now();
     let cpu: Vec<Vec<u8>> = pages.par_iter().map(|page| {

@@ -550,12 +550,12 @@ thread seconds).
 
 ### BC7 encode on the GPU
 
-`uot_gpu_compute::page_encode::Bc7PageEncoderGpu` encodes a whole page held on the CPU with the GPU BC7 encoder
+`uot_gpu_compute::page_encode::PageEncoderGpu` encodes a whole page held on the CPU with the GPU BC7 encoder
 (`block_encode::MobileBlockEncoder`, block_compression's port of the ISPC kernels), on a device of its own
 (2026-11-22). A page goes up in bands of at most 128 Ki blocks, one submission each, read back before the next. A
-partial block repeats the page's edge texels, as the CPU encoder's does. The pages encoded at once share the encoder:
-block_compression writes its uniforms through the queue, so a band records and submits under a lock and waits for
-its blocks outside it.
+partial block repeats the page's edge texels, as the CPU encoder's does. The pages encoded at once share the encoder,
+whose frames wait in it for its next record, so a band records and submits under a lock and waits for its blocks
+outside it. It is `PageEncoderGpu` now, with `encode_bc1` and `encode_blocks(format)` beside `encode(quality)`.
 
 The pages against the packers' CPU encoder (AnalyticalWide), all encoded at once from the 20 rayon threads as the
 packers do, on the Radeon 880M (`--bin bc7_gpu`). PSNR is RGB over the texels with alpha > 0; sizes are the blocks at
@@ -600,15 +600,19 @@ RGBA8888 test packages. Slow, the last profile, was left out: Basic already cost
 - **It is not faster.** At UltraFast the GPU takes the CPU's wall time on 20 threads, give or take 0.05 s: the band
   uploads and readbacks and the one queue weigh as much as the kernel. What it gives is CPU threads free for the
   rest of the pack.
-- **Compile:** creating the encoder compiles every profile's pipeline: about 20 s on a cold Mesa cache, 40–50 ms warm.
+- **Compile:** creating the encoder compiled every profile's pipeline, block_compression's one pipeline holding every
+  mode: about 20 s on a cold Mesa cache, 40–50 ms warm. With our kernels (below, "GPU block encoding") creating it
+  compiles nothing (60 ms, the device's start) and each format compiles at its first page: UltraFast in 5.2 s cold,
+  47 ms warm, BC1 in 0.24 s cold, 7 ms warm (`page_encode` test `a_page_of_several_bands_encodes_close_to_its_texels`).
 
 **In the packers** (`udd_conv::atlas::bc_encode_device`): the mobile animation (Classic, Enhanced), art, land and
 aux packers encode their BC7 pages on the GPU when a wgpu adapter is there (Auto), otherwise on the CPU. If the GPU
 fails, Auto warns and the CPU encodes the page. `udd-cli pack --bc-encode-device auto|cpu|gpu` chooses the device;
-`gpu` fails without an adapter. The RDO, when on, runs after the encode on its own device (`--bc7-rdo-device`). BC1
-(the Classic gumps) stays on the CPU: the GPU encoder has no BC1 yet with the punch-through transparency those gumps
-need. The other BC7 images (the Enhanced gumps, effects, radar) are not atlas pages and stay on the CPU too. The
-converter GUI has both choices on its BC7 cards.
+`gpu` fails without an adapter. The RDO, when on, runs after the encode on its own device (`--bc7-rdo-device`). The
+single Classic gumps' BC1 (`gumps_cc`, and the Classic colour space gumps of a lossy `gumps_ec`) takes the same device
+since our BC1 keeps their punch-through transparency (below, "GPU block encoding"). The other BC7 images (the Enhanced
+gumps, effects, radar) are not atlas pages and stay on the CPU, as the effects' BC1 does. The converter GUI has both
+choices on its BC7 cards, and the encode device as BC1 Encode on the gump cards packing lossy.
 
 Full packs with their default formats (BC7 without RDO, Zstd 19; release build, 20 threads, a warm shader cache),
 the PSNR over every image against a lossless pack of the same sources, matched by id (`bc7_gpu compare`):
@@ -738,14 +742,15 @@ change.
 
 `uot_gpu_compute::block_encode::MobileBlockEncoder` encodes RGBA8 textures to BC7 or BC1 blocks on the GPU, with our
 copies of block_compression 0.11.0's kernels (`shaders/block_encode/bc7.wgsl`, `bc1.wgsl`; MIT, CREDITS.md). The
-renderer uses it for its BC7 in-betweens; the converter's GPU device is meant to use it for pages (2026-11-22). The API:
+renderer uses it for its BC7 in-betweens, the converter's BC encode device (`page_encode::PageEncoderGpu`) for its BC7
+pages and BC1 gumps (2026-11-22). The API:
 
 - `MobileBlockFormat::{Bc7(Bc7Quality), Bc7Opaque(Bc7Quality), Bc1}`, `Bc7Quality::{UltraFast, VeryFast, Fast, Basic,
   Slow}` (block_compression's `alpha_*` and `opaque_*` settings, `Bc7Profile::of`). `texture_format()`,
   `block_bytes()`, `encoded_bytes(width, height)` and `compile_name()` on the format; `padded_size` for the block grid.
 - `MobileBlockEncoder::new(device, queue)` (or `compile(device, queue, report)`) compiles `WARM_BLOCK_FORMAT`
-  (`Bc7(UltraFast)`); `compile_format(format, report)` compiles another ahead of use, `is_compiled(format)` asks.
-  Each format is its own pipeline, compiled once, the first time it is wanted.
+  (`Bc7(UltraFast)`), `lazy(device)` nothing; `compile_format(format, report)` compiles another ahead of use,
+  `is_compiled(format)` asks. Each format is its own pipeline, compiled once, the first time it is wanted.
 - `add_frame(format, source_view, width, height, output_buffer, offset)` and `add_frame_at(..., y, ...)` (a frame at
   row `y` of the source, a multiple of 4, for BC7 and BC1 alike) queue frames of any formats, compiling a format not
   compiled yet on the caller's thread; `record(pass)` records them into a compute pass, with a uniform buffer of that
@@ -770,9 +775,24 @@ every texel decodes opaque or transparent as the CPU's, every transparent one bl
 0.57 to 0.75 dB below the CPU's in the four-colour blocks (ISPC's endpoint search, as the crate has it) and 0.52 to
 0.63 dB in the three-colour ones (`bc1_keeps_the_cpu_encoders_alpha`).
 
+**BC1 gumps on the GPU.** The 3397 single gumps of a lossless `gumps_cc` (83.1 Mpx, the paperdoll body gumps left
+out), encoded side by side from the 20 rayon threads as the writer does (`udd_conv` test
+`the_gpu_bc1_gumps_match_the_cpus`, `LOSSLESS_GUMPS_CC` set; debug build of the tests, optimized):
+
+| Encoder | Encode | Zstd 19 | RGB PSNR, opaque texels | Alpha |
+|---|---|---|---|---|
+| CPU (dds crate) | 3.95 to 5.22 s | 18 690 536 bytes | 32.59 dB | exact |
+| GPU | 0.37 s (0.65 s with the cold compile) | 18 658 508 bytes (−0.2 %) | 32.07 dB | exact |
+
+The whole `pack-gumps` (lossy, Zstd 19, the same build) takes 16.7 s on the CPU and 12.4 to 12.7 s on the GPU, cold
+or warm Mesa cache, for a package of 20 318 441 bytes against 20 350 514; two GPU packs are the same file, and it
+validates. The GPU is 10 times faster at the encode for half a dB less colour, the ISPC endpoint search's; its one bit
+of alpha is the CPU's on every texel. Raising the kernel's `refine_iterations` might close the gap, but it would leave
+block_compression's blocks, which the opaque blocks match today.
+
 **Compile times** (Radeon 880M, RADV, cold Mesa cache): BC7 UltraFast 5.4 to 8 s, Slow with alpha 22 s (the crate's
 one pipeline for every quality was 22 to 25 s), BC1 0.25 s; warm 5 to 15 ms each. Every profile in
-shader_compile_progress.md.
+shader_compile_progress.md. The converter's encoder compiles only the formats its pages take, at their first page.
 
 ## Reproducing
 
