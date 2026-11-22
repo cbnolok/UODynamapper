@@ -6,7 +6,7 @@ Dynamapper streams converted **UDDP packages** built from Classic and Enhanced C
 
 ![KR-like rendering of Britain at night, with lamplight across the square](docs/images/showcase/kr-like-britain-night.webp)
 
-*Britain at night in KR-like style, with Enhanced art and Kingdom Reborn terrain.*
+*Britain at night in KR-like style, with Enhanced art and Kingdom Reborn terrain.* [More night lighting scenes](docs/SHOWCASE.md#local-lighting-after-dark)
 
 ## Quick start
 

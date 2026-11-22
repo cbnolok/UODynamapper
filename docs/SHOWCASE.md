@@ -35,6 +35,22 @@ Each pair keeps the style, terrain source, and camera fixed. Compare the statue,
 
 Open **F2 → Graphics** to select **Art Texture Source** and **Land Texture Source**. World objects that continue the ground, such as grass and liquids, can take their material and art from the selected terrain source. [Art and terrain source rules](dev_wiki/rendering/STYLE_RULES.md#sources-are-not-part-of-the-style)
 
+## Local lighting after dark
+
+| Lantern by the Minoc mine | Braziers in the hedge maze |
+| --- | --- |
+| ![A lantern lights the path and the base of a wall beneath a dark roof](images/showcase/light-lantern.webp) | ![Braziers light the columns and paving beside a hedge](images/showcase/light-brazier.webp) |
+| 2507, 560 | 1072, 2269 |
+
+| Lava channel | Lit windows |
+| --- | --- |
+| ![Glowing lava casts warm light across a rocky trench](images/showcase/light-lava.webp) | ![Window lights warm the outer walls of a stone building and cast light onto its paving](images/showcase/light-window.webp) |
+| 4622, 3560 | 4475, 1167 |
+
+*Felucca in KR-like night lighting, with Enhanced art, Kingdom Reborn terrain, and optional local lighting enabled.*
+
+The mine lantern lights the path and wall under the eave. The braziers pool light across the columns and paving, while the lava lights the rocks along its banks. In KR-like and Enhanced styles, **F3 → Local Lights** lets you choose between light sprites and `light.mul` and adjust the selected source's intensity. [Night lighting and light cover](dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md)
+
 ## RIFE frame interpolation
 
 ![Enhanced Stygian dragon sprite showing two source frames, a crossfade and a RIFE-generated midpoint](images/showcase/anim-rife-stygian.webp)
@@ -94,6 +110,14 @@ In **F2 → Graphics**, enable **Show Only the Player's Floor**. **Only the Play
 Both captures are centered on the same point in Britain. The wide view covers 32 times as much world width as the close view.
 
 At scale 20 and wider, Dynamapper uses radar colors for statics. Low statics such as river and shoreline water remain visible wherever the depth test leaves them exposed.
+
+![Wide KR-like view of Minoc with river and shoreline statics visible](images/showcase/world-zoom-minoc-overview.webp)
+
+*Minoc at scale 20 with Enhanced art and Kingdom Reborn terrain.*
+
+![Maximum-zoom live view of the Trammel mainland, its cities, and offshore islands](images/showcase/world-zoom-trammel-overview.webp)
+
+*Trammel at scale 50 in KR-like style. This live view covers more than half of the mainland bounds.*
 
 [View the full Trammel facet as a radar export](images/showcase/world-trammel-radar.webp). The converter builds this top-down image from the map and its statics.
 
