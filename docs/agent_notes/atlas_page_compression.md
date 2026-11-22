@@ -548,6 +548,84 @@ The GPU package is 1.6 % smaller, in line with the pages above, and the two GPU 
 With the walk on the GPU, the CPU's BC7 encode, which runs on the same threads, also takes less time (536 against 1475
 thread seconds).
 
+### BC7 encode on the GPU
+
+`uot_gpu_compute::page_encode::Bc7PageEncoderGpu` encodes a whole page held on the CPU with the GPU BC7 encoder
+(`block_encode::MobileBlockEncoder`, block_compression's port of the ISPC kernels), on a device of its own
+(2026-11-22). A page goes up in bands of at most 128 Ki blocks, one submission each, read back before the next. A
+partial block repeats the page's edge texels, as the CPU encoder's does. The pages encoded at once share the encoder:
+block_compression writes its uniforms through the queue, so a band records and submits under a lock and waits for
+its blocks outside it.
+
+The pages against the packers' CPU encoder (AnalyticalWide), all encoded at once from the 20 rayon threads as the
+packers do, on the Radeon 880M (`--bin bc7_gpu`). PSNR is RGB over the texels with alpha > 0; sizes are the blocks at
+Zstd 9; GPU times are the faster of two runs, which gave the same blocks:
+
+| Pages | Encoder | Wall | Zstd 9 | RGB PSNR | Alpha PSNR |
+|---|---|---|---|---|---|
+| Classic mobile animations, 20 (56.8 Mpx) | CPU | 0.26 s | 13.69 MiB | 33.59 dB | 64.17 dB |
+| | GPU UltraFast | 0.33 s | +0.5 % | 33.32 dB | 60.50 dB |
+| | GPU VeryFast | 1.63 s | +4.1 % | 34.94 dB | 54.33 dB |
+| | GPU Fast | 2.54 s | +9.6 % | 35.92 dB | 57.66 dB |
+| | GPU Basic | 5.02 s | +9.8 % | 36.18 dB | 57.84 dB |
+| Enhanced mobile animations, 16 (48.0 Mpx) | CPU | 0.28 s | 12.02 MiB | 31.95 dB | 37.54 dB |
+| | GPU UltraFast | 0.26 s | +0.5 % | 31.65 dB | 37.43 dB |
+| | GPU VeryFast | 1.36 s | +4.8 % | 33.31 dB | 37.96 dB |
+| | GPU Fast | 2.13 s | +9.8 % | 33.88 dB | 37.96 dB |
+| | GPU Basic | 4.20 s | +10.1 % | 34.17 dB | 37.96 dB |
+| Classic art, 20 (20.5 Mpx) | CPU | 0.09 s | 4.15 MiB | 33.36 dB | 58.72 dB |
+| | GPU UltraFast | 0.13 s | +0.5 % | 33.15 dB | 59.35 dB |
+| | GPU VeryFast | 0.60 s | +5.7 % | 35.33 dB | 54.14 dB |
+| | GPU Fast | 0.91 s | +10.0 % | 36.26 dB | 55.80 dB |
+| | GPU Basic | 1.78 s | +10.3 % | 36.54 dB | 55.90 dB |
+| Enhanced art, 16 (16.7 Mpx) | CPU | 0.14 s | 9.05 MiB | 37.86 dB | 46.48 dB |
+| | GPU UltraFast | 0.09 s | +0.0 % | 37.85 dB | 46.22 dB |
+| | GPU VeryFast | 0.50 s | +1.8 % | 39.23 dB | 45.78 dB |
+| | GPU Fast | 0.74 s | +7.7 % | 40.45 dB | 45.89 dB |
+| | GPU Basic | 1.42 s | +8.6 % | 40.57 dB | 46.00 dB |
+| Enhanced land, 6 (19.5 Mpx) | CPU | 0.10 s | 12.31 MiB | 41.30 dB | 52.78 dB |
+| | GPU UltraFast | 0.12 s | +1.1 % | 41.64 dB | 51.52 dB |
+| | GPU VeryFast | 0.60 s | +1.6 % | 42.28 dB | 51.07 dB |
+| | GPU Fast | 0.94 s | +13.9 % | 44.25 dB | 52.01 dB |
+| | GPU Basic | 1.94 s | +14.9 % | 44.40 dB | 52.06 dB |
+
+The art and land pages come from lossless packs of the clients (`--raw --zstd=9`), the mobile animations from the
+RGBA8888 test packages. Slow, the last profile, was left out: Basic already costs 15–20 times the CPU's time.
+
+- **UltraFast is the CPU's quality.** In RGB it is 0.2–0.3 dB below the CPU on the sprites and the Classic art, level
+  on the Enhanced art and 0.3 dB above on the land, with blocks 0–1 % larger after Zstd. Alpha moves by at most 1.3
+  dB, except on the Classic sprites, from 64 to 60 dB, where both are far above the RGB error. VeryFast and above gain 0.6–3
+  dB, but cost 2–15 % in size and 5–20 times the time: that is a choice of quality, not of device. The packers use
+  UltraFast (`GPU_BC7_QUALITY` in `udd_conv::atlas::bc_encode_device`).
+- **It is not faster.** At UltraFast the GPU takes the CPU's wall time on 20 threads, give or take 0.05 s: the band
+  uploads and readbacks and the one queue weigh as much as the kernel. What it gives is CPU threads free for the
+  rest of the pack.
+- **Compile:** creating the encoder compiles every profile's pipeline: about 20 s on a cold Mesa cache, 40–50 ms warm.
+
+**In the packers** (`udd_conv::atlas::bc_encode_device`): the mobile animation (Classic, Enhanced), art, land and
+aux packers encode their BC7 pages on the GPU when a wgpu adapter is there (Auto), otherwise on the CPU. If the GPU
+fails, Auto warns and the CPU encodes the page. `udd-cli pack --bc-encode-device auto|cpu|gpu` chooses the device;
+`gpu` fails without an adapter. The RDO, when on, runs after the encode on its own device (`--bc7-rdo-device`). BC1
+(the Classic gumps) stays on the CPU: the GPU encoder has no BC1 yet with the punch-through transparency those gumps
+need. The other BC7 images (the Enhanced gumps, effects, radar) are not atlas pages and stay on the CPU too. The
+converter GUI has both choices on its BC7 cards.
+
+Full packs with their default formats (BC7 without RDO, Zstd 19; release build, 20 threads, a warm shader cache),
+the PSNR over every image against a lossless pack of the same sources, matched by id (`bc7_gpu compare`):
+
+| Pack | Device | Time | Package | RGB PSNR | Alpha PSNR |
+|---|---|---|---|---|---|
+| `pack-art` (Classic, 39 386 images, 232 pages) | CPU | 12.3 s | 43 247 629 bytes | 33.04 dB | 57.22 dB |
+| | GPU | 8.9 s | 43 579 679 bytes (+0.8 %) | 32.70 dB | 58.29 dB |
+| `pack-ec-textures` art (13 305 images, 86 pages) | CPU | 14.7 s, with the land | 39 897 142 bytes | 45.56 dB | 49.64 dB |
+| | GPU | 14.4 s, with the land | 40 277 734 bytes (+1.0 %) | 46.25 dB | 49.21 dB |
+| `pack-ec-textures` land (446 images, 6 pages) | CPU | | 11 082 859 bytes | 50.20 dB | 57.71 dB |
+| | GPU | | 11 365 022 bytes (+2.5 %) | 52.76 dB | 55.79 dB |
+
+The GPU packs are 1–2.5 % larger and within 0.4 dB of the CPU's, or better (the Enhanced land by 2.6 dB). The Classic
+art pack is 28 % faster on the GPU, because the encode leaves the threads to the Zstd 19 of the pages; the Enhanced one,
+whose time goes to reading and composing the sources, is level.
+
 ### The BC7 packages without RDO, and their strides
 
 The test packages repacked with the code above (`pack-mobile-anims` / `pack-ec-mobile-anims --bc7 --zstd=9`, RDO
@@ -680,3 +758,7 @@ the dictionaries were one-off runs with the numbers above. `--bin anim_rdo <dir>
 `tex_aux_ec.uddp` and `world_lights.uddp` in `<dir>`, and with a dump folder writes each texture and its BC7 decode as
 raw RGBA. `--bin aux_bc7_variant <tex_aux_ec.uddp> <output> reserved|array|all` writes the copy of the rendered
 check: the atmosphere maps and light textures BC7, the array's textures BC7, or both.
+`--bin bc7_gpu <dir> <mobile_cc|mobile_ec|art_cc|art_ec|land_ec> <pages> [profile,...]` times the GPU BC7 encode
+against the CPU's on pages of a lossless package (pack the art and land with `--raw --zstd=9`), and `--bin bc7_gpu
+compare <art_cc|art_ec|land_ec> <lossless dir> <BC7 dir>` gives the PSNR of a packed BC7 package's
+images against a lossless package's, matched by id (the two lay their pages out differently).
