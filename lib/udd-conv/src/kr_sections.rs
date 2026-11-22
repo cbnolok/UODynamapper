@@ -25,7 +25,7 @@ use crate::kr_items::{
 };
 use crate::package_progress::AssetTaskProgress;
 use crate::tex_art_ec::{TexArtEcAtlasOptions, TexArtEcLoadedSources};
-use crate::tex_aux_ec::TexAuxEcOverlaySummary;
+use crate::tex_aux_ec::{TexAuxEcOverlaySummary, TexAuxEcPackOptions};
 use crate::tilemeta_overrides::apply_bundled_tilemeta_overrides;
 use crate::tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp_with_progress, TexLandKrBuildSummary, TexLandKrPackOptions};
 
@@ -139,18 +139,18 @@ pub fn add_kr_land_section(
     Ok(summary)
 }
 
-/// Packs the Kingdom Reborn material textures and nests them in `aux_package`, the `tex_aux_ec.uddp` packed from the
-/// Enhanced Client in `ec_dir`, the Classic Client in `cc_dir` and `tilemeta_package`, whose Kingdom Reborn section
-/// gives the Kingdom Reborn texture refs.
+/// Packs the Kingdom Reborn material textures with the encoding of `options` (those of the Enhanced material textures)
+/// and nests them in `aux_package`, the `tex_aux_ec.uddp` packed from the Enhanced Client in `ec_dir`, the Classic
+/// Client in `cc_dir` and `tilemeta_package`, whose Kingdom Reborn section gives the Kingdom Reborn texture refs.
 pub fn add_kr_aux_section(work: &KrSectionWork, ec_dir: &Path, cc_dir: &Path, tilemeta_package: &Path,
-    aux_package: &Path) -> eyre::Result<TexAuxEcOverlaySummary> {
+    aux_package: &Path, options: &TexAuxEcPackOptions) -> eyre::Result<TexAuxEcOverlaySummary> {
     let tilemeta_section = work.section_path(KR_TILEMETA_SECTION_FILE_NAME);
     if !extract_kr_section(tilemeta_package, &tilemeta_section)? {
         eyre::bail!("{} holds no Kingdom Reborn tile data: repack it with the current udd-cli first",
             tilemeta_package.display());
     }
     let section = work.section_path(KR_AUX_SECTION_FILE_NAME);
-    let summary = pack_kr_aux(work.kr_dir(), ec_dir, cc_dir, &tilemeta_section, &section)?;
+    let summary = pack_kr_aux(work.kr_dir(), ec_dir, cc_dir, &tilemeta_section, &section, options)?;
     embed_kr_section(aux_package, &section)?;
     Ok(summary)
 }

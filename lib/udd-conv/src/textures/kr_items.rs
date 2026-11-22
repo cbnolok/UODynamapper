@@ -23,7 +23,7 @@
 //! - [`pack_kr_aux`] writes the section of `tex_aux_ec.uddp`, an overlay over that package
 //!   (`tex_aux_ec::pack_tex_aux_ec_overlay`): of KR's material inputs (masks, noise, water maps), its `missing.tga`,
 //!   atmosphere maps and light textures, those whose image differs from the Enhanced Client's by more than
-//!   [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] (or that `tex_aux_ec` lacks), lossless RGBA8888 with Zstd
+//!   [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] (or that `tex_aux_ec` lacks), in the Enhanced material textures' format
 //!   ([`kr_aux_options`]). The others are read from `tex_aux_ec.uddp`; the overlay lists them with their measured
 //!   difference.
 //!
@@ -55,8 +55,6 @@ use uocf::enhanced::tileart::{ArtData, ArtTexture, TaeFlag, TileType, TILEART_UO
 use crate::textures::tex_aux_ec::{
     pack_tex_aux_ec_overlay, tex_aux_ec_texture_keys, TexAuxEcOverlayBase, TexAuxEcOverlaySummary, TexAuxEcPackOptions,
 };
-use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
-use crate::PagePixelFormat;
 
 /// The largest [`image_difference`], in 8-bit levels, between a Kingdom Reborn image and the Enhanced Client's image
 /// of the same name that still counts as the same image re-encoded, for an image measured whole ([`TextureUse::Whole`]:
@@ -528,12 +526,15 @@ pub fn kr_art_options(ec_art_options: &TexArtEcAtlasOptions) -> TexArtEcAtlasOpt
     }
 }
 
-/// The Kingdom Reborn material textures' options: lossless RGBA8888 with Zstd, whatever `tex_aux_ec` takes (BC7 by
-/// default); they are few, and each texture keeps its own format.
-pub fn kr_aux_options() -> TexAuxEcPackOptions {
+/// The Kingdom Reborn material textures' options: the encoding of the Enhanced material textures' `ec_aux_options`
+/// (pixel format, compression and BC7 tuning), so that the renderer's auxiliary array holds the two in one format and
+/// keeps BC7 blocks as they are, without upscaling, as the Kingdom Reborn art ([`kr_art_options`]).
+pub fn kr_aux_options(ec_aux_options: &TexAuxEcPackOptions) -> TexAuxEcPackOptions {
     TexAuxEcPackOptions {
-        compression: LOSSLESS_PAGE_COMPRESSION,
-        pixel_format: PagePixelFormat::Rgba8888,
+        compression: ec_aux_options.compression,
+        pixel_format: ec_aux_options.pixel_format,
+        bc7_rdo_lambda: ec_aux_options.bc7_rdo_lambda,
+        bc7_rdo_lookback_blocks: ec_aux_options.bc7_rdo_lookback_blocks,
         ..TexAuxEcPackOptions::default()
     }
 }
@@ -589,9 +590,10 @@ pub fn pack_kr_art_and_tilemeta(kr_dir: &Path, ec: &TexArtEcLoadedSources, art_o
 
 /// Writes the Kingdom Reborn material texture overlay to `aux_out` (see the module documentation), from the Kingdom
 /// Reborn files in `kr_dir` and their tile data `kr_tilemeta` ([`pack_kr_art_and_tilemeta`]), against the Enhanced
-/// Client in `ec_dir` and the Classic `tiledata.mul` of `cc_dir` the Enhanced `tex_aux_ec.uddp` is packed from.
-pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Path, aux_out: &Path)
-    -> eyre::Result<TexAuxEcOverlaySummary> {
+/// Client in `ec_dir` and the Classic `tiledata.mul` of `cc_dir` the Enhanced `tex_aux_ec.uddp` is packed from, with
+/// its options `ec_aux_options`.
+pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Path, aux_out: &Path,
+    ec_aux_options: &TexAuxEcPackOptions) -> eyre::Result<TexAuxEcOverlaySummary> {
     info!("Kingdom Reborn items: the Enhanced Client's tables, for the textures tex_aux_ec.uddp holds");
     let ec = load_tex_art_ec_sources(&[ec_dir.to_path_buf()])
         .wrap_err_with(|| format!("load the Enhanced Client tileart and textures from {}", ec_dir.display()))?;
@@ -602,7 +604,8 @@ pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Pa
         keys: tex_aux_ec_texture_keys(&ec_refs, &ec_lights)?,
         max_difference: KR_IMAGE_EQUIVALENCE_THRESHOLD,
     };
-    let aux = pack_tex_aux_ec_overlay(&[kr_dir.to_path_buf()], kr_tilemeta, aux_out, &kr_aux_options(), &base)?;
+    let aux = pack_tex_aux_ec_overlay(&[kr_dir.to_path_buf()], kr_tilemeta, aux_out, &kr_aux_options(ec_aux_options),
+        &base)?;
     log_aux(&aux);
     info!("Kingdom Reborn items: {} material textures, {} left to tex_aux_ec.uddp", aux.kept.len(),
         aux.equivalents.len());

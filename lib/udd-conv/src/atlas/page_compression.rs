@@ -106,7 +106,8 @@ mod tests {
     }
 
     /// Every packer defaults to block-compressed textures with Zstd and no RDO where its package takes them; Classic
-    /// land, the gump atlas pages, the paperdoll frames and the Kingdom Reborn material textures stay lossless.
+    /// land, the gump atlas pages and the paperdoll frames stay lossless. The Kingdom Reborn material textures take
+    /// the Enhanced ones' encoding.
     #[test]
     fn packers_default_to_block_compressed_textures_with_zstd() {
         use crate::bc7::NO_BC7_RDO_LAMBDA;
@@ -155,7 +156,8 @@ mod tests {
         let land_cc = tex_land_cc::TexLandCcAtlasOptions::default();
         assert_eq!((land_cc.pixel_format, land_cc.compression), (PagePixelFormat::Rgba8888, LOSSLESS_PAGE_COMPRESSION));
         assert_eq!(paperdoll_ec::PaperdollEcPackOptions::default().compression, LOSSLESS_PAGE_COMPRESSION);
-        let kr_aux = kr_items::kr_aux_options();
-        assert_eq!((kr_aux.pixel_format, kr_aux.compression), (PagePixelFormat::Rgba8888, LOSSLESS_PAGE_COMPRESSION));
+        let kr_aux = kr_items::kr_aux_options(&aux_ec);
+        assert_eq!((kr_aux.pixel_format, kr_aux.compression, kr_aux.bc7_rdo_lambda),
+            (PagePixelFormat::Bc7, BC7_PAGE_COMPRESSION, NO_BC7_RDO_LAMBDA));
     }
 }

@@ -2243,19 +2243,15 @@ where
             let output_format = resolve_art_output_format(
                 raw, zstd, bc7, bc7_rdo, bc7_rdo_lambda, bc7_rdo_lookback_blocks,
             )?;
-            let summary = pack_tex_aux_ec(
-                &paths,
-                &tilemeta,
-                &out_file,
-                &udd_conv::tex_aux_ec::TexAuxEcPackOptions {
-                    compression: output_format.compression,
-                    pixel_format: output_format.pixel_format,
-                    bc7_rdo_lambda: output_format.bc7_rdo_lambda,
-                    bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
-                    upscale: UpscaleFilter::None,
-                    upscale_passes: convert_upscale_passes(upscale_passes),
-                },
-            )?;
+            let aux_options = udd_conv::tex_aux_ec::TexAuxEcPackOptions {
+                compression: output_format.compression,
+                pixel_format: output_format.pixel_format,
+                bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
+                upscale: UpscaleFilter::None,
+                upscale_passes: convert_upscale_passes(upscale_passes),
+            };
+            let summary = pack_tex_aux_ec(&paths, &tilemeta, &out_file, &aux_options)?;
             info!(
                 "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback and the atmosphere maps ({} refs considered, {} primary excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids aliased to the missing texture, {} decode errors, {} duplicates) to '{}'.",
                 summary.included,
@@ -2268,7 +2264,7 @@ where
                 summary.excluded_duplicate_id,
                 out_file.display()
             );
-            let kr_aux = add_kr_aux_section(&kr_work, &paths[0], &ccdir, &tilemeta, &out_file)?;
+            let kr_aux = add_kr_aux_section(&kr_work, &paths[0], &ccdir, &tilemeta, &out_file, &aux_options)?;
             info!(
                 "Kingdom Reborn section: {} material textures ({} left to the Enhanced ones).",
                 kr_aux.kept.len(),

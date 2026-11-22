@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use color_eyre::eyre;
 use udd_assets::bc7::{self, expected_bc7_byte_len, ImageExtent, VramTextureData, BC7_BLOCK_BYTES, BC7_BLOCK_EDGE};
-use udd_assets::tex_aux_ec::{TexAuxEcPackage, TexAuxEcSlotRecord};
+use udd_assets::tex_aux_ec::{is_tex_aux_ec_reserved_key, TexAuxEcPackage, TexAuxEcSlotRecord, TEX_AUX_EC_MISSING_TEXTURE_ID};
 
 use super::aux_atlas::{pad_aux_rgba, AUX_ATLAS_TILE_SIZE};
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -22,9 +22,9 @@ pub(crate) enum AuxLayerFormat {
 }
 
 impl AuxLayerFormat {
-    /// BC7 when every texture of the package is BC7. A package that mixes formats is decoded, with one warning naming
-    /// it.
-    pub(crate) fn for_package(package: &TexAuxEcPackage) -> Self {
+    /// BC7 when every texture of the package the array can hold is BC7; `None` when the package has none. A package
+    /// that mixes formats is decoded, with one warning naming it.
+    pub(crate) fn for_package(package: &TexAuxEcPackage) -> Option<Self> {
         let (format, warning) = Self::for_slots(package.slots());
         if let Some(warning) = warning {
             console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &warning);
@@ -32,12 +32,14 @@ impl AuxLayerFormat {
         format
     }
 
-    fn for_slots(slots: &[TexAuxEcSlotRecord]) -> (Self, Option<String>) {
+    fn for_slots(slots: &[TexAuxEcSlotRecord]) -> (Option<Self>, Option<String>) {
+        let slots = slots.iter().filter(|slot| is_array_texture(slot)).collect::<Vec<_>>();
         let bc7 = slots.iter().filter(|slot| slot.is_bc7()).count();
         match bc7 {
-            0 => (Self::Rgba8, None),
-            bc7 if bc7 == slots.len() => (Self::Bc7, None),
-            bc7 => (Self::Rgba8, Some(format!(
+            _ if slots.is_empty() => (None, None),
+            0 => (Some(Self::Rgba8), None),
+            bc7 if bc7 == slots.len() => (Some(Self::Bc7), None),
+            bc7 => (Some(Self::Rgba8), Some(format!(
                 "tex_aux_ec.uddp mixes formats ({bc7} of {} textures BC7), so every texture is decoded to RGBA8 for the \
                  GPU; repack it in one format with `udd-cli pack pack-ec-tex-aux` (add --bc7 for BC7)",
                 slots.len(),
@@ -67,6 +69,13 @@ impl AuxLayerFormat {
             Self::Bc7 => expected_bc7_byte_len(layer_extent()),
         }
     }
+}
+
+/// Whether the array can hold `slot`'s texture: every texture but those under the reserved keys, the atmosphere maps
+/// and the light textures, which the night composite and the light sprites upload as images of their own, in their
+/// own format. The missing-texture image is the array's: the missing-source aliases draw it.
+fn is_array_texture(slot: &TexAuxEcSlotRecord) -> bool {
+    !is_tex_aux_ec_reserved_key(slot.texture_id) || slot.texture_id == TEX_AUX_EC_MISSING_TEXTURE_ID
 }
 
 fn layer_extent() -> ImageExtent {
@@ -267,11 +276,31 @@ mod tests {
         const BC7: u8 = udd_assets::tex_art_cc::PagePixelFormat::Bc7 as u8;
         let rgba = TexAuxEcSlotRecord::default();
         let bc7 = TexAuxEcSlotRecord { pixel_format: BC7, ..rgba };
-        assert_eq!(AuxLayerFormat::for_slots(&[bc7, bc7]), (AuxLayerFormat::Bc7, None));
-        assert_eq!(AuxLayerFormat::for_slots(&[rgba, rgba]), (AuxLayerFormat::Rgba8, None));
-        assert_eq!(AuxLayerFormat::for_slots(&[]), (AuxLayerFormat::Rgba8, None));
+        assert_eq!(AuxLayerFormat::for_slots(&[bc7, bc7]), (Some(AuxLayerFormat::Bc7), None));
+        assert_eq!(AuxLayerFormat::for_slots(&[rgba, rgba]), (Some(AuxLayerFormat::Rgba8), None));
+        assert_eq!(AuxLayerFormat::for_slots(&[]), (None, None));
         let (format, warning) = AuxLayerFormat::for_slots(&[rgba, bc7]);
-        assert_eq!(format, AuxLayerFormat::Rgba8);
+        assert_eq!(format, Some(AuxLayerFormat::Rgba8));
         assert!(warning.is_some_and(|warning| warning.contains("tex_aux_ec.uddp") && warning.contains("--bc7")));
+    }
+
+    /// The lossless atmosphere maps and light textures of a BC7 package leave its array BC7; its missing-texture
+    /// image, which the array holds, counts.
+    #[test]
+    fn reserved_textures_but_the_missing_one_leave_the_format_alone() {
+        use udd_assets::tex_aux_ec::{tex_aux_ec_terrain_texture_key, EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY};
+        const BC7: u8 = udd_assets::tex_art_cc::PagePixelFormat::Bc7 as u8;
+        const LIGHT_TEXTURE_ENTRY: u32 = 1;
+        const TILE_TEXTURE_ID: u32 = 20_002_472;
+        let rgba = |texture_id| TexAuxEcSlotRecord { texture_id, ..TexAuxEcSlotRecord::default() };
+        let bc7 = |texture_id| TexAuxEcSlotRecord { pixel_format: BC7, ..rgba(texture_id) };
+        let night_map = rgba(tex_aux_ec_terrain_texture_key(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY));
+        let light = rgba(tex_aux_ec_terrain_texture_key(LIGHT_TEXTURE_ENTRY));
+        assert_eq!(AuxLayerFormat::for_slots(&[bc7(TILE_TEXTURE_ID), night_map, light, bc7(TEX_AUX_EC_MISSING_TEXTURE_ID)]),
+            (Some(AuxLayerFormat::Bc7), None));
+        assert_eq!(AuxLayerFormat::for_slots(&[night_map, light]), (None, None));
+        let (format, warning) = AuxLayerFormat::for_slots(&[bc7(TILE_TEXTURE_ID), night_map, rgba(TEX_AUX_EC_MISSING_TEXTURE_ID)]);
+        assert_eq!(format, Some(AuxLayerFormat::Rgba8));
+        assert!(warning.is_some_and(|warning| warning.contains("1 of 2 textures BC7")));
     }
 }

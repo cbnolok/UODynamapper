@@ -143,10 +143,17 @@ pub(super) fn create_aux_atlas_images(
     let mut texture_id_to_layer: std::collections::HashMap<(usize, u32), u32> =
         std::collections::HashMap::new();
     // Layer 0 is the sentinel. Collect the distinct texture_ids needed.
-    // The layers keep the packages' BC7 blocks when every texture of each is BC7, and decode to RGBA8 otherwise.
-    let format = sources.iter().map(|source| aux_layers::AuxLayerFormat::for_package(source.aux))
-        .reduce(|a, b| if a == b { a } else { aux_layers::AuxLayerFormat::Rgba8 })
-        .unwrap_or_else(|| aux_layers::AuxLayerFormat::for_package(tex_aux_ec));
+    // The layers keep the packages' BC7 blocks when every texture of each is BC7, and decode to RGBA8 otherwise. A
+    // package with no texture for the array (an overlay leaving them all to its base) has no say.
+    let format = sources.iter().filter_map(|source| aux_layers::AuxLayerFormat::for_package(source.aux))
+        .reduce(|a, b| if a == b { a } else {
+            console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand,
+                "the Enhanced and Kingdom Reborn textures of tex_aux_ec.uddp differ in format, so every texture is \
+                 decoded to RGBA8 for the GPU; repack it with `udd-cli pack pack-ec-tex-aux`");
+            aux_layers::AuxLayerFormat::Rgba8
+        })
+        .or_else(|| aux_layers::AuxLayerFormat::for_package(tex_aux_ec))
+        .unwrap_or(aux_layers::AuxLayerFormat::Rgba8);
     let mut layers = aux_layers::AuxLayers::new(format);
 
     let liquid_sources = sources.iter().map(|source| (source.base, source.tilemeta)).collect::<Vec<_>>();

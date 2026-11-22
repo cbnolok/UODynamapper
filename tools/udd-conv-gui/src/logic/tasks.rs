@@ -1159,25 +1159,21 @@ fn pack_tex_aux_ec_job(settings: &AppSettings, output: &Path, tilemeta_path: &Pa
         settings.zstd_tex_aux_ec,
     );
     progress.set(AssetPackProgressState::Running, 0.1, "Packing auxiliary EC textures");
-    let summary = pack_tex_aux_ec(
-        &sources,
-        tilemeta_path,
-        output,
-        &TexAuxEcPackOptions {
-            compression,
-            pixel_format: match settings.opt_tex_aux_ec {
-                TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                _ => PagePixelFormat::Rgba8888,
-            },
-            bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_tex_aux_ec),
-            bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
-            upscale: settings.upscale_tex_aux_ec,
-            upscale_passes: Vec::new(),
+    let options = TexAuxEcPackOptions {
+        compression,
+        pixel_format: match settings.opt_tex_aux_ec {
+            TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+            _ => PagePixelFormat::Rgba8888,
         },
-    )?;
+        bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_tex_aux_ec),
+        bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+        upscale: settings.upscale_tex_aux_ec,
+        upscale_passes: Vec::new(),
+    };
+    let summary = pack_tex_aux_ec(&sources, tilemeta_path, output, &options)?;
     progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
     let kr_work = KrSectionWork::prepare(&kr_source(settings), &sources[0], output)?;
-    let kr = add_kr_aux_section(&kr_work, &sources[0], &cc_dir, tilemeta_path, output)?;
+    let kr = add_kr_aux_section(&kr_work, &sources[0], &cc_dir, tilemeta_path, output, &options)?;
     Ok(format!(
         "Packed {} auxiliary textures ({} refs considered) to {}, with the Kingdom Reborn material textures ({}, \
         {} left to the Enhanced ones)",
