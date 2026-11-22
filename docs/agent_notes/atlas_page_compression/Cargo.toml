@@ -1,7 +1,7 @@
 # Reproduces the measurements in ../atlas_page_compression.md. Standalone: build it outside the workspace's target, e.g.
 #   CARGO_TARGET_DIR=/path/to/scratch cargo run --release --bin atlas-page-compression-bench -- /path/to/uddp
 # and the binaries in src/bin the same way (strip_levels, block_pages, upscaled_pages, anim_rdo, rdo_gpu_proto, rdo_gpu,
-# aux_maps, aux_bc7_variant, bc7_gpu).
+# aux_maps, aux_bc7_variant, bc7_gpu, classic_formats).
 [package]
 name = "atlas-page-compression-bench"
 version = "0.1.0"
@@ -30,5 +30,7 @@ bytemuck = { version = "1", features = ["derive"] }
 uot-gpu-compute = { path = "../../../lib/support/uot-gpu-compute" }
 # BC4, BC5 and the ISPC BC7 on the CPU (aux_maps).
 block_compression = { version = "0.11", default-features = false, features = ["bc15", "bc7"] }
+# BC1, BC2 and BC3 on the CPU (classic_formats), the encoder of the BC1 gumps.
+dds = "0.2"
 
 [workspace]

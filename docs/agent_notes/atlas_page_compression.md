@@ -834,6 +834,149 @@ Against the strides of the RGBA8888 packages (`tool strides export` of both, joi
 - **A few clips cross the acceptance tests.** About 1 % of the strides exist in only one package: a facing measured or
   not, or a stride near the 0.25-tile minimum.
 
+## Formats for the Classic pages
+
+Which formats keep the Classic mobile animation frames and the Classic art best (2026-11-22, `--bin
+classic_formats`). Both are binary in alpha: the sampled pages hold alpha 0 and 255 only, and every opaque texel is a
+1555 colour widened as `c << 3` (uocf `rgba8888_word_from_bgra5551`); the animation frames are 256-colour palettes of
+those per animation, the art has no palette. The transparent texels are (0, 0, 0, 0), all of them. Blocks of the
+Classic mobile pages: 61 % transparent, 21 % all opaque, 17 % mixed (art 67, 19, 15 %).
+
+**How the renderer reads them.** A sprite's tap (`client_bilinear_rect`, `mobile_frame_bilinear`) blends the four
+texels straight, not premultiplied, then cuts at alpha one half (the opaque pass) and draws the rest blended. The RGB
+of a transparent texel therefore reaches every edge pixel: next to a transparent black texel the edge darkens. Against
+a premultiplied tap (sum of alpha x RGB over sum of alpha, where a transparent texel lends no colour) the lossless
+pages' edges are at 22.2 to 22.8 dB: the dark fringe is in the data and the filter, whatever the format.
+
+Measured on the pages `bc7_gpu` samples (Classic mobile 20 pages, 56.8 Mpx; Classic art 20, 20.5 Mpx; Enhanced mobile
+16, 48.0 Mpx, for contrast), each page compressed alone. Opaque PSNR is RGB over the texels of alpha 255 only. Flips
+are texels whose alpha lands on the other side of 128; ghosts are transparent texels decoded with some alpha, which
+the blended pass draws faintly. Edges are the 2x2 taps with a transparent texel and a source alpha of at least one
+half, RGB, against the lossless page's straight tap and against the premultiplied one. Sizes in MiB:
+
+| Classic mobile, 20 pages | VRAM bpp | Zstd 9 | Zstd 19 | Opaque PSNR | Flips | Ghosts | Edges vs lossless | vs premultiplied |
+|---|---|---|---|---|---|---|---|---|
+| RGBA8888 (lossless) | 32 | 17.49 | 14.50 | lossless | 0 | 0 | lossless | 22.44 dB |
+| 1555 (lossless) | 16 | 15.32 | 13.51 | lossless | 0 | 0 | lossless | 22.44 dB |
+| R8 palette indices (lossless), without the palettes | 8 | 12.87 | 12.20 | lossless | 0 | 0 | lossless | 22.44 dB |
+| BC7 CPU (AnalyticalWide) | 8 | 13.69 | 13.18 | 33.59 dB | 0 | 596 | 37.75 dB | 22.28 dB |
+| BC7 GPU UltraFast | 8 | 13.66 | 13.15 | 33.31 dB | 0 | 60 | 37.77 dB | 22.29 dB |
+| BC7 GPU VeryFast | 8 | 14.14 | 13.66 | 34.93 dB | 0 | 771 | 39.33 dB | 22.35 dB |
+| BC7 GPU Fast | 8 | 15.02 | 14.62 | 35.91 dB | 0 | 751 | 39.44 dB | 22.35 dB |
+| BC7 GPU Basic | 8 | 15.07 | 14.67 | 36.13 dB | 0 | 739 | 39.47 dB | 22.35 dB |
+| BC7 GPU Slow | 8 | 15.11 | 14.70 | 36.20 dB | 0 | 734 | 39.48 dB | 22.35 dB |
+| UltraFast, all-opaque blocks opaque UltraFast | 8 | 13.80 | 13.30 | 33.32 dB | 0 | 60 | 37.77 dB | 22.29 dB |
+| UltraFast, all-opaque blocks opaque Basic | 8 | 14.55 | 14.09 | 35.44 dB | 0 | 60 | 38.07 dB | 22.30 dB |
+| BC7 CPU, transparent texels nearest colour | 8 | 14.79 | 14.33 | 34.21 dB | 0 | 97 | 22.87 dB | 29.20 dB |
+| BC7 CPU, transparent texels block mean | 8 | 14.32 | 13.84 | 34.25 dB | 0 | 0 | 22.29 dB | 29.95 dB |
+| UltraFast, transparent texels nearest colour | 8 | 14.77 | 14.31 | 33.87 dB | 0 | 1 | 22.87 dB | 29.18 dB |
+| UltraFast, transparent texels block mean | 8 | 14.30 | 13.82 | 33.91 dB | 0 | 0 | 22.30 dB | 29.95 dB |
+| BC1 CPU (dds, the gumps' encoder) | 4 | 8.22 | 7.71 | 30.09 dB | 0 | 0 | 35.60 dB | 22.27 dB |
+| BC1 GPU | 4 | 8.23 | 7.72 | 29.58 dB | 0 | 0 | 34.98 dB | 22.24 dB |
+| BC2 (dds) | 8 | 9.48 | 8.51 | 29.99 dB | 0 | 0 | 34.90 dB | 22.13 dB |
+| BC3 (dds) | 8 | 9.51 | 8.56 | 29.99 dB | 0 | 0 | 34.90 dB | 22.13 dB |
+| BC3, transparent texels nearest colour | 8 | 10.29 | 9.32 | 30.71 dB | 0 | 0 | 22.79 dB | 28.83 dB |
+
+| Classic art, 20 pages | VRAM bpp | Zstd 9 | Zstd 19 | Opaque PSNR | Flips | Ghosts | Edges vs lossless | vs premultiplied |
+|---|---|---|---|---|---|---|---|---|
+| RGBA8888 (lossless) | 32 | 5.20 | 4.58 | lossless | 0 | 0 | lossless | 22.23 dB |
+| 1555 (lossless) | 16 | 4.70 | 4.25 | lossless | 0 | 0 | lossless | 22.23 dB |
+| BC7 CPU | 8 | 4.15 | 4.04 | 33.36 dB | 1 | 987 | 37.46 dB | 22.07 dB |
+| BC7 GPU UltraFast | 8 | 4.16 | 4.04 | 33.13 dB | 0 | 333 | 37.58 dB | 22.08 dB |
+| BC7 GPU VeryFast | 8 | 4.38 | 4.26 | 35.31 dB | 2 | 459 | 39.98 dB | 22.16 dB |
+| BC7 GPU Fast | 8 | 4.57 | 4.47 | 36.25 dB | 2 | 458 | 40.07 dB | 22.16 dB |
+| BC7 GPU Basic | 8 | 4.59 | 4.49 | 36.47 dB | 2 | 458 | 40.12 dB | 22.17 dB |
+| BC7 GPU Slow | 8 | 4.60 | 4.50 | 36.57 dB | 2 | 448 | 40.13 dB | 22.17 dB |
+| UltraFast, all-opaque blocks opaque UltraFast | 8 | 4.17 | 4.08 | 33.14 dB | 0 | 333 | 37.58 dB | 22.08 dB |
+| UltraFast, all-opaque blocks opaque Basic | 8 | 4.35 | 4.25 | 35.12 dB | 0 | 333 | 37.82 dB | 22.08 dB |
+| BC7 CPU, transparent texels nearest colour | 8 | 4.50 | 4.38 | 34.35 dB | 0 | 18 | 22.50 dB | 30.31 dB |
+| BC7 CPU, transparent texels block mean | 8 | 4.40 | 4.28 | 34.43 dB | 0 | 0 | 22.37 dB | 30.78 dB |
+| UltraFast, transparent texels block mean | 8 | 4.41 | 4.29 | 34.14 dB | 0 | 0 | 22.38 dB | 30.79 dB |
+| BC1 CPU | 4 | 2.57 | 2.42 | 31.12 dB | 0 | 0 | 37.64 dB | 22.08 dB |
+| BC1 GPU | 4 | 2.56 | 2.42 | 30.66 dB | 0 | 0 | 37.10 dB | 22.08 dB |
+| BC2 | 8 | 2.86 | 2.65 | 30.55 dB | 0 | 0 | 35.76 dB | 21.96 dB |
+| BC3 | 8 | 2.88 | 2.66 | 30.55 dB | 0 | 0 | 35.76 dB | 21.96 dB |
+
+The Enhanced mobile pages, whose alpha is soft (7.7 % of the texels between 0 and 255), for contrast: BC7 UltraFast
+11.68 MiB at Zstd 19 (67 % of the lossless 17.34) at 31.86 dB, VeryFast 12.29 MiB at 33.81 dB, Basic 13.03 MiB at
+35.05 dB. 1555 and BC1 cut their soft alpha (575 811 edge taps change side); BC3 keeps it at 9.08 MiB but 28.74 dB.
+On these pages flips and ghosts count soft alpha moving, not errors of a binary edge.
+
+What it says:
+
+- **Binary alpha costs BC7 nothing at the cutoff.** Every BC7 variant flips at most 2 of 77 Mpx across one half. The
+  ghosts (60 to 987 transparent texels decoded with a little alpha) are the only alpha error that shows, faintly, in
+  the blended pass. Weighting alpha by the threshold's side would have nothing to win there; making the ghosts 0
+  would.
+- **On disk BC7 barely beats lossless.** At Zstd 19 the Classic BC7 mobile pages are 91 % of the RGBA8888 ones and 97 %
+  of 1555's; the art 88 % and 95 %. BC7's gain on these pages is the VRAM (8 bpp against 32 or 16), not the package.
+- **The palette indices beat BC7 and are lossless** (below): 12.20 MiB against BC7's 13.18 at Zstd 19, at BC7's 8 bpp.
+- **UltraFast is the efficient BC7.** VeryFast gives +1.6 dB (mobile) and +2.2 dB (art) for +3.9 % and +5.4 % at Zstd
+  19; Fast to Slow give +2.6 to 3.4 dB for +11 %. The all-opaque blocks on the opaque profile's modes (0 to 3 and 6)
+  give nothing at UltraFast (+0.01 dB for +1 %, and its mode 6 alpha then decodes 254 on 6.6 M texels). At Basic they
+  give +2.1 dB (mobile) and +2.0 dB (art) for +7 % and +5 %, no better per byte than VeryFast on the whole page. As
+  a second dispatch (`classic_formats split`: the alpha profile on the page with its all-opaque blocks made
+  transparent, which page_encode then skips as solid, and the opaque profile on those blocks packed 256 to a row;
+  quiet machine, best of 2), the opaque UltraFast costs what the whole page does: 0.288 against 0.269 s on one
+  thread, 0.058 against 0.092 s from 20 threads (Classic mobile; art 0.113 against 0.109 s, 0.028 against 0.035 s).
+  The opaque Basic takes 0.72 s and 0.49 s (art 0.28 and 0.19 s), 2.7 and 5 times the whole page's time, about
+  VeryFast's on the whole page (0.53 s from 20 threads), which gains more per byte (2.4 % per dB on the Classic
+  mobile pages, against 3.3 %).
+- **Filling the transparent texels' RGB** with the block's mean opaque colour (as a "don't care" texel would pull the
+  endpoints nowhere) or the nearest opaque colour gives +0.6 to +1.1 dB on the opaque texels. The edges against the
+  premultiplied tap go from 22 to 30 dB and the ghosts go away, for +5.0 to +6.2 % at Zstd 19 with the block mean and
+  +8 to +9 % with the nearest colour. The bleed it removes is the same on the lossless pages: it comes from the renderer's straight tap over
+  black texels. A real "don't care" in the kernel (the transparent texels' RGB out of the endpoint fit and the error,
+  alpha weighted by the cutoff's side) was not prototyped. The block mean approximates its fit, and its size cost
+  suggests that Zstd pays for the transparent texels' indices, not their colours.
+- **BC1** is half of BC7's size at Zstd 19 (7.71 against 13.18 MiB) for 3.2 to 3.5 dB less colour, with the alpha
+  exact (punch-through: no flips, no ghosts, transparent black).
+- **BC2 and BC3** keep the alpha exact too, but their colour block is BC1's four-colour one: no better colour than BC1
+  (−0.1 to −0.6 dB) for 10 % more bytes and twice the VRAM. BC2's explicit 4-bit alpha and BC3's BC4 alpha do equally
+  well for binary alpha.
+- **BC4 and BC5** hold one and two channels, so they carry no RGB and are of no use for these pages. BC4 cannot carry
+  palette indices either, being lossy.
+
+### Palette indices for the Classic animation frames
+
+`classic_formats palettes` over every page of the RGBA8888 `mobile_anim_cc.uddp` (1210 pages) finds 140 050
+animations (body, action and direction) with frames, and 115 232 distinct palettes. An animation uses 75 colours at
+the median, and 255 at p99 and at most. So an R8 index with 0 for transparent holds every one (no texel past 255
+colours). The directions do not share a palette: merged per body and action, 3 901 of the 22 109 palettes pass 255
+colours. All the palettes take 27.95 MB as 1555 (24.53 MB deduplicated), 15.80 MB at Zstd 19.
+
+The sampled pages as R8 indices (each frame's texels index its animation's palette, in the order the frames scan
+them) take 12.87 MiB at Zstd 9 and 12.20 MiB at Zstd 19, 6 and 7 % under BC7. Scaled from the 20 pages to the
+package's 1210, that is about 738 MiB of indices plus 15 MiB of palettes, against about 797 MiB of BC7 at Zstd 19:
+about 5 % smaller and lossless, at BC7's 8 bpp in VRAM.
+
+What the renderer would need (a proposal, not made; a UDDP format change needs the user's confirmation):
+
+- An `R8Uint` page array for the Classic frames beside the RGBA8 and BC7 atlases, and a palette per animation: a
+  storage buffer of 1555 or RGBA8 words with an offset per animation. That is 28 MB as 1555 for all of them, or only
+  the animations whose pages are resident.
+- The palette's offset per mobile instance, beside its page layer, and per crossfade frame, since the next frame's
+  animation can differ.
+- The tap: `textureLoad` of the four indices, each looked up in the palette (index 0 transparent), then the bilinear
+  blend in the shader, as `client_bilinear_rect` already does with four loads; nearest is one load. Indices get no
+  hardware filtering.
+- Hues: the Classic hue tables map the colour, which the palette lookup gives as before.
+- The RIFE and SPAN in-between frames are made as RGBA on the GPU and stay BC7, in their own atlas as now.
+
+### What to do
+
+- Keep the GPU's BC7 UltraFast for the Classic art and as the frames' fallback. It matches the CPU's size and
+  quality, nothing gains more per byte, and the opaque-profile split does not pay.
+- For the Classic mobile frames, use R8 palette indices: lossless, 5 % smaller than BC7 on disk, at BC7's VRAM, with
+  the renderer work above. It is the largest quality step on offer (from BC7's 33.6 dB to lossless) at no size cost.
+- The edge bleed comes from the straight tap, not the format. A premultiplied tap in `client_bilinear_rect` and
+  `mobile_frame_bilinear` (blend alpha x RGB, divide by the blended alpha, as `mobile_frames_mix` already does for the
+  crossfade) would remove the dark fringe for every format at no size cost, where filling the texels costs 5 %. It
+  changes how edges look under the client filter, so it should be checked against the clients' captures first. With
+  it, a "don't care" encode of the transparent texels would be safe.
+- Use BC1 only where half the size matters more than 3.5 dB (it is what the Classic gumps use), and BC2 or BC3 never
+  for these pages.
+
 ## Atmosphere maps and light textures
 
 `tex_aux_ec.uddp` stores the textures under its reserved keys lossless, RGBA8888 at their own size, whatever the other
@@ -996,4 +1139,7 @@ hook), and `BC7_GPU_ZSTD` sets the Zstd level (9 by default; 19 as the packages)
 size with some kinds swapped for the CPU's or the opaque profile's, `fields` the alpha endpoints and p-bits of the
 opaque blocks' mode 6, and `profile <dir> <set> <pages> [profile] [packed]` the texels, upload, kernel and readback time
 of one page at a time (`packed` as `page_encode` sends its bands). `--bin bc7_gpu digest <dir> <set> <pages>` hashes
-every GPU format's blocks on the pages, to compare two builds of the kernels.
+every GPU format's blocks on the pages, to compare two builds of the kernels. `--bin classic_formats <dir> <mobile_cc|art_cc|mobile_ec>
+<pages> [variant,...]` measures the formats of "Formats for the Classic pages" on a lossless package's pages, `texels`
+their alpha and transparent texels, `palettes <dir> <pages>` the Classic animations' palettes and the pages as indices,
+and `split` the GPU's UltraFast against the two dispatches.
