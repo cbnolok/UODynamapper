@@ -25,6 +25,11 @@
 // whose index 3 would be transparent, so its texels then all take index 0, the block's one colour. A block with a
 // transparent texel is encoded in the three-colour mode from its opaque texels, and an empty block is transparent.
 // The crate's BC2 to BC5 kernels are left out.
+//
+// block_encode.rs compiles this kernel without bounds checks, so every index must stay in range by itself
+// (docs/agent_notes/atlas_page_compression.md, "Bounds checks off"): the arrays and vectors are indexed in loops of
+// their own lengths, and the texture's and the output's, whose range depends on the inputs, through texel_coordinates
+// and store_data_2.
 
 struct Uniforms {
     width: u32,
@@ -49,12 +54,18 @@ fn rcp(x: f32) -> f32 {
     return 1.0 / x;
 }
 
+// The texel at `x`, `y` of the source, its last row or column for one past its edges (none in range: a frame's texture
+// covers its blocks).
+fn texel_coordinates(x: u32, y: u32) -> vec2<u32> {
+    return min(vec2<u32>(x, y), textureDimensions(source_texture, 0) - vec2<u32>(1u));
+}
+
 fn load_block_interleaved_rgba(block: ptr<function, array<f32, 64>>, xx: u32, yy: u32) {
     for (var y = 0u; y < 4u; y++) {
         for (var x = 0u; x < 4u; x++) {
             let pixel_x = xx * 4u + x;
             let pixel_y = yy * 4u + y + uniforms.texture_y_offset;
-            let rgba = textureLoad(source_texture, vec2<u32>(pixel_x, pixel_y), 0);
+            let rgba = textureLoad(source_texture, texel_coordinates(pixel_x, pixel_y), 0);
 
             (*block)[16u * 0u + y * 4u + x] = rgba.r * 255.0;
             (*block)[16u * 1u + y * 4u + x] = rgba.g * 255.0;
@@ -66,6 +77,10 @@ fn load_block_interleaved_rgba(block: ptr<function, array<f32, 64>>, xx: u32, yy
 
 fn store_data_2(block_width: u32, xx: u32, yy: u32, data: vec2<u32>) {
     let offset = uniforms.blocks_offset + (yy * block_width * 2u + xx * 2u);
+    // In range: block_encode.rs asserts that a frame's blocks fit the buffer.
+    if (offset + 1u >= arrayLength(&block_buffer)) {
+        return;
+    }
 
     block_buffer[offset + 0] = data[0];
     block_buffer[offset + 1] = data[1];

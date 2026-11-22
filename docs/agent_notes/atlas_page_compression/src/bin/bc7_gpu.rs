@@ -5,7 +5,7 @@
 //! empty folder), which the faster of its two runs leaves out. Checks that a second GPU run gives the same blocks.
 //! Usage: bc7_gpu <uddp dir> <mobile_cc|mobile_ec|art_cc|art_ec|land_ec|dumped> <pages> [profiles, comma-separated]
 //! (`dumped`: raw pages in the directory, see `sample_pages`; `BC7_GPU_ZSTD` sets the Zstd level), or one of the
-//! modes `compare`, `stats`, `variants`, `fields` and `profile` (their functions).
+//! modes `compare`, `stats`, `variants`, `fields`, `profile` and `digest` (their functions).
 use rayon::prelude::*;
 use std::time::Instant;
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -546,10 +546,33 @@ fn profile(mut args: impl Iterator<Item = String>) {
         best[2], texels / 1e6 / best[2], best[3], best[4]);
 }
 
+/// `digest <dir> <set> <pages>`: a digest of the blocks of every format (BC7 with alpha and opaque at each quality, and
+/// BC1) on the pages, to tell two builds of the kernels apart (bounds checks on and off, say).
+fn digest(mut args: impl Iterator<Item = String>) {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use uot_gpu_compute::block_encode::MobileBlockFormat;
+    let dir = args.next().unwrap();
+    let set = args.next().unwrap();
+    let count: usize = args.next().unwrap().parse().unwrap();
+    let pages = sample_pages(&dir, &set, count);
+    let gpu = PageEncoderGpu::new().unwrap();
+    for format in MobileBlockFormat::ALL {
+        let started = Instant::now();
+        let blocks: Vec<Vec<u8>> = pages.par_iter()
+            .map(|page| gpu.encode_blocks(&page.rgba, page.width, page.height, format).unwrap()).collect();
+        let mut hasher = DefaultHasher::new();
+        blocks.hash(&mut hasher);
+        let bytes: usize = blocks.iter().map(Vec::len).sum();
+        println!("{set} {} pages {format:?}: {bytes} bytes, digest {:016x} ({:.2} s)", pages.len(), hasher.finish(),
+            started.elapsed().as_secs_f64());
+    }
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let dir = args.next().unwrap();
     if dir == "compare" { return compare(args); }
+    if dir == "digest" { return digest(args); }
     if dir == "stats" { return stats(args); }
     if dir == "variants" { return variants(args); }
     if dir == "fields" { return fields(args); }

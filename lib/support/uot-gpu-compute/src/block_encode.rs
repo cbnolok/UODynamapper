@@ -58,6 +58,16 @@ const BC1_SHADER: &str = include_str!("../shaders/block_encode/bc1.wgsl");
 const BC1_ENTRY: &str = "compress_bc1";
 /// bc7.wgsl's settings buffer.
 const SETTINGS_BINDING: u32 = 3;
+/// The runtime checks both kernels compile with. No bounds checks: every index of bc7.wgsl and bc1.wgsl stays in range
+/// by itself (audited, with the few that depend on the inputs clamped or guarded in the kernels;
+/// docs/agent_notes/atlas_page_compression.md, "Bounds checks off"), and without the checks the BC7 kernel runs 1.6
+/// times as fast, with the same blocks. Loop bounding kept, as block_compression has it: without it RADV/Navi can encode
+/// BC7 alpha and Basic wrongly. The checks left out concern ray queries, task and mesh shaders, of which the kernels
+/// have none.
+const KERNEL_CHECKS: wgpu::ShaderRuntimeChecks = wgpu::ShaderRuntimeChecks {
+    bounds_checks: false, force_loop_bounding: true, ray_query_initialization_tracking: false,
+    task_shader_dispatch_tracking: false, mesh_shader_primitive_indices_clamp: false, int_div_checks: true,
+};
 
 /// The format [`MobileBlockEncoder::compile`] compiles: Dynamapper's frames'.
 pub const WARM_BLOCK_FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(Bc7Quality::UltraFast);
@@ -241,34 +251,24 @@ impl Kernel {
     fn compile(device: &wgpu::Device, format: MobileBlockFormat) -> Self {
         let label = format.compile_name();
         let mut settings = None;
-        let (module, entry_point) = match format {
+        let (source, entry_point) = match format {
             MobileBlockFormat::Bc7(quality) | MobileBlockFormat::Bc7Opaque(quality) => {
                 let profile = Bc7Profile::of(quality, matches!(format, MobileBlockFormat::Bc7(_)));
                 settings = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some(&label), contents: bytemuck::cast_slice(&profile.settings_words()),
                     usage: wgpu::BufferUsages::STORAGE,
                 }));
-                // block_compression's checks for its BC7 kernel, loop bounding kept: the crate found that without
-                // it RADV/Navi can encode alpha and Basic wrongly. The checks left out concern ray queries, task and
-                // mesh shaders, of which the kernel has none.
-                let checks = wgpu::ShaderRuntimeChecks {
-                    bounds_checks: true, force_loop_bounding: true, ray_query_initialization_tracking: false,
-                    task_shader_dispatch_tracking: false, mesh_shader_primitive_indices_clamp: false,
-                    int_div_checks: true,
-                };
-                let source = bc7_source(&profile);
-                let descriptor = wgpu::ShaderModuleDescriptor {
-                    label: Some(&label), source: wgpu::ShaderSource::Wgsl(source.into()),
-                };
-                // SAFETY: the checks turned off guard ray queries and task and mesh shaders, which the module has none
-                // of.
-                (unsafe { device.create_shader_module_trusted(descriptor, checks) }, BC7_ENTRY)
+                (bc7_source(&profile), BC7_ENTRY)
             }
-            // Checked, as block_compression creates its BC1 kernel.
-            MobileBlockFormat::Bc1 => (device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&label), source: wgpu::ShaderSource::Wgsl(BC1_SHADER.into()),
-            }), BC1_ENTRY),
+            MobileBlockFormat::Bc1 => (BC1_SHADER.to_string(), BC1_ENTRY),
         };
+        let descriptor = wgpu::ShaderModuleDescriptor {
+            label: Some(&label), source: wgpu::ShaderSource::Wgsl(source.into()),
+        };
+        // SAFETY: the kernels index their arrays, vectors, buffers and texture within range without the bounds checks
+        // (see KERNEL_CHECKS), and the other checks turned off guard ray queries and task and mesh shaders, which they
+        // have none of.
+        let module = unsafe { device.create_shader_module_trusted(descriptor, KERNEL_CHECKS) };
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None,
         };

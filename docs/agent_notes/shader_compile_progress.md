@@ -313,8 +313,9 @@ GPU BC7 encode") leave the compile where it was: the same test, before and after
 loaded machine, UltraFast with alpha 7.5 and 6.2 s before, 6.5 and 6.4 s after; opaque UltraFast 1.3 to 1.4 s both;
 BC1 0.23 to 0.27 s both; the slower profiles within their noise (VeryFast 15.5 to 17.9 s, Basic 17.0 to 25.7 s, Slow
 23.8 to 44.3 s, both sides). Turning the kernels' bounds checks off (`ShaderRuntimeChecks`) took 0.5 s off UltraFast's
-cold compile and made its kernel 1.6 times as fast with the same blocks, but is not taken: an out-of-range index would
-be undefined behaviour instead of a clamped read.
+cold compile and made its kernel 1.6 times as fast with the same blocks. It was taken after an audit of every index
+(2026-11-22, atlas_page_compression.md, "Bounds checks off"); measured again then, the cold compile is level within
+the noise (UltraFast 7.9 and 5.5 s before, 4.8 and 5.3 s after, alternating on a loaded machine).
 In the app (dev build, Minoc, the BC7 animation packages, an empty Mesa cache per launch, before and after alternating,
 other agents' builds running), the warm-up's line read 11.9 and 14.4 s before, 12.4 and 13.6 s after: the whole
 cache is cold there, so the encoder compiles beside every other pipeline. The renderer's quick tier is the same with

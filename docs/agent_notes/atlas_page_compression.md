@@ -714,19 +714,82 @@ these pages, which the packers spread over their 20.
 
 **Compile:** unchanged. UltraFast with alpha compiles cold in 6.4 and 6.5 s after, 6.2 and 7.5 s before (alternating
 on the same loaded machine), and the app's warm-up is the same; see shader_compile_progress.md. Nothing tried cut it
-but the bounds checks, below.
+but the bounds checks, since turned off (below, "Bounds checks off").
 
 Tried and not taken:
 
 - **No bounds checks** (`ShaderRuntimeChecks::bounds_checks: false`): the kernel 1.6 times as fast (0.079 s on the
-  Classic mobile pages), the same blocks on every profile, the cold compile 0.5 s shorter. Left on: an out-of-range
-  index would be undefined behaviour on the GPU instead of a clamped read, and the kernel's indexing was not audited for
-  it. A choice to make.
+  Classic mobile pages), the same blocks on every profile, the cold compile 0.5 s shorter. Left on at first: an
+  out-of-range index would be undefined behaviour on the GPU instead of a clamped read, and the kernel's indexing was
+  not audited for it. Taken since, after the audit below.
 - **No loop bounding**: block_compression 0.9.1 turned it back on because RADV/Navi gave wrong BC7 without it.
 - **Gathering the band's texels straight from the page** instead of through a block list, and comparing a block's
   texels as `u32`s: slower or level.
 - **Overlapping the transfers with the kernel**: the upload and readback are about a tenth of the wall on 20 threads;
   not worth a second band in flight.
+
+### Bounds checks off
+
+Both kernels compile without bounds checks since 2026-11-22 (`KERNEL_CHECKS` in `block_encode.rs`: `bounds_checks:
+false`; loop bounding and the integer division checks stay, as in block_compression, whose 0.9.1 found RADV/Navi
+encoding BC7 wrongly without loop bounding). On Vulkan, wgpu 30 has naga clamp every index of a local array, vector or
+matrix (`Restrict`), and the buffer and texture accesses unless the device has robustBufferAccess2 and
+robustImageAccess; with the checks off all four go unchecked. RADV has both robustness features, so the 1.6 times comes
+from the local arrays' clamps in the BC7 kernel's inner loops; a driver without them leaves the buffer and texture
+accesses to the guards below.
+
+Without the checks an index out of range is undefined behaviour, so every index of `bc7.wgsl` and `bc1.wgsl` was
+audited. Where the range depends on the inputs (the settings buffer, the texture's and the output's sizes, a texel's
+value), the kernel now clamps or guards it itself:
+
+| Index | Where | Why it stays in range |
+|---|---|---|
+| The block, `array<f32, 64>` | `16 * channel + texel` | Channel < 4: loops to the literal 4 or to `settings_channels()`, `min(settings.channels, 4)` (new). Texel < 16: loops to 16, or `y * 4 + x` with both < 4 |
+| Endpoints `ep`, `qep`, `array<_, 24>` | `8 * subset + 4 * end + channel` | Subset < 3 (`pairs` ≤ 3, from the mode, a literal), end < 2, channel < 4 as above: at most 23 |
+| Endpoints by texel in `block_quant` | `ep[8 * j + 4 + p]`, j the texel's subset from the pattern | The pattern table's 2-subset entries hold subsets 0 and 1 only, its 3-subset entries 0 to 2: no subset 3 in any entry (checked over the table), so at most 23 |
+| Quantized weights, `vec2<u32>` | `qblock[k0 >> 3]`, k0 a skip nibble | The skip table's nibbles are at most 15, so the index is at most 1 |
+| Weight tables, `array<i32, 16>` | `get_unquant_value(bits, i)` | `bits` is 2, 3 or 4 (literals); i is clamped to `1..levels - 1` before, then i - 1 and i: at most 15 |
+| Partition tables (pattern, mask, skips), 128 entries | `part_id` | From `part_list[k] & 63`, plus 64 in the 3-subset modes: at most 127. `best_part_id` starts at −1, so the tables are read through `partition_entry` (new), masked to 127 |
+| Partition lists, `array<i32, 64>` | Loops to `part_count`, `partial_count` | Both come from the settings' thresholds: clamped to `PARTITIONS` (64) in `bc7_enc_mode01237` and `partial_sort_list` (new) |
+| Mode tables (`refine_iterations`, `pairs`) | `[mode]` | The mode is a literal 0 to 7 at every call |
+| Dual-plane rotation (modes 4 and 5) | Channel p | Loops to `settings_channels()` (new); `candidate_block` swaps only for rotation < 3 |
+| The packed block, `data: array<u32, 5>` | `put_bits`: `pos / 32` and `pos / 32 + 1` | Every mode writes exactly 128 bits, so the second word is at most 4 |
+| `MODE5_SOLID_ENDPOINTS`, 256 entries | A solid block's channel value | `channel_byte` (new) clamps it to 0..255, whatever the texture's format gives |
+| The source texture | `textureLoad` at the block's texels | `texel_coordinates` (new) clamps to the texture's last row and column. In range anyway: page_encode's bands have sides that are multiples of 4 (`Band::pack`), the renderer's scratch texture is `BC7_SCRATCH_SIDE` square |
+| The output buffer | `store_data`, `store_data_2` | Return when the block's last word is past `arrayLength` (new). In range anyway: `add_frame_at` asserts on the CPU that `offset + encoded_bytes` fits the buffer, `y % 4 == 0` and STORAGE usage; page_encode's output is exactly `encoded_bytes(band)` |
+| The frame uniforms | Dynamic offset `index * stride` | Into a buffer of `frames * stride`; wgpu validates every dynamic offset on the CPU |
+| BC1's local arrays | Block, colours, indices | Indexed in loops of constant bounds equal to their lengths |
+
+The remaining `settings.channels == 3u` and `== 4u` tests are comparisons, not indices.
+
+Checked (Radeon 880M, RADV):
+
+- **The same blocks.** The ignored GPU tests (`BLOCK_ENCODE_PACKAGES=/home/claudio/test/uddp`): every profile's blocks
+  are block_compression's checked kernel's byte for byte (0 of 28 312 blocks differ with alpha, 0 of 89 087 opaque),
+  the solid and all-opaque blocks the CPU encoder's, BC1 0 of 62 629 blocks off the crate's, its alpha exact
+  (`bc1_keeps_the_cpu_encoders_alpha`). `bc7_gpu digest` on 3 pages of each of the five sets (2 of the land) gives
+  the same digest before and after for all 11 formats (55 of 55).
+- **The kernel**, one page at a time on one thread (`bc7_gpu profile ... ultrafast packed`, two rounds alternating,
+  the faster of each), below.
+
+| Pages | Kernel before | Kernel after | Speed-up |
+|---|---|---|---|
+| Classic mobile, 20 | 0.130 s | 0.079 s (716 Mpx/s) | 1.6 × |
+| Enhanced mobile, 16 | 0.095 s | 0.060 s (796 Mpx/s) | 1.6 × |
+| Classic art, 20 | 0.051 s | 0.030 s (677 Mpx/s) | 1.7 × |
+| Enhanced art, 16 | 0.070 s | 0.041 s (406 Mpx/s) | 1.7 × |
+| Enhanced land, 6 | 0.056 s | 0.041 s (476 Mpx/s) | 1.4 × |
+
+The page's wall on one thread drops less (Classic mobile 0.42 to 0.36 s): making the bands' texels on the CPU weighs
+more than the kernel now.
+
+- **Cold compile** (`time_every_format_compile` with an empty `MESA_SHADER_CACHE_DIR`, two rounds alternating, load 8
+  to 11 from other agents): UltraFast 7.9 and 5.5 s before, 4.8 and 5.3 s after; UltraFast opaque 1.4 and 1.1 s
+  before, 1.5 and 1.1 s after; BC1 0.24 s both; VeryFast 16.7 to 21.8 s, Basic 22.0 to 26.2 s and Slow 25.6 to 36.6 s
+  on both sides. Level within the noise, UltraFast perhaps half a second shorter.
+- **The renderer**: the regression harness's quick tier with the BC7 package set (`bc7-atlas/uddp-bc7`), a build
+  before and after, in the four styles: of 95 captures, 76 identical and 19 within tolerance (at most 2 levels), none
+  changed.
 
 ### The BC7 packages without RDO, and their strides
 
@@ -932,4 +995,5 @@ hook), and `BC7_GPU_ZSTD` sets the Zstd level (9 by default; 19 as the packages)
 <pages> [profile]` sorts the blocks by kind and gives each kind's modes and Zstd share on both encoders, `variants` the
 size with some kinds swapped for the CPU's or the opaque profile's, `fields` the alpha endpoints and p-bits of the
 opaque blocks' mode 6, and `profile <dir> <set> <pages> [profile] [packed]` the texels, upload, kernel and readback time
-of one page at a time (`packed` as `page_encode` sends its bands).
+of one page at a time (`packed` as `page_encode` sends its bands). `--bin bc7_gpu digest <dir> <set> <pages>` hashes
+every GPU format's blocks on the pages, to compare two builds of the kernels.

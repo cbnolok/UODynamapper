@@ -36,6 +36,11 @@
 //   rather than 254 (252 in mode 7) where a p-bit of 0 fits the colour better.
 //
 // Every other block is the crate's byte for byte (block_encode/tests.rs checks it).
+//
+// block_encode.rs compiles this kernel without bounds checks (twice as fast), so every index must stay in range by
+// itself (docs/agent_notes/atlas_page_compression.md, "Bounds checks off"). The few whose range depends on the inputs
+// (the settings, the texture's and the output's sizes, a texel's value) are clamped or guarded where they are read:
+// settings_channels, PARTITIONS, partition_entry, texel_coordinates, channel_byte and store_data.
 
 struct Uniforms {
     width: u32,
@@ -84,6 +89,36 @@ const SOLID_WEIGHTS = 0x2aaaaaabu;
 const SOLID_WEIGHT_BITS = 31u;
 // The texels of a block.
 const BLOCK_TEXELS = 16u;
+// The channels a block holds (RGBA), the most `settings.channels` may name.
+const MAX_CHANNELS = 4u;
+// The partitions a mode tries at most, the length of the partition lists.
+const PARTITIONS = 64u;
+// The entries of the partition tables (the 2-subset partitions, then the 3-subset ones), a power of two.
+const PARTITION_TABLE_MASK = 127u;
+// The largest value of a channel byte.
+const CHANNEL_MAX = 255.0;
+
+// The channels encoded: 4 with alpha, 3 opaque (the settings' `channels`), never more than a block holds.
+fn settings_channels() -> u32 {
+    return min(settings.channels, MAX_CHANNELS);
+}
+
+// A partition's entry in the partition tables. Every caller's partition is in range (0 to 63, plus 64 for the
+// 3-subset modes); the mask keeps it so whatever comes.
+fn partition_entry(part_id: i32) -> u32 {
+    return u32(part_id) & PARTITION_TABLE_MASK;
+}
+
+// The texel at `x`, `y` of the source, its last row or column for one past its edges (none in range: a frame's texture
+// covers its blocks).
+fn texel_coordinates(x: u32, y: u32) -> vec2<u32> {
+    return min(vec2<u32>(x, y), textureDimensions(source_texture, 0) - vec2<u32>(1u));
+}
+
+// A channel's value as a byte, 0 to 255 whatever the texture's format gives.
+fn channel_byte(value: f32) -> u32 {
+    return u32(clamp(round(value), 0.0, CHANNEL_MAX));
+}
 
 fn sq(x: f32) -> f32 {
     return x * x;
@@ -98,7 +133,7 @@ fn load_block_interleaved_rgba(block: ptr<function, array<f32, 64>>, xx: u32, yy
         for (var x = 0u; x < 4u; x++) {
             let pixel_x = xx * 4u + x;
             let pixel_y = yy * 4u + y + uniforms.texture_y_offset;
-            let rgba = textureLoad(source_texture, vec2<u32>(pixel_x, pixel_y), 0);
+            let rgba = textureLoad(source_texture, texel_coordinates(pixel_x, pixel_y), 0);
 
             (*block)[16u * 0u + y * 4u + x] = rgba.r * 255.0;
             (*block)[16u * 1u + y * 4u + x] = rgba.g * 255.0;
@@ -110,6 +145,10 @@ fn load_block_interleaved_rgba(block: ptr<function, array<f32, 64>>, xx: u32, yy
 
 fn store_data(state: ptr<function, State>, block_width: u32, xx: u32, yy: u32) {
     let offset = uniforms.blocks_offset + (yy * block_width * 4u + xx * 4u);
+    // In range: block_encode.rs asserts that a frame's blocks fit the buffer.
+    if (offset + 3u >= arrayLength(&block_buffer)) {
+        return;
+    }
 
     block_buffer[offset + 0] = (*state).data[0];
     block_buffer[offset + 1] = (*state).data[1];
@@ -154,7 +193,7 @@ fn get_pattern(part_id: i32) -> u32 {
 		0xAAAA1414u, 0xA05050A0u, 0xA0A5A5A0u, 0x96000000u, 0x40804080u, 0xA9A8A9A8u, 0xAAAAAA44u, 0x2A4A5254u,
     );
 
-    return pattern_table[part_id];
+    return pattern_table[partition_entry(part_id)];
 }
 
 fn get_pattern_mask(part_id: i32, j: u32) -> u32 {
@@ -177,7 +216,7 @@ fn get_pattern_mask(part_id: i32, j: u32) -> u32 {
 		0x00660099u, 0x0CC03333u, 0x03303003u, 0x60000FFFu, 0x80807777u, 0x10100101u, 0x000A0005u, 0x08CE8421u,
     );
 
-    let mask_packed = pattern_mask_table[part_id];
+    let mask_packed = pattern_mask_table[partition_entry(part_id)];
     let mask0 = mask_packed & 0xFFFFu;
     let mask1 = mask_packed >> 16u;
 
@@ -196,7 +235,7 @@ fn get_skips(part_id: i32) -> vec3<u32> {
         0x3fu, 0xf3u, 0x5fu, 0x5fu, 0x5fu, 0x8fu, 0x5fu, 0xafu, 0x5fu, 0xafu, 0x8fu, 0xdfu, 0xf3u, 0xcfu, 0x3fu, 0x38u,
     );
 
-    let skip_packed = skip_table[part_id];
+    let skip_packed = skip_table[partition_entry(part_id)];
 
     return vec3<u32>(0u, skip_packed >> 4u, skip_packed & 15u);
 }
@@ -740,11 +779,13 @@ fn channel_opt_endpoints(ep: ptr<function, vec2<f32>>, channel_block: ptr<functi
 }
 
 fn partial_sort_list(list: ptr<function, array<i32, 64>>, length: i32, partial_count: i32) {
-    for (var k = 0; k < partial_count; k++) {
+    let list_length = min(length, i32(PARTITIONS));
+    let sorted = min(partial_count, list_length);
+    for (var k = 0; k < sorted; k++) {
         var best_idx = i32(k);
         var best_value = (*list)[k];
 
-        for (var i = k + 1; i < length; i++) {
+        for (var i = k + 1; i < list_length; i++) {
             if (best_value > (*list)[i]) {
                 best_value = (*list)[i];
                 best_idx = i;
@@ -1104,7 +1145,8 @@ fn bc7_enc_mode01237(state: ptr<function, State>, block: ptr<function, array<f32
     var best_part_id = -1;
     var best_err = 3.402823e38;
 
-    for (var part = 0u; part < part_count; part++) {
+    let partitions = min(part_count, PARTITIONS);
+    for (var part = 0u; part < partitions; part++) {
         var part_id = part_list[part] & 63;
         part_id = select(part_id, part_id + 64, pairs == 3);
 
@@ -1280,7 +1322,7 @@ fn bc7_enc_mode45(state: ptr<function, State>, block: ptr<function, array<f32, 6
     var best_err = (*state).best_err;
 
     let channel0 = settings.mode45_channel0;
-    for (var p = channel0; p < settings.channels; p++) {
+    for (var p = channel0; p < settings_channels(); p++) {
         bc7_enc_mode45_candidate(&best_candidate, &best_err, block, 4u, p, 0u);
         bc7_enc_mode45_candidate(&best_candidate, &best_err, block, 4u, p, 1u);
     }
@@ -1291,7 +1333,7 @@ fn bc7_enc_mode45(state: ptr<function, State>, block: ptr<function, array<f32, 6
         bc7_code_mode45(state, &best_candidate, 4u);
     }
 
-    for (var p = channel0; p < settings.channels; p++) {
+    for (var p = channel0; p < settings_channels(); p++) {
         bc7_enc_mode45_candidate(&best_candidate, &best_err, block, 5u, p, 0u);
     }
 
@@ -1308,24 +1350,25 @@ fn bc7_enc_mode6(state: ptr<function, State>, block: ptr<function, array<f32, 64
     const bits = 4u;
 
     var ep: array<f32, 24>;
-    block_segment(&ep, 0u, block, 0xFFFFFFFFu, settings.channels);
+    let channels = settings_channels();
+    block_segment(&ep, 0u, block, 0xFFFFFFFFu, channels);
 
-    if (settings.channels == 3u) {
+    if (channels == 3u) {
         ep[3] = 255.0;
         ep[7] = 255.0;
     }
 
     var qep: array<i32, 24>;
-    ep_quant_dequant(&qep, &ep, mode, settings.channels);
+    ep_quant_dequant(&qep, &ep, mode, channels);
 
     var qblock: vec2<u32>;
-    var err = block_quant(&qblock, block, bits, &ep, 0u, settings.channels);
+    var err = block_quant(&qblock, block, bits, &ep, 0u, channels);
 
     let refine_iterations = settings.refine_iterations[mode];
     for (var i = 0u; i < refine_iterations; i++) {
-        opt_endpoints(&ep, 0u, block, bits, qblock, 0xFFFFFFFFu, settings.channels);
-        ep_quant_dequant(&qep, &ep, mode, settings.channels);
-        err = block_quant(&qblock, block, bits, &ep, 0u, settings.channels);
+        opt_endpoints(&ep, 0u, block, bits, qblock, 0xFFFFFFFFu, channels);
+        ep_quant_dequant(&qep, &ep, mode, channels);
+        err = block_quant(&qblock, block, bits, &ep, 0u, channels);
     }
 
     if (err < (*state).best_err) {
@@ -1339,13 +1382,14 @@ fn bc7_enc_mode7(state: ptr<function, State>, block: ptr<function, array<f32, 64
         return;
     }
 
+    let channels = settings_channels();
     var full_stats: array<f32, 15>;
-    compute_stats_masked(&full_stats, block, 0xFFFFFFFFu, settings.channels);
+    compute_stats_masked(&full_stats, block, 0xFFFFFFFFu, channels);
 
     var part_list: array<i32, 64>;
     for (var part = 0; part < 64; part++) {
         let mask = get_pattern_mask(part, 0u);
-        let bound12 = block_pca_bound_split(block, mask, full_stats, settings.channels);
+        let bound12 = block_pca_bound_split(block, mask, full_stats, channels);
         let bound = i32(bound12);
         part_list[part] = part + bound * 64;
     }
@@ -1406,11 +1450,11 @@ fn code_solid_block(state: ptr<function, State>, block: ptr<function, array<f32,
     put_bits(state, &pos, 6u, 32u);
     put_bits(state, &pos, 2u, 0u);
     for (var p = 0u; p < 3u; p++) {
-        let endpoints = MODE5_SOLID_ENDPOINTS[u32(round((*block)[p * BLOCK_TEXELS]))];
+        let endpoints = MODE5_SOLID_ENDPOINTS[channel_byte((*block)[p * BLOCK_TEXELS])];
         put_bits(state, &pos, 7u, endpoints & 0xffu);
         put_bits(state, &pos, 7u, endpoints >> 8u);
     }
-    let alpha = select(255u, u32(round((*block)[3u * BLOCK_TEXELS])), settings.channels == 4u);
+    let alpha = select(255u, channel_byte((*block)[3u * BLOCK_TEXELS]), settings.channels == 4u);
     put_bits(state, &pos, 8u, alpha);
     put_bits(state, &pos, 8u, alpha);
     put_bits(state, &pos, SOLID_WEIGHT_BITS, SOLID_WEIGHTS);
