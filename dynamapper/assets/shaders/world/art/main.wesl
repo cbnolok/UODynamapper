@@ -50,6 +50,7 @@ import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priori
     cave_lifted_view_z, cave_outside_rgb, perspective_cap_may_move, perspective_cap_row_shift,
     perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL};
 import package::shaders::world::projection::camera_relative_world_to_clip;
+import package::shaders::world::srgb::decode_srgb;
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -273,7 +274,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         @if(LIGHT_SCENE) {
             discard;
         }
-        out.color = in.color;
+        // The packed radar palette contains display-space bytes; the render target expects linear RGB.
+        out.color = vec4<f32>(decode_srgb(in.color.rgb), in.color.a);
         return out;
     }
 

@@ -377,7 +377,7 @@ z = -5
 
 [[fixture]]
 name = "minoc-wide-water-statics"
-guards = "At overview zoom, the river's low water statics stay visible above the seabed and below nearer geometry."
+guards = "At overview zoom, river statics stay above the seabed and below nearer geometry, with their packed radar colors displayed correctly."
 tier = "quick"
 tags = ["water", "terrain", "minoc", "zoom"]
 map = 0

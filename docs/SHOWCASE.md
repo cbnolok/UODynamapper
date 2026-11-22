@@ -109,9 +109,9 @@ In **F2 → Graphics**, enable **Show Only the Player's Floor**. **Only the Play
 
 Both captures are centered on the same point in Britain. The wide view covers 32 times as much world width as the close view.
 
-At scale 20 and wider, Dynamapper uses radar colors for statics. Low statics such as river and shoreline water remain visible wherever the depth test leaves them exposed.
+At scale 20 and wider, Dynamapper draws statics in their packed radar colors. Exposed river and shoreline water statics appear as solid cell fills, so the authored foam shapes and transparent edges are lost at this scale.
 
-![Wide KR-like view of Minoc with river and shoreline statics visible](images/showcase/world-zoom-minoc-overview.webp)
+![Wide KR-like view of Minoc and its river with statics in radar colors](images/showcase/world-zoom-minoc-overview.webp)
 
 *Minoc at scale 20 with Enhanced art and Kingdom Reborn terrain.*
 
