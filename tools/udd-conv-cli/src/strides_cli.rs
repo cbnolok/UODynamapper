@@ -1,6 +1,6 @@
 //! `udd-cli tool strides`: the mobiles' measured strides in `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp`
-//! (`udd_assets::animation::mobile_strides`): measured on the GPU (`udd_conv::animation::mobile_strides`), as a text
-//! table in and out, and which of them are stale.
+//! (`udd_assets::animation::mobile_strides`): measured (`udd_conv::animation::mobile_strides`), as a text table in
+//! and out, and which of them are stale.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -14,7 +14,9 @@ use udd_assets::animation::mobile_strides::{
     format_stride_table, load_mobile_anim_clips, parse_stride_table, plan_strides, stride_clip_hashes,
     stride_table_fields, write_package_strides, MobileStrideRecord,
 };
-use udd_conv::animation::mobile_strides::{hash_threads, measure_package_strides, MeasureOptions, StrideProgress};
+use udd_conv::animation::mobile_strides::{
+    hash_threads, measure_package_strides, MeasureOptions, StrideMethod, StrideProgress,
+};
 
 /// Which clips `strides measure` measures.
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,15 +27,34 @@ pub enum MeasureMode {
     Full,
 }
 
+/// How `strides measure` measures a clip.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeasureMethod {
+    /// Follows the planted foot's ground contact from frame to frame, on the CPU's threads.
+    PlantedFoot,
+    /// Reads the RIFE flow of the feet on the GPU; measures the human walks a fifth to a third short.
+    Flow,
+}
+
+impl From<MeasureMethod> for StrideMethod {
+    fn from(method: MeasureMethod) -> Self {
+        match method {
+            MeasureMethod::PlantedFoot => Self::PlantedFoot,
+            MeasureMethod::Flow => Self::Flow,
+        }
+    }
+}
+
 /// Clips hashed between progress lines.
 const HASH_PROGRESS_EVERY: usize = 500;
 
 #[derive(Subcommand)]
 pub enum StridesCommand {
-    /// Measure the strides on the GPU and store them in the packages: hashes every clip on all threads, then measures
-    /// only what the mode asks for (a clip sharing the frames of one kept or measured takes its measurement), drops
-    /// the strides of clips gone, and rewrites a package only when its strides changed. Prints each clip measured as a
-    /// text table line with the facings' spread and the verdict, then a summary and the timings.
+    /// Measure the strides (in side tiles a cycle) and store them in the packages: hashes every clip on all threads,
+    /// then measures only what the mode asks for (a clip sharing the frames of one kept or measured takes its
+    /// measurement), drops the strides of clips gone, and rewrites a package only when its strides changed. Prints
+    /// each clip measured as a text table line with the facings' spread and the verdict, then a summary and the
+    /// timings.
     Measure {
         mode: MeasureMode,
         #[arg(required = true)]
@@ -48,6 +69,8 @@ pub enum StridesCommand {
         /// Write each package's strides into this folder as a text table, `mobile_strides_<cc|ec>.tsv`.
         #[arg(long)]
         report: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = MeasureMethod::PlantedFoot)]
+        method: MeasureMethod,
     },
     /// Write a package's strides as a text table: source, body, action, the stride of each side facing (south,
     /// south-west, west), the stride and the hash of the frames measured; `-` for none.
@@ -83,8 +106,8 @@ pub enum StridesCommand {
 
 pub fn run(command: StridesCommand) -> eyre::Result<()> {
     match command {
-        StridesCommand::Measure { mode, files, bodies, output, report } => {
-            measure(mode, &files, bodies, output.as_deref(), report.as_deref())
+        StridesCommand::Measure { mode, files, bodies, output, report, method } => {
+            measure(mode, method, &files, bodies, output.as_deref(), report.as_deref())
         }
         StridesCommand::Export { file, output } => export(&file, output.as_deref()),
         StridesCommand::Import { file, table, trust_unhashed, output } => {
@@ -94,11 +117,11 @@ pub fn run(command: StridesCommand) -> eyre::Result<()> {
     }
 }
 
-fn measure(mode: MeasureMode, files: &[PathBuf], bodies: Vec<u32>, output: Option<&Path>, report: Option<&Path>)
-    -> eyre::Result<()> {
+fn measure(mode: MeasureMode, method: MeasureMethod, files: &[PathBuf], bodies: Vec<u32>, output: Option<&Path>,
+    report: Option<&Path>) -> eyre::Result<()> {
     let started = Instant::now();
     let options = MeasureOptions { everything: mode == MeasureMode::Full,
-        bodies: (!bodies.is_empty()).then(|| bodies.into_iter().collect::<BTreeSet<u32>>()) };
+        bodies: (!bodies.is_empty()).then(|| bodies.into_iter().collect::<BTreeSet<u32>>()), method: method.into() };
     let never = AtomicBool::new(false);
     let mut measurer = None;
     for file in files {

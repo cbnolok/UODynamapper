@@ -1,19 +1,27 @@
-//! Measures how far a walking body's planted feet travel in one cycle of its animation (its stride), with the RIFE
-//! flow on the GPU. The frames come as plain RGBA with their anchors; the udd tools feed it the walk and run clips of
-//! the animation packages (`udd_conv::animation::mobile_strides`), which store the strides for Dynamapper to pace the
-//! cycles by.
+//! Measures how far a walking body's planted feet travel in one cycle of its animation (its stride). The frames come
+//! as plain RGBA with their anchors; the udd tools feed it the walk and run clips of the animation packages
+//! (`udd_conv::animation::mobile_strides`), which store the strides for Dynamapper to pace the cycles by. Two methods:
+//! [`planted_foot`] follows the planted foot's ground contact from frame to frame on the CPU (the default), and
+//! [`StrideMeasurer`] reads the RIFE flow on the GPU.
 //!
-//! For each pair of frames of a clip (the last with the first too), RIFE's flow at t = 0.5 gives each pixel of the
-//! in-between its motion from the first frame to the second (the flow to the second minus the flow to the first).
-//! The frames sit on their anchor, so the body stays put and its planted feet move backward at its speed: of the
-//! opaque pixels (alpha over one half) in the lowest fifth of the silhouette, the most backward motion along the
-//! facing's direction of travel (its 10th percentile) is the body's travel for the pair. Summed over the cycle and
-//! divided by the screen pixels of a tile in that direction, it is the stride in tiles per cycle. Only the side facings
-//! (south, south-west, west) measure well, toward and away from the camera the feet barely move on screen. The median
-//! of the facings that measured is the stride, even when they disagree (the run-time clamp to half and twice the
-//! clip's own cycle bounds a poor measurement); a clip with fewer than [`MIN_FACINGS`] of them, or whose stride is not
-//! positive or shorter than [`MIN_STRIDE_TILES`], gets none (its clip keeps its own timing). The method was chosen on
-//! a PyTorch prototype of the same steps.
+//! A stride is in side tiles: the screen travel of the planted foot over a cycle, divided by the 44 px of a step on a
+//! side facing (south-west, north-east), whichever facing it was measured on. The art moves the feet the same screen
+//! distance a cycle in every facing, while a step along a screen diagonal (north, east, south, west) covers 31.1 px:
+//! such a step covers a cycle's stride in the square root of two times as many steps, which Dynamapper applies.
+//!
+//! The flow: for each pair of frames of a clip (the last with the first too), RIFE's flow at t = 0.5 gives each pixel
+//! of the in-between its motion from the first frame to the second (the flow to the second minus the flow to the
+//! first). The frames sit on their anchor, so the body stays put and its planted feet move backward at its speed: of
+//! the opaque pixels (alpha over one half) in the lowest fifth of the silhouette, the most backward motion along the
+//! facing's direction of travel (its 10th percentile) is the body's travel for the pair. Summed over the cycle, it is
+//! the stride. The flow follows small feet poorly and measures the human walks a fifth to a third short.
+//!
+//! Only the side facings (south, south-west, west) measure well, toward and away from the camera the feet barely move
+//! on screen. The median of the facings that measured is the stride, even when they disagree (Dynamapper bounds the
+//! pace a stride gives); a clip with fewer than [`MIN_FACINGS`] of them, or whose stride is not positive or shorter
+//! than [`MIN_STRIDE_TILES`], gets none (its clip keeps its own timing).
+
+pub mod planted_foot;
 
 use std::time::Duration;
 use color_eyre::eyre::{self, WrapErr};
@@ -24,10 +32,12 @@ use crate::rife::{RifeModel, RifeWorkspace, RIFE_FLOW_CHANNELS, RIFE_IMAGE_CHANN
 pub const MIN_FACINGS: usize = 2;
 /// The shortest stride taken. Bodies without planted feet (floating, slithering) measure from a few thousandths to a
 /// tenth or two of a tile, as do small creatures whose feet are a few pixels; paced by that, they would play their
-/// clips at the fastest the clamp allows, twice their own speed. Most walking bodies measure half a tile to three.
+/// clips at the fastest the clamp allows. Most walking bodies measure half a tile to three.
 pub const MIN_STRIDE_TILES: f32 = 0.25;
 /// Half a tile's screen width and height: a step along UO x moves (22, 22) pixels, along UO y (-22, 22).
 const HALF_TILE_PX: f32 = 22.0;
+/// The screen length of a step on a side facing (along the screen's horizontal): the unit of a stride.
+const SIDE_TILE_PX: f32 = 2.0 * HALF_TILE_PX;
 /// Facings, 0 north and clockwise, as the clients number them.
 pub const FACING_COUNT: u8 = 8;
 /// The step in UO x and y of each facing.
@@ -245,18 +255,19 @@ impl StrideMeasurer {
         Ok(Some(travel))
     }
 
-    /// Measures the clips of a movement in several facings (the side ones; `None` where a facing has no frames).
+    /// Measures the clips of a movement in several facings (the side ones; `None` where a facing has no frames), in
+    /// side tiles.
     pub fn measure<const FACINGS: usize>(&mut self, clips: &[Option<StrideClip>; FACINGS])
         -> eyre::Result<Measurement<FACINGS>> {
         let mut facings = [None; FACINGS];
         for (facing, clip) in facings.iter_mut().zip(clips) {
             let Some(clip) = clip.as_ref() else { continue };
             eyre::ensure!(clip.facing < FACING_COUNT, "facing {} of {FACING_COUNT}", clip.facing);
-            let (mut ux, uy, px_per_tile) = travel_direction(clip.facing);
+            let (mut ux, uy, _) = travel_direction(clip.facing);
             if clip.mirrored {
                 ux = -ux;
             }
-            *facing = self.travel_px(clip, ux, uy)?.map(|travel| travel / px_per_tile);
+            *facing = self.travel_px(clip, ux, uy)?.map(|travel| travel / SIDE_TILE_PX);
         }
         Ok(Measurement::of_facings(facings))
     }
@@ -273,7 +284,7 @@ pub struct Measurement<const FACINGS: usize> {
 }
 
 impl<const FACINGS: usize> Measurement<FACINGS> {
-    fn of_facings(facings: [Option<f32>; FACINGS]) -> Self {
+    pub(crate) fn of_facings(facings: [Option<f32>; FACINGS]) -> Self {
         let mut strides: Vec<f32> = facings.iter().flatten().copied().collect();
         if strides.len() < MIN_FACINGS {
             return Self { facings, spread: None, stride: Err("too few facings") };

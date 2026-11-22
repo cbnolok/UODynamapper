@@ -1,7 +1,7 @@
 //! The measured strides of a mobile animation package (`udd_assets::animation::mobile_strides`): the stride of the
 //! selected clip in the detail area, and a window with every clip's stride and state (unchanged, changed, new,
-//! removed), measuring the changed clips or all of them again on the GPU (`udd_conv::animation::mobile_strides`) on
-//! a thread of its own, into the package or another file.
+//! removed), measuring the changed clips or all of them again by the planted foot
+//! (`udd_conv::animation::mobile_strides`) on a thread of its own, into the package or another file.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -105,7 +105,7 @@ impl StridesPanel {
     fn start_measurement(&mut self, ctx: &egui::Context, everything: bool) {
         let path = self.path.clone();
         let output = self.output.clone().unwrap_or_else(|| self.path.clone());
-        let options = MeasureOptions { everything, bodies: None };
+        let options = MeasureOptions { everything, bodies: None, ..Default::default() };
         let repaint = ctx.clone();
         self.message = None;
         self.measurement = Some(StrideJob::spawn(move |cancel, progress| {

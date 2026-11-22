@@ -697,10 +697,10 @@ const GUMP_GUMPART_CELL_WIDTH: f32 = 250.0;
 const GUMP_MAX_ID_CELL_WIDTH: f32 = 96.0;
 const GUMP_SHARING_CELL_WIDTH: f32 = 250.0;
 const STRIDE_MEASUREMENT_CELL_WIDTH: f32 = 280.0;
-const STRIDE_MEASUREMENT_TOOLTIP: &str = "After packing, measure the walk and run strides on the GPU (udd-cli tool \
-strides measure) so Dynamapper paces those cycles to the ground. The repack keeps the strides of the clips whose \
-frames did not change; Changed clips measures the new and changed ones, All clips every clip again (a whole package \
-takes tens of minutes). Stop cancels the measurement and leaves the package as packed.";
+const STRIDE_MEASUREMENT_TOOLTIP: &str = "After packing, measure the walk and run strides by following the planted \
+foot on all CPU threads (udd-cli tool strides measure) so Dynamapper paces those cycles to the ground. The repack \
+keeps the strides of the clips whose frames did not change; Changed clips measures the new and changed ones, All \
+clips every clip again. Stop cancels the measurement and leaves the package as packed.";
 
 /// The stride measurement step of a mobile animation card.
 fn draw_stride_measurement(ui: &mut egui::Ui, measurement: &mut StrideMeasurement) {

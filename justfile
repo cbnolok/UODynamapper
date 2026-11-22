@@ -267,9 +267,9 @@ run-dynamapper-profile *args:
 run-bin-release binary *args:
     {{cargo_release_stable}} run --release --locked --no-default-features {{features_args}} --bin {{ if is_windows == "true" { '"' + binary + '"' } else { '"$1"' } }} -- {{ if is_windows == "true" { args } else { '"${@:2}"' } }}
 
-# Measure the mobiles' walk and run strides with RIFE on the GPU into the animation packages (`udd-cli tool strides
-# measure`): `just measure-mobile-strides changed FILE...` measures only the clips whose frames changed, `full` all of
-# them; `--body N` (repeatable), `--output DIR`, `--report DIR`.
+# Measure the mobiles' walk and run strides by following the planted foot into the animation packages (`udd-cli tool
+# strides measure`): `just measure-mobile-strides changed FILE...` measures only the clips whose frames changed, `full`
+# all of them; `--body N` (repeatable), `--output DIR`, `--report DIR`, `--method flow` (RIFE on the GPU).
 [positional-arguments]
 measure-mobile-strides *args:
     just run-bin-release udd-cli tool strides measure {{ if is_windows == "true" { args } else { '"$@"' } }}

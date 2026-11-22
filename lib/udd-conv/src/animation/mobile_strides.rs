@@ -1,13 +1,14 @@
 //! The mobiles' measured strides in the animation packages (`udd_assets::animation::mobile_strides`): what a repack
 //! keeps of the strides measured on the package it replaces (those whose clip's frames still hash the same; the
-//! others, and the new clips, get none until measured again), and the measurement itself, with the GPU measurer of
-//! `uot_gpu_compute::strides`.
+//! others, and the new clips, get none until measured again), and the measurement itself, with the measurers of
+//! `uot_gpu_compute::strides`: the planted foot's on the CPU (the default), or the flow's on the GPU.
 //!
-//! [`measure_strides`] hashes every clip of a package on all threads, and measures, on a GPU device of its own started
-//! only when something needs measuring, the clips whose frames are new or changed since their stride was measured
-//! (or every clip again), keeping the others and dropping the strides of clips gone. A clip sharing the frames of
-//! another takes its measurement. [`measure_package_strides`] does that to a package file and writes it only when its
-//! strides changed. `udd-cli tool strides measure`, the inspector and the converter GUI run it.
+//! [`measure_strides`] hashes every clip of a package on all threads, and measures the clips whose frames are new or
+//! changed since their stride was measured (or every clip again), keeping the others and dropping the strides of
+//! clips gone: the planted foot on all threads, the flow on a GPU device of its own started only when something needs
+//! measuring. A clip sharing the frames of another takes its measurement. [`measure_package_strides`] does that to a
+//! package file and writes it only when its strides changed. `udd-cli tool strides measure`, the inspector and the
+//! converter GUI run it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -18,11 +19,13 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, WrapErr};
 use log::{info, warn};
+use rayon::prelude::*;
 use udd_assets::animation::mobile_strides::{
     format_stride_table, load_mobile_anim_clips, plan_strides, read_package_strides, sort_stride_records,
     stride_clip_hashes, strides_still_matching, write_package_strides, MobileAnimClips, MobileClip,
     MobileStrideRecord, StridePlan, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
+use uot_gpu_compute::strides::planted_foot::measure_planted_foot;
 use uot_gpu_compute::strides::{Measurement, StrideClip, StrideFrame, StrideMeasurer};
 
 /// The strides of the package at `path` (none without one, or when it does not read, which is logged): read before a
@@ -81,13 +84,25 @@ const REPORT_PREFIX: &str = "mobile_strides_";
 const REPORT_EXTENSION: &str = "tsv";
 const MILLIS_PER_SEC: f32 = 1000.0;
 
-/// Which clips a measurement takes.
+/// How a clip's stride is measured (`uot_gpu_compute::strides`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StrideMethod {
+    /// Follows the planted foot's ground contact from frame to frame, on the CPU's threads.
+    #[default]
+    PlantedFoot,
+    /// Reads the RIFE flow of the feet, on the GPU: measures the human walks a fifth to a third short.
+    Flow,
+}
+
+/// Which clips a measurement takes, and how.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MeasureOptions {
-    /// Measure every clip again, not only the changed and new ones.
+    /// Measure every clip again, not only the changed and new ones. Strides measured by the other method are kept
+    /// unless their clips are measured again.
     pub everything: bool,
     /// Only the clips of these server bodies; the strides of the others stay as they are. `None`: every body.
     pub bodies: Option<BTreeSet<u32>>,
+    pub method: StrideMethod,
 }
 
 /// The stride measurement of a clip's side facings, [`STRIDE_FACINGS`].
@@ -100,10 +115,10 @@ pub enum StrideProgress<'a> {
     Hashed { done: usize, total: usize },
     /// The GPU device is up (the first clip that needs measuring started it).
     GpuStarted { adapter: &'a str },
-    /// Clip `index` of `total` to measure begins: measured on the GPU, or taking the measurement of a clip with the
-    /// same frames.
+    /// Clip `index` of `total` to measure begins (the planted foot's on several threads, `index` counting them
+    /// as they begin): measured, or taking the measurement of a clip with the same frames.
     Measuring { index: usize, total: usize, body: u32, action: u16 },
-    /// A clip of a `source` package measured on the GPU.
+    /// A clip of a `source` package measured.
     Measured { source: StrideSource, record: &'a MobileStrideRecord, measurement: &'a SideMeasurement },
 }
 
@@ -122,7 +137,7 @@ pub struct MeasuredStrides {
     pub changed: usize,
     pub new: usize,
     pub removed: usize,
-    /// Clips measured on the GPU, and those that took the measurement of a clip with the same frames.
+    /// Clips measured, and those that took the measurement of a clip with the same frames.
     pub measured: usize,
     pub shared: usize,
     pub threads: usize,
@@ -193,8 +208,8 @@ pub fn stride_status<P: MobileAnimClips + Sync + ?Sized>(package: &P, bodies: Op
     Ok(plan_strides(&current, &existing, false))
 }
 
-/// Measures the strides of `package` as `options` say, starting `measurer` the first time a clip needs the GPU.
-/// `None` when `cancel` was set: nothing is kept of a cancelled measurement.
+/// Measures the strides of `package` as `options` say, starting `measurer` the first time a clip needs the GPU (the
+/// flow). `None` when `cancel` was set: nothing is kept of a cancelled measurement.
 pub fn measure_strides<P: MobileAnimClips + Sync + ?Sized>(package: &P, options: &MeasureOptions,
     measurer: &mut Option<StrideMeasurer>, cancel: &AtomicBool, progress: &(dyn Fn(StrideProgress) + Sync))
     -> eyre::Result<Option<MeasuredStrides>> {
@@ -219,6 +234,27 @@ pub fn measure_strides<P: MobileAnimClips + Sync + ?Sized>(package: &P, options:
             .map(|record| (record.clip_hash, (record.facing_tiles, record.stride_tiles))).collect()
     };
     let measuring = Instant::now();
+    // The planted foot measures the clips of frames not known yet on all threads first, one clip of each.
+    let mut planted: HashMap<u64, SideMeasurement> = HashMap::new();
+    if options.method == StrideMethod::PlantedFoot {
+        let mut seen = BTreeSet::new();
+        let unknown: Vec<(u32, u16, u64)> = plan.to_measure.iter().copied()
+            .filter(|&(_, _, clip_hash)| !known.contains_key(&clip_hash) && seen.insert(clip_hash)).collect();
+        let begun = std::sync::atomic::AtomicUsize::new(0);
+        let measurements = unknown.par_iter().map(|&(body, action, clip_hash)| {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            let index = begun.fetch_add(1, Ordering::Relaxed);
+            progress(StrideProgress::Measuring { index, total: unknown.len(), body, action });
+            let clips = package.side_clips(body, action).wrap_err_with(|| format!("body {body} action {action}"))?;
+            Ok(Some((clip_hash, measure_side_clips_planted(&clips))))
+        }).collect::<eyre::Result<Vec<_>>>()?;
+        for measurement in measurements {
+            let Some((clip_hash, measurement)) = measurement else { return Ok(None) };
+            planted.insert(clip_hash, measurement);
+        }
+    }
     let (mut measured, mut shared) = (0, 0);
     let mut records = plan.unchanged.clone();
     records.extend(&others);
@@ -226,23 +262,30 @@ pub fn measure_strides<P: MobileAnimClips + Sync + ?Sized>(package: &P, options:
         if cancel.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        progress(StrideProgress::Measuring { index, total: plan.to_measure.len(), body, action });
+        if options.method == StrideMethod::Flow {
+            progress(StrideProgress::Measuring { index, total: plan.to_measure.len(), body, action });
+        }
         let (facing_tiles, stride_tiles) = match known.get(&clip_hash) {
             Some(&known) => {
                 shared += 1;
                 known
             }
             None => {
-                let measurer = match measurer {
-                    Some(measurer) => measurer,
-                    None => {
-                        let started = measurer.insert(StrideMeasurer::new()?);
-                        progress(StrideProgress::GpuStarted { adapter: started.adapter() });
-                        started
+                let measurement = match options.method {
+                    StrideMethod::PlantedFoot => *planted.get(&clip_hash).expect("measured above"),
+                    StrideMethod::Flow => {
+                        let measurer = match measurer {
+                            Some(measurer) => measurer,
+                            None => {
+                                let started = measurer.insert(StrideMeasurer::new()?);
+                                progress(StrideProgress::GpuStarted { adapter: started.adapter() });
+                                started
+                            }
+                        };
+                        measure_side_clips(measurer, &package.side_clips(body, action)?)
+                            .wrap_err_with(|| format!("measure body {body} action {action}"))?
                     }
                 };
-                let measurement = measure_side_clips(measurer, &package.side_clips(body, action)?)
-                    .wrap_err_with(|| format!("measure body {body} action {action}"))?;
                 measured += 1;
                 let record = MobileStrideRecord { body_id: body, action_id: action, clip_hash,
                     stride_tiles: measurement.stride.ok(), facing_tiles: measurement.facings };
@@ -263,17 +306,25 @@ pub fn measure_strides<P: MobileAnimClips + Sync + ?Sized>(package: &P, options:
     }))
 }
 
-/// Measures a clip's side facings, as [`MobileAnimClips::side_clips`] gives them.
+/// Measures a clip's side facings, as [`MobileAnimClips::side_clips`] gives them, by the flow.
 pub fn measure_side_clips(measurer: &mut StrideMeasurer, clips: &[Option<MobileClip>; STRIDE_FACING_COUNT])
     -> eyre::Result<SideMeasurement> {
-    let clips: [Option<StrideClip>; STRIDE_FACING_COUNT] = std::array::from_fn(|index| {
+    measurer.measure(&stride_clips(clips))
+}
+
+/// Measures a clip's side facings, as [`MobileAnimClips::side_clips`] gives them, by the planted foot.
+pub fn measure_side_clips_planted(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> SideMeasurement {
+    measure_planted_foot(&stride_clips(clips))
+}
+
+fn stride_clips(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> [Option<StrideClip<'_>>; STRIDE_FACING_COUNT] {
+    std::array::from_fn(|index| {
         clips[index].as_ref().map(|clip| StrideClip {
             facing: STRIDE_FACINGS[index], mirrored: clip.mirrored,
             frames: clip.frames.iter().map(|frame| StrideFrame { width: frame.width, height: frame.height,
                 anchor_x: frame.anchor_x, anchor_y: frame.anchor_y, rgba: &frame.rgba }).collect(),
         })
-    });
-    measurer.measure(&clips)
+    })
 }
 
 /// The report file of a package's strides in `folder`.

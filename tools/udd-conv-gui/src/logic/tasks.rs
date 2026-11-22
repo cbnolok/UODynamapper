@@ -367,8 +367,8 @@ fn measure_strides_after_packing(output: &Path, measurement: StrideMeasurement, 
             progress.set_step(now.fraction, format!("{STRIDES_STEP_LABEL}: {}", now.activity));
         }
     };
-    let done = measure_package_strides(output, output, &MeasureOptions { everything, bodies: None }, None, &mut None,
-        &progress.cancel, &report)?;
+    let options = MeasureOptions { everything, ..Default::default() };
+    let done = measure_package_strides(output, output, &options, None, &mut None, &progress.cancel, &report)?;
     Ok(match done {
         Some(done) => {
             log::info!("{}", done.strides.summary());
