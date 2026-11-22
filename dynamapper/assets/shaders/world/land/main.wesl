@@ -324,9 +324,10 @@ fn blend_ec_terrain_transitions(
   var accum = base_color * EC_TERRAIN_TRANSITION_BASE_WEIGHT;
   var total_weight = EC_TERRAIN_TRANSITION_BASE_WEIGHT;
 
-  // One call site in a loop, not eight: the driver's compiler inlines a function at every call site, and the eight
-  // inlined neighbour material samples made the land pipeline about 26,000 instructions (and 7 s of a cold RADV
-  // compile) larger (docs/agent_notes/shader_compile_progress.md).
+  // One call site in a loop, not eight: NIR/ACO inline a function at every call site, and the eight inlined
+  // neighbour material samples made the land pixel shader about 26,000 instructions (and 7 s of a cold RADV compile)
+  // larger. Keep the loop; don't unroll it or sample a neighbour from a second call site
+  // (docs/agent_notes/shader_compile_progress.md, "The land pipeline: shade_land inlined ten times").
   for (var index = 0u; index < EC_TERRAIN_TRANSITION_NEIGHBOR_COUNT; index++) {
     let offset = EC_TERRAIN_TRANSITION_NEIGHBOR_OFFSETS[index];
     var weight: f32;
@@ -868,9 +869,11 @@ fn ec_composition_grime_mask(cache: EcTerrainCache, material: vec4<u32>, cached:
 // not `cached`) covers the fragment. Without it the lead is the fragment's own tile and the second its liquid's dry
 // bank, while neighbour smoothing is off.
 // shade_land has this one call site, in a loop over the passes, and compose_land its two calls (cached and
-// uncached): the driver's compiler inlines a function at every call site, and with ten copies of shade_land the land
-// pipeline took RADV about 32 s to compile cold. One call with `cached` a runtime value would halve the compile again
-// but made frames 1 to 21 % slower (docs/agent_notes/shader_compile_progress.md).
+// uncached), so the shader holds two copies of it: NIR/ACO inline a function at every call site, and with ten copies
+// of shade_land the land pixel shader was 286,000 instructions with 7,500 SGPRs spilled and took RADV about 32 s to
+// compile cold (about 9 s with two). One call with `cached` a runtime value would halve the compile again but made
+// frames 1 to 21 % slower, so it was rejected. Don't add call sites of shade_land or compose_land
+// (docs/agent_notes/shader_compile_progress.md, "The land pipeline: shade_land inlined ten times").
 fn compose_land(in: LandVertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32,
     cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool, composed: bool, ec_transitions: bool) -> vec3<f32> {
   var stack = fallback;
@@ -942,6 +945,8 @@ fn compose_land(in: LandVertexOutput, tile: TileUniform, world_gradients: LandGr
   // The passes: the lead, the second, then the layers first + 1 to count - 1.
   let pass_count = LAND_FIXED_PASS_COUNT + select(0u, count - first - 1u, count > first + 1u);
   var hdr_rgb: vec3<f32>;
+  // Every pass, the lead included, goes through the one shade_land call below: taking a pass out of the loop (the
+  // lead alone made it four copies, 139,000 instructions, about 14 s cold) adds a whole inlined copy (see above).
   for (var pass_index = LAND_LEAD_PASS; pass_index < pass_count; pass_index++) {
     var pass_tile = lead_tile;
     var ordered_coverage = lead_ordered_coverage;
