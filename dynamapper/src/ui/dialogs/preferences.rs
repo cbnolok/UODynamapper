@@ -4,7 +4,7 @@ use crate::{
     settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::{frame_limiter_for_options, FrameLimiterSettings},
     app::present_mode_for_vsync,
-    render::{mobiles::in_between::MobileInBetweenFrames, view::camera::UiCameraResource},
+    render::{mobiles::{in_between::MobileInBetweenFrames, upscales::MobileUpscale}, view::camera::UiCameraResource},
     world::mobile_motion::MobileStop,
     render::mobiles::pace::MobileWalkPace,
     prelude::*,
@@ -81,6 +81,7 @@ pub struct PreferencesDialogState {
     pub caves: CaveView,
     pub cave_surroundings: CaveSurroundings,
     pub mobile_in_between_frames: MobileInBetweenFrames,
+    pub mobile_upscale: MobileUpscale,
     pub mobile_stop: MobileStop,
     pub mobile_walk_pace: MobileWalkPace,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
@@ -128,6 +129,7 @@ impl Default for PreferencesDialogState {
             caves: CaveView::HiddenUntilEntered,
             cave_surroundings: CaveSurroundings::Dimmed,
             mobile_in_between_frames: MobileInBetweenFrames::Crossfade,
+            mobile_upscale: MobileUpscale::Off,
             mobile_stop: MobileStop::HalfStepLater,
             mobile_walk_pace: MobileWalkPace::MatchTheGround,
             apply_timer: {
@@ -206,6 +208,7 @@ fn sys_sync_settings_to_state(
         state.caves = settings.world_rendering.caves;
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
         state.mobile_in_between_frames = settings.world_rendering.mobile_in_between_frames;
+        state.mobile_upscale = settings.world_rendering.mobile_upscale;
         state.mobile_stop = settings.world_rendering.mobile_stop;
         state.mobile_walk_pace = settings.world_rendering.mobile_walk_pace;
 
@@ -330,6 +333,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.mobile_in_between_frames != state.mobile_in_between_frames {
             settings.world_rendering.mobile_in_between_frames = state.mobile_in_between_frames;
+        }
+        if settings.as_ref().world_rendering.mobile_upscale != state.mobile_upscale {
+            settings.world_rendering.mobile_upscale = state.mobile_upscale;
         }
         if settings.as_ref().world_rendering.mobile_stop != state.mobile_stop {
             settings.world_rendering.mobile_stop = state.mobile_stop;
@@ -659,6 +665,31 @@ pub fn sys_render_preferences_dialog(
                                              of what moves. RIFE x2 and x4: one or three frames made by the RIFE network \
                                              between each two, on the GPU when an animation first shows, crossfaded as \
                                              well; until they are made, the animation crossfades.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Mobile Upscale:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_mobile_upscale")
+                                        .selected_text(state.mobile_upscale.label())
+                                        .show_ui(ui, |ui| {
+                                            for mode in MobileUpscale::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.mobile_upscale, mode, mode.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "Whether the mobiles' frames are upscaled while zoomed in. Off: the frames as \
+                                             stored. SPAN 2x: once the view magnifies the art 1.5 times or more, each \
+                                             animation shown, with its RIFE in-betweens, is upscaled 2x by the SPAN network \
+                                             on the GPU, and shows at 2x from the start of a cycle once all its frames are \
+                                             made. Switching remakes the frame atlases.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

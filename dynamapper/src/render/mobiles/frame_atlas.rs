@@ -6,6 +6,10 @@
 //! the others too. When no page has room, the page used longest ago empties for it, and the clips on it load again
 //! when drawn; a page unused for `IDLE_PAGE_RELEASE_SECS` empties too. Placed frames upload to the render world
 //! rectangle by rectangle.
+//!
+//! While the SPAN upscales are on (upscales.rs), each atlas has `MOBILE_ATLAS_UPSCALED_PAGES` more pages after its
+//! own, a pool of their own (`AtlasPool::Upscaled`): an upscaled sequence empties only pages of upscaled ones, never
+//! the clips' or the in-betweens'. Turning them on or off remakes the atlases' textures, empty.
 
 use std::hash::Hash;
 use std::sync::Arc;
@@ -27,6 +31,9 @@ pub const MOBILE_ATLAS_PAGES: u32 = 8;
 /// The transparent texels kept between frames of an RGBA8 atlas, so a filtered tap at a frame's edge reads none of its
 /// neighbour. A BC7 atlas keeps a block (`AtlasFormat::gutter`).
 pub const FRAME_GUTTER: u32 = 1;
+/// The pages of an atlas the upscaled sequences take while the upscales are on, besides `MOBILE_ATLAS_PAGES`: 64 MiB
+/// more for 16 RGBA8 pages (16 MiB for BC7 ones), as many sequences at 2x as the clips' pages hold at 1x.
+pub const MOBILE_ATLAS_UPSCALED_PAGES: u32 = 16;
 /// A page no drawn clip used for this long empties.
 pub const IDLE_PAGE_RELEASE_SECS: f64 = 300.0;
 const RGBA8_TEXEL_BYTES: u32 = 4;
@@ -129,6 +136,26 @@ impl AtlasRect {
     }
 }
 
+/// The pages of an atlas an entry takes room in, each emptied only for entries of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtlasPool {
+    /// The clips and their in-betweens: the first `MOBILE_ATLAS_PAGES`.
+    Base,
+    /// The upscaled sequences: the pages after, while the upscales are on.
+    Upscaled,
+}
+
+impl AtlasPool {
+    /// The layers of the pool among `pages` layers.
+    fn layers(self, pages: usize) -> std::ops::Range<usize> {
+        let base = (MOBILE_ATLAS_PAGES as usize).min(pages);
+        match self {
+            Self::Base => 0..base,
+            Self::Upscaled => base..pages,
+        }
+    }
+}
+
 /// A row of a page, filled left to right.
 #[derive(Clone, Copy, Debug)]
 struct Shelf {
@@ -210,7 +237,8 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
         let mut atlases: Vec<FormatAtlas<K>> = Vec::new();
         for format in formats {
             if atlases.iter().all(|atlas| atlas.format != format) {
-                atlases.push(FormatAtlas { format, image: images.add(atlas_image(format)), pages: empty_pages() });
+                atlases.push(FormatAtlas { format, image: images.add(atlas_image(format, MOBILE_ATLAS_PAGES)),
+                    pages: empty_pages(MOBILE_ATLAS_PAGES) });
             }
         }
         Self { atlases, staged: Vec::new(), extract_staging: Vec::new() }
@@ -228,6 +256,31 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
 
     fn pages_of(&mut self, format: AtlasFormat) -> Option<&mut Vec<Page<K>>> {
         self.atlases.iter_mut().find(|atlas| atlas.format == format).map(|atlas| &mut atlas.pages)
+    }
+
+    /// The pages of the upscaled pool of each atlas.
+    pub fn upscaled_pages(&self) -> u32 {
+        self.atlases.first().map_or(0, |atlas| atlas.pages.len() as u32 - MOBILE_ATLAS_PAGES)
+    }
+
+    /// Gives each atlas `upscaled` pages for upscaled sequences after its own. An atlas that changes is remade, its
+    /// texture too, empty: the entries it held come back, to be dropped by their owners, and the uploads staged go.
+    pub fn set_upscaled_pages(&mut self, images: &mut Assets<Image>, upscaled: u32) -> Vec<K> {
+        let pages = MOBILE_ATLAS_PAGES + upscaled;
+        let mut evicted = Vec::new();
+        for atlas in self.atlases.iter_mut().filter(|atlas| atlas.pages.len() != pages as usize) {
+            for page in std::mem::replace(&mut atlas.pages, empty_pages(pages)) {
+                for entry in page.clips {
+                    if !evicted.contains(&entry) {
+                        evicted.push(entry);
+                    }
+                }
+            }
+            let _ = images.insert(&atlas.image, atlas_image(atlas.format, pages));
+            self.staged.clear();
+            self.extract_staging.clear();
+        }
+        evicted
     }
 
     /// Places the frames of `clip` in the atlas of `format`, `(width, height, pixels)` each (`FrameUpload::pixels`),
@@ -249,10 +302,20 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     /// a frame does not fit an empty page, the frames do not fit the atlas, or there is no atlas of `format`.
     pub fn reserve(&mut self, entry: K, format: AtlasFormat, sizes: &[(u32, u32)], now: f64)
         -> Option<(Vec<AtlasRect>, Vec<K>)> {
+        self.reserve_in(entry, format, AtlasPool::Base, sizes, now)
+    }
+
+    /// `reserve` on the pages of `pool`: those of another pool neither take the frames nor empty for them.
+    pub fn reserve_in(&mut self, entry: K, format: AtlasFormat, pool: AtlasPool, sizes: &[(u32, u32)], now: f64)
+        -> Option<(Vec<AtlasRect>, Vec<K>)> {
         let atlas_pages = self.pages_of(format)?;
         // On a copy of the pages, so that frames the atlas does not hold leave it as it was.
         let mut pages = atlas_pages.clone();
-        let (rects, evicted) = reserve_on(&mut pages, format, sizes, f64::INFINITY)?;
+        let layers = pool.layers(pages.len());
+        let (mut rects, evicted) = reserve_on(&mut pages[layers.clone()], format, sizes, f64::INFINITY)?;
+        for rect in &mut rects {
+            rect.layer += layers.start as u32;
+        }
         for rect in &rects {
             let page = &mut pages[rect.layer as usize];
             if !page.clips.contains(&entry) {
@@ -267,9 +330,16 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     /// Whether `reserve` would find room for frames of `sizes` in the atlas of `format` without emptying a page used
     /// since `since`. Frames the atlas does not hold count as room: `reserve` turns them down.
     pub fn has_room_sparing(&self, format: AtlasFormat, sizes: &[(u32, u32)], since: f64) -> bool {
+        self.has_room_sparing_in(format, AtlasPool::Base, sizes, since)
+    }
+
+    /// `has_room_sparing` on the pages of `pool`.
+    pub fn has_room_sparing_in(&self, format: AtlasFormat, pool: AtlasPool, sizes: &[(u32, u32)], since: f64)
+        -> bool {
         let Some(atlas) = self.atlases.iter().find(|atlas| atlas.format == format) else { return true };
-        reserve_on(&mut atlas.pages.clone(), format, sizes, since).is_some()
-            || reserve_on(&mut atlas.pages.clone(), format, sizes, f64::INFINITY).is_none()
+        let layers = pool.layers(atlas.pages.len());
+        reserve_on(&mut atlas.pages[layers.clone()].to_vec(), format, sizes, since).is_some()
+            || reserve_on(&mut atlas.pages[layers].to_vec(), format, sizes, f64::INFINITY).is_none()
     }
 
     /// Marks the page of a frame of a clip drawn at `now`.
@@ -299,8 +369,8 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     }
 }
 
-fn empty_pages<K>() -> Vec<Page<K>> {
-    (0..MOBILE_ATLAS_PAGES).map(|_| Page::empty()).collect()
+fn empty_pages<K>(pages: u32) -> Vec<Page<K>> {
+    (0..pages).map(|_| Page::empty()).collect()
 }
 
 /// Places frames of `sizes` of `format` on `pages`, emptying the page used longest ago until they have room, but none
@@ -389,12 +459,12 @@ fn fits<K>(page: &mut Page<K>, format: AtlasFormat, sizes: &[(u32, u32)]) -> boo
     sizes.iter().all(|&(width, height)| page.place(format, width, height).is_some())
 }
 
-fn atlas_image(format: AtlasFormat) -> Image {
+fn atlas_image(format: AtlasFormat, pages: u32) -> Image {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureViewDescriptor, TextureViewDimension};
     // No CPU data: the GPU zero-fills the pages, transparent (a zero BC7 block decodes to transparent black), and the
     // frames upload into them.
     let mut image = Image::new_uninit(
-        Extent3d { width: MOBILE_ATLAS_PAGE_SIZE, height: MOBILE_ATLAS_PAGE_SIZE, depth_or_array_layers: MOBILE_ATLAS_PAGES },
+        Extent3d { width: MOBILE_ATLAS_PAGE_SIZE, height: MOBILE_ATLAS_PAGE_SIZE, depth_or_array_layers: pages },
         TextureDimension::D2,
         format.texture_format(),
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
@@ -517,6 +587,39 @@ mod tests {
 
     fn atlas() -> Rgba8Atlas {
         Rgba8Atlas(atlas_of(&[AtlasFormat::Rgba8]))
+    }
+
+    #[test]
+    fn the_upscaled_pool_takes_its_own_pages_and_remaking_the_atlas_empties_it() {
+        let mut images = Assets::<Image>::default();
+        let mut atlas = MobileFrameAtlas::<u32>::new(&mut images, [AtlasFormat::Rgba8, AtlasFormat::Bc7]);
+        assert_eq!(atlas.upscaled_pages(), 0);
+        // Without upscaled pages, there is no room for them.
+        assert!(atlas.reserve_in(1, AtlasFormat::Rgba8, AtlasPool::Upscaled, &[(8, 8)], 0.0).is_none());
+        assert!(atlas.set_upscaled_pages(&mut images, MOBILE_ATLAS_UPSCALED_PAGES).is_empty());
+        let layers = MOBILE_ATLAS_PAGES + MOBILE_ATLAS_UPSCALED_PAGES;
+        for (_, image) in atlas.images() {
+            assert_eq!(images.get(image).unwrap().texture_descriptor.size.depth_or_array_layers, layers);
+        }
+        let (base, _) = atlas.reserve(1, AtlasFormat::Rgba8, &[(8, 8)], 0.0).unwrap();
+        let (upscaled, _) = atlas.reserve_in(2, AtlasFormat::Rgba8, AtlasPool::Upscaled, &[(16, 16)], 0.0).unwrap();
+        assert!(base[0].layer < MOBILE_ATLAS_PAGES);
+        assert!((MOBILE_ATLAS_PAGES..layers).contains(&upscaled[0].layer));
+        // Filling the upscaled pool empties its own pages only: the one of 2, used longest ago.
+        let page = MOBILE_ATLAS_PAGE_SIZE - FRAME_GUTTER;
+        let mut evicted = Vec::new();
+        for entry in 3..3 + MOBILE_ATLAS_UPSCALED_PAGES {
+            evicted.extend(atlas.reserve_in(entry, AtlasFormat::Rgba8, AtlasPool::Upscaled, &[(page, page)],
+                f64::from(entry)).unwrap().1);
+        }
+        assert_eq!(evicted, vec![2]);
+        // Remade, both atlases come back to their own pages, empty.
+        let evicted = atlas.set_upscaled_pages(&mut images, 0);
+        assert!(evicted.contains(&1) && evicted.contains(&3) && !evicted.contains(&2));
+        for (_, image) in atlas.images() {
+            assert_eq!(images.get(image).unwrap().texture_descriptor.size.depth_or_array_layers, MOBILE_ATLAS_PAGES);
+        }
+        assert!(atlas.atlases.iter().all(|atlas| atlas.pages.iter().all(Page::is_empty)));
     }
 
     #[test]

@@ -45,7 +45,7 @@ pub struct InBetweenKey {
 }
 
 impl InBetweenKey {
-    fn new(key: ClipKey, clip: &Clip, factor: u32) -> Self {
+    pub(super) fn new(key: ClipKey, clip: &Clip, factor: u32) -> Self {
         Self { source: key.source, body: key.body, action: key.action, stored: clip.stored,
             frames: clip.frames.len() as u32, factor }
     }
@@ -134,6 +134,28 @@ impl MobileInBetweens {
         }
     }
 
+    /// The sequence of `key` once made.
+    pub fn ready(&self, key: &InBetweenKey) -> Option<&Clip> {
+        match &self.entries.get(key)?.state {
+            InBetweenState::Ready(sequence) => Some(sequence),
+            _ => None,
+        }
+    }
+
+    /// Whether `clip` (of `key`) is to switch to its sequence for `mode` once made: a RIFE mode, a clip of two frames
+    /// or more, and a sequence not made yet that does not miss.
+    pub fn waits(&self, key: ClipKey, clip: &Clip, mode: MobileInBetweenFrames) -> bool {
+        let Some(factor) = mode.rife_factor().filter(|_| clip.frames.len() >= 2) else { return false };
+        self.entries.get(&InBetweenKey::new(key, clip, factor))
+            .is_none_or(|entry| !matches!(entry.state, InBetweenState::Ready(_) | InBetweenState::Missing))
+    }
+
+    /// Forgets every sequence, when the atlas is remade.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.jobs.clear();
+    }
+
     /// Forgets the sequences of `evicted`, entries of pages the atlas emptied.
     pub fn forget(&mut self, evicted: &[AtlasEntry]) {
         for entry in evicted {
@@ -184,6 +206,7 @@ impl MobileInBetweens {
                             mirrored: clip.mirrored,
                             frame_secs: clip.frame_secs / key.factor as f32,
                             stored: clip.stored,
+                            texel_scale: clip.texel_scale,
                         },
                         job: None,
                     }
@@ -305,6 +328,7 @@ mod tests {
             mirrored: false,
             frame_secs: CLASSIC_FRAME_SECS,
             stored: 1,
+            texel_scale: 1,
         }
     }
 

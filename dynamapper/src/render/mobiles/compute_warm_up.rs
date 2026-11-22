@@ -6,7 +6,7 @@
 //! encodes: from the first frame such a package is loaded, never on the frame path. RADV compiles the threads'
 //! pipelines side by side without slowing any, so none waits for another. The RIFE in-betweens take the warmed
 //! pipelines when first turned on, and wait for them while they compile, so nothing compiles twice; so does the BC7
-//! encoder of the in-betweens of a BC7 frame atlas. SPAN is not drawn with yet: its pipelines wait here.
+//! encoder of the frames the GPU makes for a BC7 frame atlas, and the SPAN upscales (upscales.rs).
 //!
 //! Each compile shows in the shader-compile overlay while it runs (`render::shader_compiles`), and is logged as it
 //! ends.
@@ -69,8 +69,7 @@ impl<T: Send + 'static> Compile<T> {
 #[derive(Resource)]
 pub struct ComputeWarmUp {
     rife: Compile<Option<RifePipelines>>,
-    /// The SPAN upscaler's, which wait here: it is not wired to the mobiles yet.
-    upscale: Compile<UpscalePipelines>,
+    upscale: Compile<Option<UpscalePipelines>>,
     block_encoder: Compile<Option<MobileBlockEncoder>>,
     /// Whether a loaded animation package is BC7, as extracted.
     block_encoder_wanted: bool,
@@ -99,6 +98,16 @@ impl ComputeWarmUp {
     pub fn take_rife(&mut self) -> Warm<RifePipelines> {
         self.rife.poll(RIFE_THREAD_NAME);
         match &mut self.rife {
+            Compile::NotStarted | Compile::Running(_) => Warm::Compiling,
+            Compile::Ready(pipelines) => pipelines.take().map_or(Warm::Unavailable, Warm::Ready),
+            Compile::Failed => Warm::Unavailable,
+        }
+    }
+
+    /// The SPAN pipelines, once.
+    pub fn take_upscale(&mut self) -> Warm<UpscalePipelines> {
+        self.upscale.poll(UPSCALE_THREAD_NAME);
+        match &mut self.upscale {
             Compile::NotStarted | Compile::Running(_) => Warm::Compiling,
             Compile::Ready(pipelines) => pipelines.take().map_or(Warm::Unavailable, Warm::Ready),
             Compile::Failed => Warm::Unavailable,
@@ -168,11 +177,9 @@ pub fn sys_start_compute_warm_up(
             let pipelines =
                 UpscalePipelines::new(&device, &mut CompileReport::new(UPSCALE_COMPILES, compile_reporter()));
             info!("The SPAN upscaler pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
-            pipelines
+            Some(pipelines)
         });
     }
-    // Joins the thread once it ended, logging a panic; nothing takes them yet.
-    warm_up.upscale.poll(UPSCALE_THREAD_NAME);
     if let Compile::NotStarted = warm_up.block_encoder
         && warm_up.block_encoder_wanted {
         let device = device.clone();

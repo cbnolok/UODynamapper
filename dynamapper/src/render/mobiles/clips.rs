@@ -33,11 +33,13 @@ pub struct ClipKey {
     pub direction: u8,
 }
 
-/// What a frame atlas entry holds: a clip's frames, or a clip's frames with their RIFE in-betweens (rife_in_betweens.rs).
+/// What a frame atlas entry holds: a clip's frames, a clip's frames with their RIFE in-betweens (rife_in_betweens.rs),
+/// or the 2x frames of either (upscales.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AtlasEntry {
     Clip(ClipKey),
     InBetweens(InBetweenKey),
+    Upscaled(InBetweenKey),
 }
 
 /// A frame as read: its placement and its pixels as its package stores them (`FrameUpload::pixels`).
@@ -80,6 +82,8 @@ pub struct Clip {
     /// Which stored frames the clip shows, among those of its body and action: a Classic clip's stored direction, an
     /// Enhanced clip's first frame record. A mirrored direction shares its twin's.
     pub stored: u32,
+    /// The texels per pixel of the frames' placements: 1, or 2 for an upscaled sequence (upscales.rs).
+    pub texel_scale: u32,
 }
 
 impl Clip {
@@ -213,6 +217,7 @@ impl MobileClips {
                         mirrored: decoded.mirrored,
                         frame_secs: decoded.frame_secs,
                         stored: decoded.stored,
+                        texel_scale: 1,
                     })
                 }
                 None => {
@@ -299,7 +304,7 @@ mod tests {
     #[test]
     fn a_clip_loops_its_frames() {
         let frame = test_frame();
-        let clip = Clip { frames: vec![frame; 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
+        let clip = Clip { frames: vec![frame; 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0, texel_scale: 1 };
         let index_at = |secs: f32| clip.frame_at(secs).unwrap().index;
         assert_eq!(index_at(0.0), 0);
         assert_eq!(index_at(CLASSIC_FRAME_SECS * 1.5), 1);
@@ -309,7 +314,7 @@ mod tests {
     #[test]
     fn a_clip_spreads_its_frames_over_a_cycle() {
         let frame = test_frame();
-        let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
+        let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0, texel_scale: 1 };
         assert!((clip.cycle_secs() - CLASSIC_FRAME_SECS * 10.0).abs() < f32::EPSILON);
         let index_at = |cycles: f32| clip.frame_at_cycles(cycles).unwrap().index;
         assert_eq!(index_at(0.0), 0);
@@ -319,7 +324,7 @@ mod tests {
 
     #[test]
     fn a_pick_names_the_next_frame_and_the_way_to_it() {
-        let clip = Clip { frames: vec![test_frame(); 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
+        let clip = Clip { frames: vec![test_frame(); 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0, texel_scale: 1 };
         let pick = clip.frame_at(CLASSIC_FRAME_SECS * 1.25).unwrap();
         assert_eq!((pick.index, pick.next), (1, 2));
         assert!((pick.t - 0.25).abs() < 1e-4, "{pick:?}");
@@ -333,7 +338,7 @@ mod tests {
         assert_eq!((pick.index, pick.next), (2, 3));
         assert!((pick.t - 0.4).abs() < 1e-4, "{pick:?}");
 
-        let single = Clip { frames: vec![test_frame()], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
+        let single = Clip { frames: vec![test_frame()], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0, texel_scale: 1 };
         let pick = single.frame_at(CLASSIC_FRAME_SECS * 2.5).unwrap();
         assert_eq!((pick.index, pick.next), (0, 0));
     }

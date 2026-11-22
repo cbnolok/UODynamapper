@@ -11,6 +11,7 @@ pub mod in_between;
 pub mod pace;
 pub mod placement;
 pub mod rife_in_betweens;
+pub mod upscales;
 
 use std::sync::Arc;
 use bevy::prelude::*;
@@ -88,13 +89,18 @@ impl Plugin for MobileSpritesPlugin {
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
             .init_resource::<rife_in_betweens::MobileInBetweens>()
+            .init_resource::<upscales::MobileUpscales>()
+            .init_resource::<upscales::MobileUpscaleGate>()
             .init_resource::<MobileStrides>()
             .add_systems(Update, (
                 sys_sync_player_appearance,
                 sys_choose_mobile_clips,
                 draw::sys_setup_mobile_draw,
+                draw::sys_size_mobile_upscale_pages,
+                upscales::sys_update_mobile_upscale_gate,
                 draw::sys_draw_mobiles,
                 rife_in_betweens::sys_schedule_mobile_in_betweens,
+                upscales::sys_schedule_mobile_upscales,
                 frame_atlas::sys_stage_mobile_frame_uploads,
                 draw::sys_sync_mobile_materials
                     .after(crate::render::statics::statics_draw::sys_update_art_materials),
@@ -105,6 +111,7 @@ impl Plugin for MobileSpritesPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<frame_atlas::RenderMobileFrameUploads>()
             .init_resource::<rife_in_betweens::render::RenderInBetweens>()
+            .init_resource::<upscales::render::RenderUpscales>()
             .init_resource::<compute_warm_up::ComputeWarmUp>()
             .init_resource::<compute_budget::MobileComputeBudget>()
             .init_resource::<bc7_encoding::MobileBc7Encoder>()
@@ -112,12 +119,14 @@ impl Plugin for MobileSpritesPlugin {
                 frame_atlas::sys_extract_mobile_frame_uploads::<clips::AtlasEntry>,
                 rife_in_betweens::render::sys_extract_mobile_in_betweens,
                 compute_warm_up::sys_extract_block_encoder_wanted,
+                upscales::render::sys_extract_mobile_upscales,
             ))
             .add_systems(bevy::render::Render, (
                 compute_warm_up::sys_start_compute_warm_up,
                 compute_budget::sys_start_mobile_compute_frame,
                 frame_atlas::sys_render_upload_mobile_frames,
                 rife_in_betweens::render::sys_render_mobile_in_betweens,
+                upscales::render::sys_render_mobile_upscales,
             ).chain().in_set(bevy::render::RenderSystems::Queue));
     }
 }

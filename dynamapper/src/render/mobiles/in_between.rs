@@ -140,8 +140,11 @@ pub fn layer_frames(mode: MobileInBetweenFrames, clip: &Clip, pick: FramePick) -
     let card = union_placement(frame.placement, next.placement);
     // The card's top-left corner in the texels of a frame's page: the frame's corner less its place on the card. The
     // offset between the two frames' corners holds across pages, as each frame is read from its own.
-    let card_origin = |frame: &ClipFrame| Vec2::new(frame.rect.x as f32 - (card.anchor_x - frame.placement.anchor_x),
-        frame.rect.y as f32 - (card.anchor_y - frame.placement.anchor_y));
+    // The placements count pixels, and an upscaled clip has `texel_scale` texels to each.
+    let scale = clip.texel_scale as f32;
+    let card_origin = |frame: &ClipFrame| Vec2::new(
+        frame.rect.x as f32 - (card.anchor_x - frame.placement.anchor_x) * scale,
+        frame.rect.y as f32 - (card.anchor_y - frame.placement.anchor_y) * scale);
     let page_size = MOBILE_ATLAS_PAGE_SIZE as f32;
     let uv_min = card_origin(frame) / page_size;
     let (frame_uv_min, frame_uv_max) = frame.rect.uv();
@@ -149,7 +152,7 @@ pub fn layer_frames(mode: MobileInBetweenFrames, clip: &Clip, pick: FramePick) -
     Some(LayerFrames {
         layer: frame.rect.instance_layer(),
         uv_min,
-        uv_max: uv_min + Vec2::new(card.width, card.height) / page_size,
+        uv_max: uv_min + Vec2::new(card.width, card.height) * scale / page_size,
         placement: card,
         crossfade: FrameCrossfade {
             frame_uv_min: frame_uv_min.to_array(),
@@ -197,7 +200,7 @@ mod tests {
             placement: placement(width as f32, height as f32, anchor_x, anchor_y),
         };
         Clip { frames: vec![frame(10, 3, 3, 2.0, 3.0), frame(40, 4, 4, 0.0, 2.0)], mirrored: false,
-            frame_secs: CLASSIC_FRAME_SECS, stored: 0 }
+            frame_secs: CLASSIC_FRAME_SECS, stored: 0, texel_scale: 1 }
     }
 
     #[test]
@@ -222,6 +225,32 @@ mod tests {
             (Vec2::new(10.0, 20.0), Vec2::new(13.0, 23.0)));
         assert_eq!((texels(drawn.crossfade.next_uv_min), texels(drawn.crossfade.next_uv_max)),
             (Vec2::new(40.0, 20.0), Vec2::new(44.0, 24.0)));
+    }
+
+    #[test]
+    fn an_upscaled_clip_spans_its_texels_on_the_same_card() {
+        const SCALE: u32 = 2;
+        let clip = two_frame_clip();
+        let mut upscaled = clip.clone();
+        upscaled.texel_scale = SCALE;
+        for frame in &mut upscaled.frames {
+            frame.rect.width *= SCALE;
+            frame.rect.height *= SCALE;
+        }
+        let pick = FramePick { index: 0, next: 1, t: 0.5 };
+        let plain = layer_frames(MobileInBetweenFrames::Crossfade, &clip, pick).unwrap();
+        let drawn = layer_frames(MobileInBetweenFrames::Crossfade, &upscaled, pick).unwrap();
+        // The same card in the world, twice the texels on the page.
+        assert_eq!(drawn.placement, plain.placement);
+        let page_size = MOBILE_ATLAS_PAGE_SIZE as f32;
+        let texels = |uv: Vec2| (uv * page_size).round();
+        assert_eq!(texels(drawn.uv_max - drawn.uv_min), texels(plain.uv_max - plain.uv_min) * SCALE as f32);
+        // Each anchor still lands on the card's, at twice its offset from the frame's corner.
+        let card_anchor = drawn.uv_min * page_size
+            + Vec2::new(drawn.placement.anchor_x, drawn.placement.anchor_y) * SCALE as f32;
+        assert_eq!(card_anchor.round(), Vec2::new(10.0 + 2.0 * 2.0, 20.0 + 3.0 * 2.0));
+        assert_eq!((card_anchor + texels(Vec2::from_array(drawn.crossfade.next_uv_offset))).round(),
+            Vec2::new(40.0, 20.0 + 2.0 * 2.0));
     }
 
     #[test]
@@ -260,7 +289,8 @@ mod tests {
         assert_eq!((Vec2::from_array(first.crossfade.frame_uv_min), Vec2::from_array(first.crossfade.frame_uv_max)),
             clip.frames[0].rect.uv());
         // A clip of one frame shows it alone.
-        let single = Clip { frames: vec![clip.frames[0]], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
+        let single = Clip { frames: vec![clip.frames[0]], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0,
+            texel_scale: 1 };
         let pick = FramePick { index: 0, next: 0, t: 0.5 };
         assert_eq!(layer_frames(MobileInBetweenFrames::Crossfade, &single, pick).unwrap(), alone(&clip.frames[0]));
     }

@@ -19,11 +19,14 @@ use crate::render::statics::static_placement::{apply_cc_static_world_anchor_tran
 use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
 use crate::world::mobile_motion::MobileMotion;
+use crate::world::player::Player;
 use super::clips::{AnimSource, AtlasEntry, ClipKey, MobileClips};
 use super::frame_atlas::{AtlasFormat, MobileFrameAtlas};
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
 use super::placement::mobile_card_bounds;
 use super::rife_in_betweens::MobileInBetweens;
+use super::upscales::{atlas_pages_wanted, upscale_key, MobileUpscale, MobileUpscaleGate, MobileUpscaleSwitches,
+    MobileUpscales, UpscalePriority, UpscaleSwitch};
 use super::MobileClipChoice;
 use super::pace::MobileCycleClock;
 
@@ -174,18 +177,52 @@ struct DrawnFrame {
 /// shown for the first time, or again after the atlas dropped it), so that neither the mount nor its rider drops out
 /// for those frames; the mount's clip often lands a few frames before the rider's.
 #[derive(Component, Debug, Default)]
-pub struct MobileShownLayers(Vec<DrawnFrame>);
+pub struct MobileShownLayers {
+    layers: Vec<DrawnFrame>,
+    /// Whether each layer shows its 2x frames (upscales.rs).
+    upscales: MobileUpscaleSwitches,
+}
 
 /// The layers to draw of `wanted`: while one of their clips is `loading`, the layers shown before if theirs are all
 /// `resident`; else `wanted`, which become the layers shown.
 fn layers_to_draw(wanted: Vec<DrawnFrame>, shown: &mut MobileShownLayers, loading: impl Fn(ClipKey) -> bool,
     resident: impl Fn(ClipKey) -> bool) -> Vec<DrawnFrame> {
-    let held = !shown.0.is_empty() && shown.0.iter().all(|layer| resident(layer.key));
+    let held = !shown.layers.is_empty() && shown.layers.iter().all(|layer| resident(layer.key));
     if held && wanted.iter().any(|layer| loading(layer.key)) {
-        return shown.0.clone();
+        return shown.layers.clone();
     }
-    shown.0.clone_from(&wanted);
+    shown.layers.clone_from(&wanted);
     wanted
+}
+
+/// Gives the frame atlases the upscaled pages the setting wants (upscales.rs). An atlas remade is empty: every clip,
+/// in-between and upscale is forgotten, and the mobiles' materials go to the GPU again to bind the new textures.
+#[allow(clippy::too_many_arguments)]
+pub fn sys_size_mobile_upscale_pages(
+    settings: Res<Settings>,
+    atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
+    draw_assets: Option<Res<MobileDrawAssets>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ArtSpriteMaterial>>,
+    mut clips: ResMut<MobileClips>,
+    mut in_betweens: ResMut<MobileInBetweens>,
+    mut upscales: ResMut<MobileUpscales>,
+) {
+    let (Some(mut atlas), Some(draw_assets)) = (atlas, draw_assets) else { return };
+    let pages = atlas_pages_wanted(&settings);
+    if atlas.upscaled_pages() == pages {
+        return;
+    }
+    atlas.set_upscaled_pages(&mut images, pages);
+    clips.clear();
+    in_betweens.clear();
+    upscales.clear();
+    for material in [&draw_assets.opaque, &draw_assets.transparent, &draw_assets.shadow] {
+        if let Some(material) = materials.get_mut(material) {
+            material.into_inner();
+        }
+    }
+    info!("The mobiles' frame atlases are remade with {pages} pages for upscaled frames.");
 }
 
 /// Builds the instances of the mobiles' current frames, and the draw entities for them.
@@ -199,6 +236,9 @@ pub fn sys_draw_mobiles(
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
     mut in_betweens: ResMut<MobileInBetweens>,
+    mut upscales: ResMut<MobileUpscales>,
+    upscale_gate: Res<MobileUpscaleGate>,
+    player_q: Query<&Transform, With<Player>>,
     packages: Res<super::MobileAnimPackages>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -215,6 +255,9 @@ pub fn sys_draw_mobiles(
     let in_between_mode = settings.world_rendering.mobile_in_between_frames;
     let evicted = clips.place_decoded(&mut atlas, now);
     in_betweens.forget(&evicted);
+    upscales.forget(&evicted);
+    let upscaling = settings.world_rendering.mobile_upscale != MobileUpscale::Off && upscale_gate.open;
+    let player = player_q.iter().next().map(|transform| transform.translation);
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
     for (transform, motion, appearance, choice, mut clock, mut shown) in mobiles_q.iter_mut() {
@@ -236,6 +279,9 @@ pub fn sys_draw_mobiles(
             clips.get_or_load(drawn.key, &packages.0);
         }
         let frames = layers_to_draw(frames, &mut shown, |key| clips.loading(key), |key| clips.resident(key).is_some());
+        // The upscales of the nearest the player go first.
+        let distance = player.map_or(0.0, |player| transform.translation.xz().distance(player.xz()));
+        let mut switches = Vec::with_capacity(frames.len());
         // The mount comes first, so its clip can lead the cycle the rider shares.
         let mut cycles = None;
         for drawn in frames {
@@ -247,18 +293,42 @@ pub fn sys_draw_mobiles(
             // the clip's own pages stay in use, as the sequence's frames come from them.
             let mirrored = clip.mirrored;
             clip.touch_pages(&mut atlas, now);
-            let clip = in_betweens.shown(drawn.key, clip, in_between_mode, now).unwrap_or(clip);
+            // A clip whose RIFE sequence is still to come upscales once it is there.
+            let rife_waits = in_betweens.waits(drawn.key, clip, in_between_mode);
+            let base = clip;
+            let (clip, factor) = match in_betweens.shown(drawn.key, base, in_between_mode, now) {
+                Some(sequence) => (sequence, in_between_mode.rife_factor().unwrap_or(1)),
+                None => (base, 1),
+            };
             let pick = match choice.cycle.lead_secs(clip) {
                 Some(lead_secs) => clip.frame_at_cycles(
                     *cycles.get_or_insert_with(|| clock.advance(motion.clip_secs(), lead_secs))),
                 None => clip.frame_at(motion.clip_secs()),
             };
-            let Some(frames) = pick.and_then(|pick| layer_frames(in_between_mode, clip, pick)) else { continue };
+            let Some(pick) = pick else { continue };
+            // The sequence's 2x frames once all are made, switched to and from as it starts over.
+            let key = upscale_key(drawn.key, base, factor);
+            let wanted = upscaling && !rife_waits;
+            if wanted {
+                let placement = clip.frames[pick.index].placement;
+                let area = placement.width * placement.height * upscale_gate.magnification.powi(2);
+                upscales.want(key, drawn.key, UpscalePriority { distance, area }, now);
+            }
+            let upscaled = upscales.ready(&key);
+            let switch = UpscaleSwitch::next(shown.upscales.get(drawn.tie_level), drawn.tie_level, key,
+                clip.frames.len(), pick.index, wanted, upscaled.is_some());
+            switches.push(switch);
+            if wanted && let Some(upscaled) = upscaled {
+                upscaled.touch_pages(&mut atlas, now);
+            }
+            let clip = upscaled.filter(|_| switch.upscaled).unwrap_or(clip);
+            let Some(frames) = layer_frames(in_between_mode, clip, pick) else { continue };
             clip.touch_pages(&mut atlas, now);
             // Both frames of an in-between come from the clip, so they share its mirroring.
             instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
                 drawn.tie_level, source, local_lights));
         }
+        shown.upscales = MobileUpscaleSwitches(switches);
     }
 
     let count = instances.len() as u32;
