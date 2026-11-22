@@ -2,7 +2,7 @@
 //! the steps, so a big Enhanced creature walking a tile in 0.4 s skates. Matched to the ground, a cycle lasts the time
 //! the steps take to cover the clip's stride: how far the body's planted feet travel in one cycle of the clip, measured
 //! offline on the frames (`udd-cli tool strides measure`) and stored in the animation packages with the hash of the
-//! frames measured, or measured by hand for the human clips, which the flow measures short ([`HAND_STRIDES`]).
+//! frames measured, or counted by hand for the human clips ([`HAND_STRIDES`]).
 
 use std::collections::hash_map::{Entry, HashMap};
 use std::sync::Arc;
@@ -36,31 +36,44 @@ impl MobileWalkPace {
 }
 
 /// The bounds of a cycle paced to the ground, as fractions of the clip's own cycle: a stride measured too short or too
-/// long (small creatures give implausibly short ones) plays no faster than twice and no slower than half the clip's
-/// own speed.
-const MIN_OWN_CYCLE_FRACTION: f32 = 0.5;
-const MAX_OWN_CYCLE_FRACTION: f32 = 2.0;
+/// long plays no faster than three times and no slower than a third of the clip's own speed. The planted foot
+/// measures within about 0.2 tiles of the hand counts, so the bounds only catch an outlier; three times leaves room for
+/// the clips that legitimately play that fast: a Classic monster runs its walk at a run's steps (0.37 of its own
+/// cycle for the orc on a side facing), and the Enhanced human run plays in 0.35 of its own.
+const MIN_OWN_CYCLE_FRACTION: f32 = 1.0 / 3.0;
+const MAX_OWN_CYCLE_FRACTION: f32 = 3.0;
 
-/// How far a clip's planted feet travel in one cycle, in tiles, and whether it was measured by hand
-/// ([`HAND_STRIDES`]) rather than by the flow.
+/// How far a clip's planted feet travel in one cycle, in side tiles, and whether it was counted by hand
+/// ([`HAND_STRIDES`]) rather than measured into the package.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stride {
     pub tiles: f32,
     pub by_hand: bool,
 }
 
-/// A clip paced to the ground: its stride and the time a step takes.
+/// A clip paced to the ground: its stride, the time a step takes and the side tiles it covers
+/// ([`step_side_tiles`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundStride {
     pub stride: Stride,
     pub step_secs: f32,
+    pub step_tiles: f32,
+}
+
+/// The side tiles (`uot_gpu_compute::strides`: the 44 screen px of a step on the screen's horizontal, a stride's unit)
+/// a step toward `facing` covers: a whole one on the facings that step along the screen's horizontal or vertical (the
+/// odd ones), and one over the square root of two on those that step along its diagonals (north, east, south, west:
+/// 31.1 px). The art's feet travel as far on the screen a cycle in every facing, so a cycle along a diagonal takes the
+/// square root of two times as many steps.
+pub fn step_side_tiles(facing: u8) -> f32 {
+    if facing % 2 == 0 { std::f32::consts::FRAC_1_SQRT_2 } else { 1.0 }
 }
 
 impl GroundStride {
-    /// The seconds of one cycle of a clip whose own cycle lasts `own_cycle_secs`: the clamp bounds a flow
-    /// measurement, not a stride measured by hand.
+    /// The seconds of one cycle of a clip whose own cycle lasts `own_cycle_secs`: the clamp bounds a measurement,
+    /// not a stride measured by hand.
     pub fn cycle_secs(self, own_cycle_secs: f32) -> f32 {
-        let secs = self.stride.tiles * self.step_secs;
+        let secs = self.stride.tiles / self.step_tiles * self.step_secs;
         if self.stride.by_hand {
             secs
         } else {
@@ -69,11 +82,11 @@ impl GroundStride {
     }
 }
 
-/// Strides measured by hand for the walk and run clips named, which take the place of the flow's (`udd-cli tool
-/// strides measure`). The flow under-measures the human clips: the Classic walk and run measure 0.78 and 1.40 tiles
-/// where the planted foot travels about 1.3 and 2.15, and the Enhanced walk and run 1.16 and 1.24 where it travels
-/// about 1.4 and 1.75. Paced by the flow, the legs moved a fifth to a third faster than the ground. Each was
-/// measured on the south-west facing (44 px a tile) by following the planted foot's ground contact from frame to
+/// Strides counted by hand for the walk and run clips named, which take the place of the package's (`udd-cli tool
+/// strides measure`). The flow, the first measurement, under-measured the human clips by a fifth to a third; the
+/// planted-foot measurement matches these within about 0.1 tiles on the walks and the Classic run, but reads the
+/// Enhanced run 0.1 to 0.3 tiles longer (about half of its frame pairs show no planted foot), so the counts stay. Each
+/// was counted on the south-west facing (44 px a tile) by following the planted foot's ground contact from frame to
 /// frame, on 2026-11-22 (`docs/agent_notes/mobile_animation_motion.md`, "Walk pace"). The elves and ghosts have the
 /// humans' art and measure the same. A hand stride still needs the package's stride record, and is used only while
 /// the clip's frames hash as that record says.
@@ -225,26 +238,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_ground_cycle_lasts_the_stride_in_steps_within_half_and_twice_the_clip_own() {
+    fn a_ground_cycle_lasts_the_stride_in_steps_within_a_third_and_three_times_the_clip_own() {
         const OWN_CYCLE_SECS: f32 = 1.0;
-        let cycle = |tiles: f32, step_secs: f32|
-            GroundStride { stride: Stride { tiles, by_hand: false }, step_secs }.cycle_secs(OWN_CYCLE_SECS);
+        let cycle = |tiles: f32, step_secs: f32| GroundStride { stride: Stride { tiles, by_hand: false }, step_secs,
+            step_tiles: 1.0 }.cycle_secs(OWN_CYCLE_SECS);
         assert!((cycle(2.0, 0.4) - 0.8).abs() < 1e-6);
         assert!((cycle(0.5, 0.4) - MIN_OWN_CYCLE_FRACTION * OWN_CYCLE_SECS).abs() < 1e-6);
         assert!((cycle(8.0, 0.4) - MAX_OWN_CYCLE_FRACTION * OWN_CYCLE_SECS).abs() < 1e-6);
     }
 
-    /// The Enhanced human run, 9 frames at 9 fps: its hand stride paces a cycle in 0.35 s at a run's steps, a third
-    /// of its own, which the clamp would hold at half.
+    /// A hand stride paces a cycle shorter than the clamp lets a measured one: 1.5 tiles at a run's steps last 0.3 s,
+    /// under a third of a one-second clip's own.
     #[test]
     fn a_hand_stride_paces_the_cycle_outside_the_clamp() {
         const OWN_CYCLE_SECS: f32 = 1.0;
         const RUN_STEP_SECS: f32 = 0.2;
-        const TILES: f32 = 1.75;
-        let cycle = |by_hand| GroundStride { stride: Stride { tiles: TILES, by_hand }, step_secs: RUN_STEP_SECS }
-            .cycle_secs(OWN_CYCLE_SECS);
+        const TILES: f32 = 1.5;
+        let cycle = |by_hand| GroundStride { stride: Stride { tiles: TILES, by_hand }, step_secs: RUN_STEP_SECS,
+            step_tiles: 1.0 }.cycle_secs(OWN_CYCLE_SECS);
         assert!((cycle(true) - TILES * RUN_STEP_SECS).abs() < 1e-6);
         assert!((cycle(false) - MIN_OWN_CYCLE_FRACTION * OWN_CYCLE_SECS).abs() < 1e-6);
+    }
+
+    /// A step along a screen diagonal covers less of the stride: the cycle takes the square root of two times as long.
+    #[test]
+    fn a_diagonal_step_covers_a_side_stride_in_more_steps() {
+        const OWN_CYCLE_SECS: f32 = 1.0;
+        const WALK_STEP_SECS: f32 = 0.4;
+        let cycle = |facing| GroundStride { stride: Stride { tiles: 1.0, by_hand: false }, step_secs: WALK_STEP_SECS,
+            step_tiles: step_side_tiles(facing) }.cycle_secs(OWN_CYCLE_SECS);
+        for facing in [1, 3, 5, 7] {
+            assert!((cycle(facing) - WALK_STEP_SECS).abs() < 1e-6, "facing {facing}");
+        }
+        for facing in [0, 2, 4, 6] {
+            assert!((cycle(facing) - WALK_STEP_SECS * 2f32.sqrt()).abs() < 1e-6, "facing {facing}");
+        }
     }
 
     #[test]

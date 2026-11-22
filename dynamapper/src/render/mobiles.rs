@@ -27,7 +27,7 @@ use crate::world::mobile_motion::{MobileMotion, Movement, STEP_SECS_MOUNTED_WALK
 use crate::world::player::Player;
 use clips::{AnimPackages, AnimSource, Clip, MobileClips};
 use draw::{MobileActions, MobileAppearance, MobileShownLayers};
-use pace::{GroundStride, MobileCycleClock, MobileStrides, MobileWalkPace};
+use pace::{step_side_tiles, GroundStride, MobileCycleClock, MobileStrides, MobileWalkPace};
 
 /// The animation packages, as loaded at startup (`content`).
 #[derive(Resource, Default)]
@@ -207,14 +207,14 @@ fn sys_choose_mobile_clips(
 }
 
 /// The ground pace of `action` of `body` from `source` on the move, when `strides` (the setting on) has its stride: at
-/// the step time of the movement, mounted or not.
+/// the step time of the movement, mounted or not, and the side tiles a step of the facing covers.
 fn ground_stride(strides: Option<&mut MobileStrides>, source: AnimSource, body: u32, action: Option<u16>,
     motion: &MobileMotion, mounted: bool) -> Option<GroundStride> {
     if motion.movement == Movement::Stand {
         return None;
     }
     let stride = strides?.get(source, body, action?)?;
-    Some(GroundStride { stride, step_secs: motion.step_secs(mounted) })
+    Some(GroundStride { stride, step_secs: motion.step_secs(mounted), step_tiles: step_side_tiles(motion.facing) })
 }
 
 fn classic_movement(movement: Movement) -> u8 {
@@ -241,8 +241,9 @@ fn enhanced_movement(movement: Movement) -> u8 {
 /// tiles, so the mount plays its run and the rider its fast ride, one cycle in the run's own time on a mounted walk and
 /// in half of it on a mounted run (`MobileCycle::LeadClipTimes`). The walk (a trot of about one tile a cycle) needs
 /// five cycles a second for its hooves to keep up with a mounted walk, and the clients' two and a half let them slide.
-/// The measured strides don't pace a mount: the flow loses the hooves of five-frame Classic clips, which jump 10 to 25
-/// pixels a frame (the horse's gallop measures 1.08 tiles where its planted hooves travel 2 to 2.8).
+/// The measured strides don't pace a mount: the flow lost the hooves of five-frame Classic clips, which jump 10 to 25
+/// pixels a frame (the horse's gallop measured 1.08 tiles where its planted hooves travel 2 to 2.8; the planted foot
+/// reads 2.4), and the run's own time already keeps them on the ground.
 fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&mut MobileStrides>, appearance: &MobileAppearance,
     motion: &MobileMotion) -> MobileClipChoice {
     let gallop = appearance.mount_body.is_some() && motion.movement != Movement::Stand && strides.is_some();
