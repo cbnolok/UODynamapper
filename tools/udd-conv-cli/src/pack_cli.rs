@@ -1306,8 +1306,9 @@ enum Commands {
     /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id, and its day, night and
     /// night-sight maps (TerrainTexture.uop, always lossless RGBA8888). Textures are lossless RGBA8888 with Zstd 19
     /// unless a format is given. It holds its Kingdom Reborn section: the material textures Kingdom Reborn draws
-    /// differently, lossless, from the Kingdom Reborn tile data of --tilemeta (packed by pack-ec-textures) and the
-    /// Kingdom Reborn files rebuilt beside the output, as pack-ec-textures takes them. Requires --ccdir.
+    /// differently, in the Enhanced textures' format, from the Kingdom Reborn tile data of --tilemeta (packed by
+    /// pack-ec-textures) and the Kingdom Reborn files rebuilt beside the output, as pack-ec-textures takes them.
+    /// Requires --ccdir.
     #[command(name = "pack-ec-tex-aux")]
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
