@@ -93,7 +93,7 @@ In **F2 → Graphics**, enable **Show Only the Player's Floor**. **Only the Play
 
 Both captures are centered on the same point in Britain. The wide view covers 32 times as much world width as the close view.
 
-At scale 20 and wider, Dynamapper draws statics as radar-color dots and skips statics below Z 10. This omits low water statics, including some rivers and shorelines. Terrain water still draws.
+At scale 20 and wider, Dynamapper uses radar colors for statics. Low statics such as river and shoreline water remain visible wherever the depth test leaves them exposed.
 
 [View the full Trammel facet as a radar export](images/showcase/world-trammel-radar.webp). The converter builds this top-down image from the map and its statics.
 

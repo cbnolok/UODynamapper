@@ -953,10 +953,6 @@ fn emit_static_render_tile(
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
     build: &mut StaticChunkBuildState,
 ) {
-    if frame.is_dot_mode && render_tile.z < 10 {
-        return;
-    }
-
     let enhanced_package = resources.tilemeta_package();
     let enhanced_tilemeta = enhanced_package.and_then(|meta| meta.item_tile(render_tile.graphic as u32));
     let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source| {
@@ -1197,6 +1193,10 @@ fn emit_dot_static_tile(
     let encoded_depth_class = info.depth_class.encoded();
     let world_y = info.base_world_y + bias;
     let color = meta.radar_color;
+    // Use the same cell depth as the terrain, so radar dots sort by height within the cell.
+    // Liquid statics cover the cell itself, like the terrain underneath them.
+    let (tile_x, tile_y) = cell_depth_anchor(info.world_x, info.world_z);
+    let flat_quad = if info.is_wet_flags & 1 != 0 { FLAT_QUAD_EC_SURFACE } else { 0 };
 
     build.sprite_instances.push(SpriteInstance {
         world_x: info.world_x,
@@ -1209,14 +1209,14 @@ fn emit_dot_static_tile(
         uv_max: [0.0, 0.0],
         local_min: [0.0, 0.0],
         local_max: [1.0, 1.0],
-        tile_x: info.world_x,
-        tile_y: info.world_z,
+        tile_x,
+        tile_y,
         priority_z_units,
         sort_bias_ordinal: 0,
         is_wet_flags: info.is_wet_flags,
         hue_id: 0,
         hue_flags: 0,
-        flat_quad: 0,
+        flat_quad,
         texture_stretch: 0.0,
         material_item_id: 0,
         client_shadow_flags: 0,
@@ -1224,9 +1224,9 @@ fn emit_dot_static_tile(
         client_grunge_anchor: [0.0; 2],
         local_light_corners,
         color_rgba: [
-            color[2] as f32 / 255.0,
-            color[1] as f32 / 255.0,
             color[0] as f32 / 255.0,
+            color[1] as f32 / 255.0,
+            color[2] as f32 / 255.0,
             1.0,
         ],
     });
