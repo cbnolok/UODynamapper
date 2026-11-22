@@ -343,3 +343,37 @@ Observations:
 - The time of small frames is latency, not size: 64² and 128² cost the same.
 - BC1's colour noise on Classic's dithered art is visible at 4× in the sheets, and BC7 UltraFast's is much smaller.
   The user chose BC7 for Classic too.
+
+## Ground, collision and draw order of a walking body (2026-11-22)
+
+The user saw the stygian dragon (Enhanced 826) sink into the ground while it walked, and the human, on foot and
+mounted, walk through Britain's planter and black statue as if on air. Measured and fixed:
+
+- **Enhanced layer offsets point up** (`render/mobiles.rs`, `layer_screen_offset_px`): `mobile_layer_offsets` gives
+  the client's layer positions (the extra offset, the rider offset and the -15 shift), and they were drawn with y down.
+  826's walk is action 19, its flying walk with flying animations on (the client's default): frames reaching 100-190
+  px below their anchor (the stand's reach 41) and the package's one extra offset, +125. Read as y down, the dragon's
+  feet were 207-300 px below its cell, so nearer land covered all but its wings. Read as y up its frames end up to 43 px
+  above the cell centre, the downbeat's wing tips 50 px below it, and it flies whole. The same flip lowers every Enhanced body by 30 px: on the same cell the KR-like human's feet stood
+  about 28 world px above the Classic human's, and now meet them within 4 px. The sign is measured on these two
+  cases, not traced in the client's draw.
+- **Draw order while sliding** (`render/mobiles/draw.rs`, `mobile_depth_cell`): a sliding body was ordered from its
+  fractional position, a row behind the cell it steps into, so that cell's land (one row nearer, at its z - 2) could
+  cover the part of the body below its anchor until the step ended. It is now ordered from the nearer cell of its step
+  in each map axis (the ceiling of its position), as ClassicUO's `View.CalculateDepthZ` orders a walking mobile. The
+  card itself still slides. This alone did not cure the dragon, whose frames were 200 px underground.
+- **Collision** (`world/walk_z.rs`, `body_step`): a drawn body took a step the client blocks anyway, onto the nearest
+  floor, since the marker was free to go anywhere. It now stops and faces the step, as the client does: at the
+  planter's flower beds (Impassable, z 0, 5 high) and at the statue's pieces (Impassable, z 6) on its pedestals
+  (Surface and Bridge, 10 high: a walker stands on them at z 5, half the height, as ClassicUO's pathfinder and the
+  servers count a Bridge). A body the client lets out in no direction, as one set inside a rock, still steps as
+  asked, so the viewer is never stuck. The marker without a body stays free.
+- **Height over a step** (`world/player_movement.rs`, `slide_towards`): the body's height jumped to the next cell's z
+  as the step began, so it floated over its cell stepping up and sank into the next one stepping down. It now follows
+  the slide evenly, as ClassicUO's `Mobile.ProcessSteps` moves a stepping mobile's `Offset.Z`.
+
+Not read by the walk: multis (houses placed by players) and dynamic items; Britain's buildings are statics and block.
+The visual harness hides the player and cannot walk a body, so unit tests guard these fixes, not fixtures. The before |
+after videos are in `uodynamapper-scratch/mobile-ground/`: `stygian-before-after.mp4` (KR-like, Enhanced,
+UOD-Painterly), `human-foot-before-after.mp4` and `human-horse-before-after.mp4` (Classic, KR-like) and
+`human-styles-before-after.mp4` (Enhanced, UOD-Painterly).
