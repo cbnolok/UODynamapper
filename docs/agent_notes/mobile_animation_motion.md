@@ -149,8 +149,68 @@ canvas grey the port matches the prototype to 0.01 tiles.
   texture. **Chosen: 4xmssim_span** (user: looks better, most of all on small animations, where bicubic blurs the
   little detail there is). Folded for inference (each Conv3XC into one 3x3 conv) it has 426k parameters, 0.86 MB as
   fp16, within 0.08/255 of the original. Alpha is upscaled bicubically, not through the network.
-- If adopted: 4× frames cost 16× the atlas memory (tight on a 4 GB card), so store 2× results, only for clips on screen
-  while zoomed above ~1.5×.
+- 4× frames would cost 16× the atlas memory (tight on a 4 GB card), so the game stores 2× results, only for clips on
+  screen while zoomed above ~1.5×.
+
+### SPAN 2× in game (`mobile_upscale`, 2026-11-21)
+
+`world_rendering.mobile_upscale` is `off` (default) or `span_x2`: in Preferences, and `set mobile_upscale` on the
+control socket. Off by default: it costs GPU time and VRAM the zoomed-out view never shows, and it is a look the user
+has not chosen yet for every style. Code: `render/mobiles/upscales.rs` (main world) and `upscales/render.rs`; the
+network and its frame steps are uot-gpu-compute's `upscale`.
+
+- **Gate**: the view's magnification is the window's scale factor over `RenderZoom` (zoom 0.5 on a scale-1 display is
+  2×). Upscales start at 1.5× and stop below 1.35×, so a zoom around the threshold does not flap. Below it the 1×
+  frames draw as before, and the queued jobs stop.
+- **What upscales**: the sequence a layer shows at 1×: its clip, or in a RIFE mode the clip's RIFE sequence once that
+  is made (RIFE first: the upscale of a sequence still being generated would be thrown away). Crossfade and Off
+  upscale the clip, and the crossfade blends the 2× frames as it blends the 1× ones. Classic frames get their 2× alpha
+  snapped at 0.5 in the finish step, so their edges stay hard.
+- **Atlas**: 2× frames are atlas entries of their own (`AtlasEntry::Upscaled`) in a pool of 16 extra pages per atlas
+  (`AtlasPool::Upscaled`, layers 8–23), in the atlas's format: BC7 atlases get them encoded on the GPU by the warmed
+  BC7 UltraFast encoder, shared with the RIFE in-betweens (`bc7_encoding.rs`). Only upscales empty upscaled pages, so
+  1× frames are never evicted for them, and an evicted upscale just plays at 1× again. The pages exist only while the
+  setting is on: switching it remakes the atlases (everything reloads, as after a package switch).
+- **Drawing**: each 2× frame is its canvas cut to the frame plus the 2-pixel border the network sees, so the halo past
+  the frame's edge shows: the placement grows by the border and its anchor moves by it, and the card spans 2 texels
+  per art pixel (`Clip::texel_scale`), the same world size as the 1× frame.
+- **Switching**: a layer switches to 2× only when the whole sequence is made, and only as the sequence starts over
+  (its frame index going back), so one cycle never mixes 1× and 2×; it switches back to 1× the same way when zoomed
+  out, and at once if the 2× frames were evicted.
+- **Order**: the sequences drawn in the last 2 s, the nearest the player first (in steps of a tile), then the largest
+  on screen; after them, jobs already started whose sequence was drawn in the last 10 s, so a mobile that stops and
+  walks on finds its walk made rather than started over (without this, the daemon's RIFE x4 walk often never reached
+  2× in the test's walk-stand-walk). A job dropped after that starts over when listed again.
+- **Budget**: one per-frame budget of 2 ms for both RIFE and SPAN (`compute_budget.rs`), not two: what matters is the
+  frame's total GPU time, and when RIFE is idle (sequences made, or crossfade) SPAN gets all of it. RIFE spends first,
+  because the upscales of a RIFE mode wait for its sequences. Each frame step (prepare, the network's 22 dispatches,
+  finish with its encode) has a cost estimate from uot-gpu-compute's benchmark fit (0.027 ms a dispatch plus 1 ms per
+  10⁹ multiply-adds, ~0.43 M per canvas pixel), corrected by timestamp queries (`CostScale`). A frame larger than the
+  budget spreads over several frames; its workspace stays with it until it ends. Canvases above 260×260 (90 MB of
+  workspace, ~30 ms) are not upscaled.
+- **Workspaces**: one per canvas size (rounded up to 8, so a body's actions share one) and atlas texture, made on the
+  background pool, freed after 20 s unused (~1360 bytes per canvas pixel: 5.6 MB at 64², 89 MB at 256²).
+
+Measured 2026-11-22 on the Radeon 880M (dev build, 1900×1000, zoom 0.4 = 2.5×, frame limiter off), the four styles
+with RGBA8888 and BC7 packages, Classic human 400 on horse 200, Classic dog 217, Enhanced daemon 9 and stygian 826,
+crossfade, RIFE x2 and x4 (scripts and captures in `uodynamapper-scratch/span-ingame/`):
+
+- **Budget**: SPAN submissions timed by timestamp queries: median 1.5–1.7 ms, p95 2.1–2.5 ms, max 2.9–5.0 ms (rare: a
+  step's estimate missing on a large frame). The cost scale settles at 1.05–1.3 over the benchmark fit.
+- **Time to 2×** (from the sequence's first draw to all its frames made, RIFE's own time excluded): Classic dog and
+  human/horse 0.03–0.4 s (x4: 0.1–1.8 s); Enhanced daemon 0.9–3.6 s at 1×, 2–10 s for its RIFE x2/x4 sequences. The
+  budget is per frame, so a style with slower frames (Painterly, ~20 ms) makes them slower.
+- **Frame time**: within noise of upscale off (Classic 5.8 vs 5.6 ms, Enhanced 12.8 vs 12.2 ms, KR and Painterly
+  the same or lower).
+- **VRAM** (sysfs `mem_info_vram_used`, the whole card): turning the upscales off frees 96 MiB with RGBA8 packages (the
+  16 upscaled pages, 64 MiB, plus the workspaces); with BC7 the pages are 16 MiB and the drop is within the driver's
+  64 MiB blocks. The card sat at 3.4–3.6 GiB of 4 with the desktop.
+- **Not upscaled**: the stygian (frames up to 512×413, above the 260×260 canvas cap; a 516×417 canvas would need
+  ~290 MB of workspace). Tiling a large frame over a small canvas would lift the cap.
+- **Looks**: at 2.5× the 2× frames are sharper and smoother at the edges, Classic edges stay hard, BC7 and RGBA8 look
+  the same, the placement matches the 1× frames, and at zoom 1 nothing is upscaled. Side-by-side videos (RIFE x4,
+  walking then standing): `uodynamapper-scratch/span-ingame/videos/*-off-vs-span.mp4`.
+- The regression harness with upscale off (quick tier) matches the commit before: 76 identical, 15 within tolerance.
 
 ## Sharpening
 
