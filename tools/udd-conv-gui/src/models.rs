@@ -4,7 +4,7 @@ use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
 use udd_conv::hues::HueRampMode;
-use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
+use udd_conv::page_compression::{BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_ZSTD_LEVEL};
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
 
@@ -181,21 +181,21 @@ impl Default for AppSettings {
             input_uddp_dir: PathBuf::from("packages"),
             output_uddp_dir: PathBuf::from("packages"),
             link_uddp_dirs: true,
-            opt_tex_art_cc: TextureOptimization::None,
+            opt_tex_art_cc: TextureOptimization::Bc7Zstd,
             opt_tex_land_cc: TextureOptimization::None,
-            opt_tex_art_ec: TextureOptimization::None,
-            opt_tex_land_ec: TextureOptimization::None,
+            opt_tex_art_ec: TextureOptimization::Bc7Zstd,
+            opt_tex_land_ec: TextureOptimization::Bc7Zstd,
             opt_mobile_anim_cc: default_mobile_anim_optimization(),
             opt_mobile_anim_ec: default_mobile_anim_optimization(),
-            opt_tex_aux_ec: TextureOptimization::None,
-            zstd_tex_art_cc: LOSSLESS_PAGE_ZSTD_LEVEL,
+            opt_tex_aux_ec: TextureOptimization::Bc7Zstd,
+            zstd_tex_art_cc: BC7_PAGE_ZSTD_LEVEL,
             zstd_tex_land_cc: LOSSLESS_PAGE_ZSTD_LEVEL,
-            zstd_tex_art_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
-            zstd_tex_land_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
+            zstd_tex_art_ec: BC7_PAGE_ZSTD_LEVEL,
+            zstd_tex_land_ec: BC7_PAGE_ZSTD_LEVEL,
             zstd_tilemeta: default_zstd_level(),
-            zstd_mobile_anim_cc: default_zstd_level(),
-            zstd_mobile_anim_ec: default_zstd_level(),
-            zstd_tex_aux_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
+            zstd_mobile_anim_cc: MOBILE_ANIM_PAGE_ZSTD_LEVEL,
+            zstd_mobile_anim_ec: MOBILE_ANIM_PAGE_ZSTD_LEVEL,
+            zstd_tex_aux_ec: BC7_PAGE_ZSTD_LEVEL,
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
             bc7_rdo_enabled: default_bc7_rdo_enabled(),
@@ -218,12 +218,12 @@ impl Default for AppSettings {
             include_static_difs: false,
             map_edition: MapEdition::Standard,
             ec_mobile_anim_allow_missing_kdl: false,
-            gumps_cc_bc1: false,
+            gumps_cc_bc1: true,
             zstd_gumps_cc: None,
             upscale_gumps_cc_paperdoll: UpscaleFilter::None,
             upscale_gumps_cc_single: UpscaleFilter::None,
             gumps_cc_source: SourceFormatPreference::Mul,
-            gumps_ec_bc7: false,
+            gumps_ec_bc7: true,
             zstd_gumps_ec: None,
             upscale_gumps_ec_paperdoll: UpscaleFilter::None,
             upscale_gumps_ec_single: UpscaleFilter::None,
@@ -235,7 +235,7 @@ impl Default for AppSettings {
             zstd_hues: None,
             lights_no_compression: false,
             zstd_lights: None,
-            effects_ec_bc7: false,
+            effects_ec_bc7: true,
             zstd_effects_ec: None,
             effects_ec_strict: false,
             effects_ec_report: None,
@@ -258,7 +258,7 @@ fn default_bc7_rdo_lookback_blocks() -> usize {
 }
 
 fn default_bc7_rdo_enabled() -> bool {
-    true
+    false
 }
 
 fn default_zstd_level() -> i32 {
@@ -266,7 +266,7 @@ fn default_zstd_level() -> i32 {
 }
 
 fn default_mobile_anim_optimization() -> TextureOptimization {
-    TextureOptimization::Bc7
+    TextureOptimization::Bc7Zstd
 }
 
 
@@ -378,43 +378,45 @@ mod tests {
         assert_eq!(settings.dynamapper_routing_dir, None);
         assert_eq!(settings.upscale_profile_path, None);
         assert_eq!(settings.classic_client_exe, None);
-        assert!(settings.bc7_rdo_enabled);
+        assert!(!settings.bc7_rdo_enabled);
         assert_eq!(
             settings.bc7_rdo_lookback_blocks,
             udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
         );
-        assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
-        assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
+        assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7Zstd);
+        assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7Zstd);
+        assert_eq!(settings.zstd_mobile_anim_cc, MOBILE_ANIM_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_mobile_anim_ec, MOBILE_ANIM_PAGE_ZSTD_LEVEL);
     }
 
     #[test]
-    fn app_settings_default_packs_land_as_lossless_zstd() {
+    fn app_settings_default_packs_classic_land_lossless_and_enhanced_land_as_bc7_zstd() {
         let settings = AppSettings::default();
 
         assert_eq!(settings.opt_tex_land_cc, TextureOptimization::None);
-        assert_eq!(settings.opt_tex_land_ec, TextureOptimization::None);
+        assert_eq!(settings.opt_tex_land_ec, TextureOptimization::Bc7Zstd);
         assert_eq!(settings.zstd_tex_land_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
-        assert_eq!(settings.zstd_tex_land_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_tex_land_ec, BC7_PAGE_ZSTD_LEVEL);
     }
 
     #[test]
-    fn app_settings_default_packs_art_and_aux_as_lossless_zstd() {
+    fn app_settings_default_packs_art_and_aux_as_bc7_zstd() {
         let settings = AppSettings::default();
 
-        assert_eq!(settings.opt_tex_art_cc, TextureOptimization::None);
-        assert_eq!(settings.opt_tex_art_ec, TextureOptimization::None);
-        assert_eq!(settings.opt_tex_aux_ec, TextureOptimization::None);
-        assert_eq!(settings.zstd_tex_art_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
-        assert_eq!(settings.zstd_tex_art_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
-        assert_eq!(settings.zstd_tex_aux_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.opt_tex_art_cc, TextureOptimization::Bc7Zstd);
+        assert_eq!(settings.opt_tex_art_ec, TextureOptimization::Bc7Zstd);
+        assert_eq!(settings.opt_tex_aux_ec, TextureOptimization::Bc7Zstd);
+        assert_eq!(settings.zstd_tex_art_cc, BC7_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_tex_art_ec, BC7_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_tex_aux_ec, BC7_PAGE_ZSTD_LEVEL);
     }
 
     #[test]
-    fn app_settings_default_packs_gumps_lossless_and_shares_the_classic_twins() {
+    fn app_settings_default_packs_gumps_lossy_and_shares_the_classic_twins() {
         let settings = AppSettings::default();
 
-        assert!(!settings.gumps_cc_bc1);
-        assert!(!settings.gumps_ec_bc7);
+        assert!(settings.gumps_cc_bc1);
+        assert!(settings.gumps_ec_bc7);
         assert_eq!(settings.zstd_gumps_cc, None);
         assert_eq!(settings.zstd_gumps_ec, None);
         assert_eq!(settings.gumps_cc_source, SourceFormatPreference::Mul);
@@ -434,7 +436,7 @@ mod tests {
         assert_eq!(settings.zstd_hues, None);
         assert!(!settings.lights_no_compression);
         assert_eq!(settings.zstd_lights, None);
-        assert!(!settings.effects_ec_bc7);
+        assert!(settings.effects_ec_bc7);
         assert_eq!(settings.zstd_effects_ec, None);
         assert!(!settings.effects_ec_strict);
         assert_eq!(settings.effects_ec_report, None);
@@ -458,7 +460,7 @@ mod tests {
         settings.zstd_hues = Some(ZSTD_LEVEL);
         settings.lights_no_compression = true;
         settings.zstd_lights = Some(ZSTD_LEVEL);
-        settings.effects_ec_bc7 = true;
+        settings.effects_ec_bc7 = false;
         settings.zstd_effects_ec = Some(ZSTD_LEVEL);
         settings.effects_ec_strict = true;
         settings.effects_ec_report = Some(PathBuf::from("reports/effects_ec.txt"));
@@ -477,8 +479,8 @@ mod tests {
         const ZSTD_LEVEL: i32 = 12;
         const MAX_ID: u32 = 70_000;
         let mut settings = AppSettings::default();
-        settings.gumps_cc_bc1 = true;
-        settings.gumps_ec_bc7 = true;
+        settings.gumps_cc_bc1 = false;
+        settings.gumps_ec_bc7 = false;
         settings.zstd_gumps_cc = Some(ZSTD_LEVEL);
         settings.zstd_gumps_ec = Some(ZSTD_LEVEL);
         settings.upscale_gumps_cc_single = UpscaleFilter::Nearest2x;

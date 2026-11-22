@@ -1787,8 +1787,8 @@ mod tests {
         let settings = AppSettings::default();
 
         let cc = cc_gumps_options(&settings, None);
-        assert_eq!(cc.single_pixel_format, GumpPixelFormat::Rgba8888);
-        assert_eq!(cc.compression, LOSSLESS_SINGLE_GUMP_ZSTD);
+        assert_eq!(cc.single_pixel_format, GumpPixelFormat::Bc1);
+        assert_eq!(cc.compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
         assert_eq!(cc.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
         assert!(cc.paperdoll_upscale_passes.is_empty());
         assert!(cc.single_upscale_passes.is_empty());
@@ -1797,8 +1797,8 @@ mod tests {
 
         let ec = ec_gumps_options(&settings, None, None);
         assert_eq!(ec.max_id, udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID);
-        assert_eq!(ec.single_pixel_format, GumpPixelFormat::Rgba8888);
-        assert_eq!(ec.compression, LOSSLESS_SINGLE_GUMP_ZSTD);
+        assert_eq!(ec.single_pixel_format, GumpPixelFormat::Bc7);
+        assert_eq!(ec.compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
         assert_eq!(ec.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
         assert!(ec.paperdoll_upscale_passes.is_empty());
         assert!(ec.single_upscale_passes.is_empty());
@@ -1806,19 +1806,19 @@ mod tests {
     }
 
     #[test]
-    fn lossy_gumps_take_each_package_lossy_format_at_level_19() {
+    fn lossless_gumps_take_rgba8888_at_the_cli_raw_level() {
         let mut settings = AppSettings::default();
-        settings.gumps_cc_bc1 = true;
-        settings.gumps_ec_bc7 = true;
+        settings.gumps_cc_bc1 = false;
+        settings.gumps_ec_bc7 = false;
 
         let cc = cc_gumps_options(&settings, None);
-        assert_eq!(cc.single_pixel_format, GumpPixelFormat::Bc1);
-        assert_eq!(cc.compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+        assert_eq!(cc.single_pixel_format, GumpPixelFormat::Rgba8888);
+        assert_eq!(cc.compression, LOSSLESS_SINGLE_GUMP_ZSTD);
         assert_eq!(cc.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
 
         let ec = ec_gumps_options(&settings, None, None);
-        assert_eq!(ec.single_pixel_format, GumpPixelFormat::Bc7);
-        assert_eq!(ec.compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+        assert_eq!(ec.single_pixel_format, GumpPixelFormat::Rgba8888);
+        assert_eq!(ec.compression, LOSSLESS_SINGLE_GUMP_ZSTD);
         assert_eq!(ec.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
     }
 
@@ -1914,7 +1914,7 @@ mod tests {
         assert!(!lights.classic_patches.verdata);
 
         let effects = effects_ec_options(&settings);
-        assert!(!effects.bc7, "the Enhanced effects default to RGBA8, as pack-ec-effects without --bc7");
+        assert!(effects.bc7, "the Enhanced effects default to BC7, as pack-ec-effects without --raw");
         assert_eq!(effects.compression, CompressionFlag::ZstdNoDict);
         assert!(!effects.strict);
         assert_eq!(effects.report, None);
