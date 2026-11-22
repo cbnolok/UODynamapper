@@ -118,6 +118,14 @@ const CAVE_MOUTH_TUNNEL_Z_SPAN: f32 = 12.0;
 // A land cut at or above this z, over any UO z (an i8), is no cut (LAND_NO_Z_LIMIT).
 const CAVE_MOUTH_UNCUT_Z: f32 = 128.0;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
+// The neighbours blend_ec_terrain_transitions blends in, in its order: the four edge neighbours (west, east, north,
+// south), then the four diagonal ones (northwest, northeast, southwest, southeast).
+const EC_TERRAIN_TRANSITION_NEIGHBOR_COUNT: u32 = 8u;
+const EC_TERRAIN_TRANSITION_EDGE_NEIGHBOR_COUNT: u32 = 4u;
+const EC_TERRAIN_TRANSITION_NEIGHBOR_OFFSETS: array<vec2<i32>, 8> = array<vec2<i32>, 8>(
+  vec2<i32>(-1, 0), vec2<i32>(1, 0), vec2<i32>(0, -1), vec2<i32>(0, 1),
+  vec2<i32>(-1, -1), vec2<i32>(1, -1), vec2<i32>(-1, 1), vec2<i32>(1, 1),
+);
 // The cells of the KR material micro-contrast's grain along a world tile's edge (apply_kr_material_micro_contrast).
 const KR_MATERIAL_GRAIN_CELLS_PER_TILE: f32 = 2.7;
 
@@ -312,102 +320,28 @@ fn blend_ec_terrain_transitions(
   var accum = base_color * EC_TERRAIN_TRANSITION_BASE_WEIGHT;
   var total_weight = EC_TERRAIN_TRANSITION_BASE_WEIGHT;
 
-  let west_offset = vec2<i32>(-1, 0);
-  let east_offset = vec2<i32>(1, 0);
-  let north_offset = vec2<i32>(0, -1);
-  let south_offset = vec2<i32>(0, 1);
-  let northwest_offset = vec2<i32>(-1, -1);
-  let northeast_offset = vec2<i32>(1, -1);
-  let southwest_offset = vec2<i32>(-1, 1);
-  let southeast_offset = vec2<i32>(1, 1);
-
-  let west = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x - 1, world_tile.y),
-    world_xz,
-    base_color,
-    ec_transition_neighbor_weight(west_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += west.rgb * west.a;
-  total_weight += west.a;
-
-  let east = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x + 1, world_tile.y),
-    world_xz,
-    base_color,
-    ec_transition_neighbor_weight(east_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += east.rgb * east.a;
-  total_weight += east.a;
-
-  let north = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x, world_tile.y - 1),
-    world_xz,
-    base_color,
-    ec_transition_neighbor_weight(north_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += north.rgb * north.a;
-  total_weight += north.a;
-
-  let south = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x, world_tile.y + 1),
-    world_xz,
-    base_color,
-    ec_transition_neighbor_weight(south_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += south.rgb * south.a;
-  total_weight += south.a;
-
-  let northwest = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x - 1, world_tile.y - 1),
-    world_xz,
-    base_color,
-    ec_transition_diagonal_weight(northwest_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += northwest.rgb * northwest.a;
-  total_weight += northwest.a;
-
-  let northeast = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x + 1, world_tile.y - 1),
-    world_xz,
-    base_color,
-    ec_transition_diagonal_weight(northeast_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += northeast.rgb * northeast.a;
-  total_weight += northeast.a;
-
-  let southwest = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x - 1, world_tile.y + 1),
-    world_xz,
-    base_color,
-    ec_transition_diagonal_weight(southwest_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += southwest.rgb * southwest.a;
-  total_weight += southwest.a;
-
-  let southeast = ec_transition_neighbor_color(
-    current_tile,
-    atlas_read_meta(world_tile.x + 1, world_tile.y + 1),
-    world_xz,
-    base_color,
-    ec_transition_diagonal_weight(southeast_offset, uv_in_tile),
-    world_gradients,
-  );
-  accum += southeast.rgb * southeast.a;
-  total_weight += southeast.a;
+  // One call site in a loop, not eight: the driver's compiler inlines a function at every call site, and the eight
+  // inlined neighbour material samples made the land pipeline about 26,000 instructions (and 7 s of a cold RADV
+  // compile) larger (docs/agent_notes/shader_compile_progress.md).
+  for (var index = 0u; index < EC_TERRAIN_TRANSITION_NEIGHBOR_COUNT; index++) {
+    let offset = EC_TERRAIN_TRANSITION_NEIGHBOR_OFFSETS[index];
+    var weight: f32;
+    if (index < EC_TERRAIN_TRANSITION_EDGE_NEIGHBOR_COUNT) {
+      weight = ec_transition_neighbor_weight(offset, uv_in_tile);
+    } else {
+      weight = ec_transition_diagonal_weight(offset, uv_in_tile);
+    }
+    let neighbor = ec_transition_neighbor_color(
+      current_tile,
+      atlas_read_meta(world_tile.x + offset.x, world_tile.y + offset.y),
+      world_xz,
+      base_color,
+      weight,
+      world_gradients,
+    );
+    accum += neighbor.rgb * neighbor.a;
+    total_weight += neighbor.a;
+  }
 
   return accum / max(total_weight, 0.0001);
 }

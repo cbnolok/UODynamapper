@@ -130,6 +130,104 @@ one thread.
 The screenshot is the one thing still behind the batch: Bevy maps its readback buffer in a task on the same async
 compute pool, so a capture requested during the cold compiles completes after them (the frame is captured at once).
 
+## The land pipeline: shade_land inlined ten times
+
+The 32 s pipeline is the land's (`shaders/world/land/main.wesl`, `LandMaterialExtension`). It has no shader def of its
+own: styles are uniforms, so one land pipeline serves all four styles, and only one compiles. RADV's statistics
+(`RADV_DEBUG=shaderstats`, Mesa 26.2.7, ACO) of the cold Enhanced start at dev 3eee2b00: 120 shaders, 398,839
+instructions, of which the land's pixel shader 286,211 (256 VGPRs, 44,032 bytes of scratch, 1.51 MB of code, 5,032
+branches, 7,554 SGPRs spilled). The next largest are the art and ground pixel shaders at 12,753 and 8,841; every other
+shader is under 6,000.
+
+Bevy creates material shader modules unchecked (`ValidateShader::Disabled`, `ShaderRuntimeChecks::unchecked()`), so
+wgpu's loop bounding is already off for this module: it is not the cost. The cost is inlining. NIR inlines every
+function call, so each call site of a function is a copy of its body. `shade_land` (sampling, blur, sharpening, bump,
+grunge, KR micro-contrast, the three shading modes, light decals, transition blends) had six call sites, four in
+`compose_ec_terrain`, which itself has two calls (cache hit and miss): ten copies. Bisected on the composed WGSL in a
+standalone wgpu 30 probe (a pipeline with the app's 20 shader defs, a fresh `MESA_SHADER_CACHE_DIR` per compile, the
+app's cold time reproduced):
+
+| land fragment shader | pixel shader instructions | compile |
+|---|---:|---:|
+| dev 3eee2b00 | 286,940 | 32.5 s |
+| `shade_land` returning its input | 10,645 | 0.8 s |
+| one `shade_land` call site | 65,385 | 3.8 s |
+| one call site, the eight-neighbour EC transition blend stubbed | 35,478 | 1.7 s |
+
+So `shade_land` is about 276,000 of the 287,000 instructions. The EC transition blend (eight unrolled neighbour
+material samples) is about 30,000 of a copy that can run it, but only the fragment's own tile runs it: the composed
+passes call `shade_land` with a literal `ordered_coverage` of true, which drops it. The compile time grows faster than
+the size.
+
+**Committed: the neighbour blend loops.** `blend_ec_terrain_transitions` loops over a constant table of the eight
+neighbour offsets, in the old order (west, east, north, south, then the diagonals) and with the same accumulation, so
+its sums are the same: one inlined material sample, not eight. The probe's compile goes from 32.5 to 25.9 s (260,612
+instructions, 7,208 spilled SGPRs) and the app's cold start by about 6 to 10 s (below), with no frame cost.
+
+**Measured, not committed: one `shade_land` call site for the passes.** The rest is the ten copies. `compose_land`
+replaces `compose_ec_terrain` and the two `shade_land` calls of `land_color`: it works out the passes first (the lead,
+taken whole; an optional second one, mixed by its alpha: the all-liquid chunk's own layer under the bank, or without
+EC transitions the dry bank; then the coverage layers above the lead) and runs them through one `shade_land` call in a
+loop, in the old order. `land_color` calls it twice, with a literal `cached` (the cache hit, or no EC coverage at all;
+and the uncached reconstruction): two copies. It is held because it costs Enhanced a little frame time (below). The
+variants, Enhanced cold start in the probe:
+
+| land fragment shader | instructions | code | branches | spilled SGPRs / VGPRs | probe compile |
+|---|---:|---:|---:|---:|---:|
+| dev 3eee2b00 | 286,940 | 1.52 MB | 5,047 | 7,554 / 0 | 28.9 to 32.5 s |
+| neighbour loop (committed) | 260,612 | | | 7,208 / 0 | 25.9 s |
+| pass loop alone, neighbours unrolled | 104,661 | | | 192 / 586 | 11.3 s |
+| both loops, two `shade_land` copies | 76,314 | 0.39 MB | 1,757 | 113 / 1 | 4.2 to 4.6 s |
+| both, the lead pass outside the loop (four copies) | 138,690 | 0.72 MB | 2,902 | 2,207 / 0 | 13.9 s (machine busy) |
+| both, one copy (`cached` a runtime value) | 48,864 | 0.25 MB | 1,243 | 84 / 0 | 2.3 to 2.4 s |
+
+Cold starts in the app (pipelines done, one run each, the headless KWin below at Britain, 2026-11-22):
+
+| style | dev 3eee2b00 | neighbour loop | both loops, two copies | one copy |
+|---|---:|---:|---:|---:|
+| Classic | 38.3 s | 28.0 s | 12.5 s | 7.4 s |
+| Enhanced | 35.6 s | 28.8 s | 11.4 s | 7.8 s |
+| KR-like | 35.5 s | 29.1 s | 11.4 s | 8.1 s |
+| UOD-Painterly | 38.3 s | 28.9 s | 11.2 s | 9.0 s |
+
+Warm frame times (`frame_benchmark.py`, 1900 x 1000, the same binary with each tree's shaders on a warmed Mesa cache,
+median ms of 2 launches; Enhanced again with 3 launches and the neighbour loop alone):
+
+| camera | style | view | dev | both loops | change | Enhanced again: dev | neighbour loop | both loops |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| ortho | Classic | city-britain | 7.56 | 7.59 | +0.4 % | | | |
+| ortho | Classic | land-mountains | 5.28 | 5.30 | +0.4 % | | | |
+| ortho | Enhanced | city-britain | 18.90 | 18.96 | +0.3 % | 19.17 | 19.13 (-0.2 %) | 19.18 (+0.1 %) |
+| ortho | Enhanced | land-mountains | 14.64 | 14.86 | +1.5 % | 14.74 | 14.69 (-0.4 %) | 14.96 (+1.4 %) |
+| ortho | KR-like | city-britain | 24.85 | 24.44 | -1.7 % | | | |
+| ortho | KR-like | land-mountains | 15.51 | 15.22 | -1.9 % | | | |
+| persp | Classic | city-britain | 7.68 | 7.62 | -0.7 % | | | |
+| persp | Classic | land-mountains | 5.29 | 5.31 | +0.3 % | | | |
+| persp | Enhanced | city-britain | 17.94 | 19.04 | +6.1 % | 19.10 | 18.84 (-1.4 %) | 19.50 (+2.1 %) |
+| persp | Enhanced | land-mountains | 14.64 | 15.13 | +3.3 % | 15.07 | 14.73 (-2.2 %) | 15.10 (+0.2 %) |
+| persp | KR-like | city-britain | 24.54 | 24.42 | -0.5 % | | | |
+| persp | KR-like | land-mountains | 16.82 | 16.75 | -0.4 % | | | |
+
+Per launch, Enhanced land-mountains with both loops was slower in every one (0.06 to 0.58 ms); the neighbour loop
+alone never was, so the cost is the pass loop's. The one-copy variant cost 1.0 to 21.4 % in every style and is
+rejected.
+
+The regression harness (full tier, all styles, 493 captures) with both loops: 452 identical, 37 within tolerance
+(at most 1 level), 4 changed, all acid-pools in KR-like and UOD-Painterly over Classic land (cc/cc, ec/cc): 0.010 to
+0.017 % of the pixels, at most 18 levels, on single-pixel lines along the tile seams. A rerun of each tree reproduces
+both images exactly, but the pass loop alone (neighbours unrolled) changes them differently from launch to launch, and
+putting the lead pass back outside the loop changes them too (at most 11 and 18 levels). Those pixels lie on the 2 x 2
+quads across a seam, whose lanes sit on two tiles; most likely (not traced to the instruction) a derivative there reads
+a lane that took another path: Classic textures take their footprint with `fwidth(uv)`/`dpdx(uv)` of the per-tile UV
+(`blurred_albedo`, `apply_sharpening`) and implicit-LOD samples, so the value depends on how the compiler laid the
+shader out, and dev's is no more defined than the loop's. The neighbour loop alone leaves the acid-pools captures
+identical; over the whole full tier it gives 476 identical and 17 within tolerance (at most 2 levels, EC land in
+Enhanced, KR-like and UOD-Painterly), none changed.
+
+Next: with the pass loop the land pipeline is 8.9 s of the cold start (the app log's "ready after") and the other 119
+shaders about 4 s (112,000 instructions in all; the art and ground pixel shaders the largest at 12,753 and 8,841);
+without it the land pipeline stays about 27 s of it.
+
 ## Testing with a cold cache
 
 Point `MESA_SHADER_CACHE_DIR` at a fresh empty directory under the scratch folder for the launch (never delete
