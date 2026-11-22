@@ -10,7 +10,10 @@
 //!   stay a buffer, as the crate's (see bc7.wgsl).
 //! - bc1.wgsl, its BC1 kernel with BC1's one bit of alpha added (the crate's encodes colour only).
 //!
-//! The BC7 blocks are the crate's byte for byte, and the opaque BC1 blocks the crate's BC1 ones (`tests.rs`).
+//! The BC7 blocks are the crate's byte for byte but for two kinds, encoded as the CPU encoder does, for blocks Zstd
+//! compresses better: a block of one colour is the CPU encoder's solid block, and an all-opaque block with alpha
+//! takes neither mode 4 nor 5 and keeps alpha 255 (p-bits 1 in modes 6 and 7). The opaque BC1 blocks are the crate's
+//! BC1 ones (`tests.rs`).
 //! [`MobileBlockEncoder::compile`] compiles BC7 UltraFast with alpha, Dynamapper's format, and
 //! [`MobileBlockEncoder::lazy`] nothing; every other format compiles the first time a frame of it is added, or ahead
 //! with [`MobileBlockEncoder::compile_format`].
@@ -33,6 +36,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use wgpu::util::DeviceExt;
 use crate::warm_up::CompileReport;
+use uot_texture_codecs::bc7::tables::BC7_MODE5_OPTIMAL_ENDPOINTS;
 
 /// Texels per side of a block.
 pub const BLOCK_SIDE: u32 = 4;
@@ -211,6 +215,20 @@ impl Bc7Profile {
     }
 }
 
+/// The CPU encoder's endpoints for a block of one colour, by channel value (`BC7_MODE5_OPTIMAL_ENDPOINTS`), as the
+/// WGSL constant bc7.wgsl reads them from: the low endpoint in bits 0-7, the high one in bits 8-15.
+fn solid_endpoints_wgsl() -> String {
+    let endpoints: Vec<String> = BC7_MODE5_OPTIMAL_ENDPOINTS.iter()
+        .map(|&(low, high)| format!("{}u", u32::from(low) | u32::from(high) << u8::BITS)).collect();
+    format!("\n// The CPU's solid block endpoints (block_encode.rs).\nconst MODE5_SOLID_ENDPOINTS = array<u32, {}>({});\n",
+        endpoints.len(), endpoints.join(", "))
+}
+
+/// The BC7 kernel of `profile`: bc7.wgsl with the profile's mode constants and the solid block endpoints.
+fn bc7_source(profile: &Bc7Profile) -> String {
+    format!("{BC7_SHADER}{}{}", profile.wgsl_constants(), solid_endpoints_wgsl())
+}
+
 /// A kernel's pipeline: the source texture, the output blocks and the frame's uniforms, at a dynamic offset; for BC7,
 /// the profile's settings too.
 struct Kernel {
@@ -238,7 +256,7 @@ impl Kernel {
                     task_shader_dispatch_tracking: false, mesh_shader_primitive_indices_clamp: false,
                     int_div_checks: true,
                 };
-                let source = format!("{BC7_SHADER}{}", profile.wgsl_constants());
+                let source = bc7_source(&profile);
                 let descriptor = wgpu::ShaderModuleDescriptor {
                     label: Some(&label), source: wgpu::ShaderSource::Wgsl(source.into()),
                 };

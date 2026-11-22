@@ -24,7 +24,18 @@
 // selects. The settings that enter the arithmetic (channels, refinement counts, thresholds) stay in the buffer, as the
 // crate binds it: as constants the compiler folds and reorders the floating-point math around them, and about 0.3 %
 // of the blocks came out different from the crate's (UltraFast with alpha; 2026-11-22). The rest of the kernel is
-// the crate's as it is, so the blocks are the crate's byte for byte (block_encode/tests.rs checks it).
+// the crate's as it is, but for two kinds of block, which it encodes as the CPU encoder (uot-texture-codecs'
+// AnalyticalWide) does, for blocks Zstd compresses better (2026-11-22, docs/agent_notes/atlas_page_compression.md):
+//
+// - A block of one colour (a transparent one too) is the CPU's solid block (`code_solid_block`), mode 5 with the
+//   endpoints of MODE5_SOLID_ENDPOINTS, which block_encode.rs appends from the CPU's table: exact, the same for every
+//   block of that colour, and found without the search.
+// - A block whose every alpha is 255 (`opaque_block`) skips modes 4 and 5, as the CPU's opaque blocks nearly always
+//   do: on the Enhanced land, mode 6 alone gives up 0.6 dB of the GPU's 2 dB lead over the CPU and Zstd takes 4 %
+//   off its blocks. Its modes 6 and 7 keep their p-bits 1, so its alpha decodes 255, as the CPU's mode 6 does,
+//   rather than 254 (252 in mode 7) where a p-bit of 0 fits the colour better.
+//
+// Every other block is the crate's byte for byte (block_encode/tests.rs checks it).
 
 struct Uniforms {
     width: u32,
@@ -64,6 +75,15 @@ struct Mode45Parameters {
 @group(0) @binding(1) var<storage, read_write> block_buffer: array<u32>;
 @group(0) @binding(2) var<uniform> uniforms: Uniforms;
 @group(0) @binding(3) var<storage, read> settings: Settings;
+
+// Whether every alpha of the block is 255 with the alpha encoded (see the top).
+var<private> opaque_block: bool;
+
+// The colour and alpha weights of the CPU's solid block: every weight 1, the anchor's one bit included.
+const SOLID_WEIGHTS = 0x2aaaaaabu;
+const SOLID_WEIGHT_BITS = 31u;
+// The texels of a block.
+const BLOCK_TEXELS = 16u;
 
 fn sq(x: f32) -> f32 {
     return x * x;
@@ -412,8 +432,10 @@ fn ep_quant0367(qep: ptr<function, array<i32, 24>>, ep: ptr<function, array<f32,
             err1 += sq((*ep)[offset + i * 4u + p] - ep_b[4u + p]);
         }
 
+        // Modes 6 and 7 of an opaque block keep the p-bits that decode its alpha 255 (see the top).
+        let p_bits_0 = err0 < err1 && !((mode == 6u || mode == 7u) && opaque_block);
         for (var p = 0u; p < 4u; p++) {
-            (*qep)[offset + i * 4u + p] = select(qep_b[4u + p], qep_b[0u + p], err0 < err1);
+            (*qep)[offset + i * 4u + p] = select(qep_b[4u + p], qep_b[0u + p], p_bits_0);
         }
     }
 }
@@ -1340,7 +1362,7 @@ fn compress_block_bc7_core(state: ptr<function, State>, block: ptr<function, arr
         bc7_enc_mode13(state,block);
         bc7_enc_mode7(state, block);
     }
-    if (MODES_4_5) {
+    if (MODES_4_5 && !opaque_block) {
         bc7_enc_mode45(state, block);
     }
     if (MODE_6) {
@@ -1358,6 +1380,41 @@ fn compute_opaque_err(block: ptr<function, array<f32, 64>>) -> f32 {
         }
         return err;
     }
+}
+
+// Whether the block's 16 texels are one colour.
+fn block_is_uniform(block: ptr<function, array<f32, 64>>) -> bool {
+    for (var k = 1u; k < BLOCK_TEXELS; k++) {
+        for (var p = 0u; p < 4u; p++) {
+            if ((*block)[p * BLOCK_TEXELS + k] != (*block)[p * BLOCK_TEXELS]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// The CPU encoder's block of one colour (uot-texture-codecs' `encode_solid_block`): mode 5, no rotation, each colour
+// channel's endpoints from MODE5_SOLID_ENDPOINTS with every weight 1, the alpha in both alpha endpoints (255 without
+// it).
+fn code_solid_block(state: ptr<function, State>, block: ptr<function, array<f32, 64>>) {
+    for (var k = 0u; k < 5u; k++) {
+        (*state).data[k] = 0u;
+    }
+    var pos = 0u;
+    // Mode 5, rotation 0.
+    put_bits(state, &pos, 6u, 32u);
+    put_bits(state, &pos, 2u, 0u);
+    for (var p = 0u; p < 3u; p++) {
+        let endpoints = MODE5_SOLID_ENDPOINTS[u32(round((*block)[p * BLOCK_TEXELS]))];
+        put_bits(state, &pos, 7u, endpoints & 0xffu);
+        put_bits(state, &pos, 7u, endpoints >> 8u);
+    }
+    let alpha = select(255u, u32(round((*block)[3u * BLOCK_TEXELS])), settings.channels == 4u);
+    put_bits(state, &pos, 8u, alpha);
+    put_bits(state, &pos, 8u, alpha);
+    put_bits(state, &pos, SOLID_WEIGHT_BITS, SOLID_WEIGHTS);
+    put_bits(state, &pos, SOLID_WEIGHT_BITS, SOLID_WEIGHTS);
 }
 
 @compute
@@ -1378,8 +1435,14 @@ fn compress_bc7(@builtin(global_invocation_id) global_id: vec3<u32>) {
     load_block_interleaved_rgba(&block, xx, yy);
 
     var state: State;
+    if (block_is_uniform(&block)) {
+        code_solid_block(&state, &block);
+        store_data(&state, block_width, xx, yy);
+        return;
+    }
     state.best_err = 3.402823e38;
     state.opaque_err = compute_opaque_err(&block);
+    opaque_block = settings.channels == 4u && state.opaque_err == 0.0;
 
     compress_block_bc7_core(&state, &block);
 

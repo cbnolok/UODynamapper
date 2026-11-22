@@ -68,6 +68,7 @@ const CHECK_LAYERS: u32 = 2;
 const CHECK_LAYER: u32 = 1;
 const CHECK_THREADS: u32 = 64;
 const RGBA_BYTES: usize = 4;
+const BLOCK_TEXELS: usize = (BLOCK_SIDE * BLOCK_SIDE) as usize;
 const ALPHA: usize = 3;
 const F32_BYTES: u64 = 4;
 const CHANNEL_MAX: f32 = 255.0;
@@ -937,6 +938,59 @@ fn a_frame_below_others_encodes_as_at_its_own_corner() {
     }
 }
 
+/// Blocks of one colour, of every alpha and of channels from 0 to 255, and all-opaque blocks of two colours: in every
+/// BC7 profile, those of one colour are the CPU encoder's solid block (opaque without alpha), the others decode alpha
+/// 255 with alpha; a second encode gives the same blocks.
+#[test]
+#[ignore = "requires a GPU adapter; run explicitly for block encoder changes"]
+fn uniform_and_opaque_blocks_are_the_cpu_encoders() {
+    /// Blocks across a row of the sample, and its block rows: one colour, then two colours all opaque.
+    const BLOCKS_WIDE: u32 = 64;
+    const UNIFORM_ROWS: u32 = 4;
+    const ROWS: u32 = UNIFORM_ROWS + 1;
+    /// Steps of the channels between neighbouring blocks, coprime with 256 so the blocks cover every value.
+    const STEPS: [u32; 4] = [37, 101, 7, 53];
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let (width, height) = (BLOCKS_WIDE * BLOCK_SIDE, ROWS * BLOCK_SIDE);
+    let colour = |block: u32| STEPS.map(|step| (block * step) as u8);
+    let rgba: Vec<u8> = (0..height).flat_map(|y| (0..width).flat_map(move |x| {
+        let block = y / BLOCK_SIDE * BLOCKS_WIDE + x / BLOCK_SIDE;
+        let mut texel = colour(block);
+        if y / BLOCK_SIDE >= UNIFORM_ROWS {
+            texel = colour(block + (x + y) % 2);
+            texel[ALPHA] = u8::MAX;
+        }
+        texel
+    })).collect();
+    let sample = Sample { name: String::new(), group: String::new(), classic: false, width, height, rgba,
+        sheet: false };
+    let source = upload(&gpu, &sample);
+    let padded = padded_rgba(&sample);
+    let mut encoder = MobileBlockEncoder::new(&gpu.device, &gpu.queue);
+    for alpha in [true, false] {
+        for quality in Bc7Quality::ALL {
+            let format = if alpha { MobileBlockFormat::Bc7(quality) } else { MobileBlockFormat::Bc7Opaque(quality) };
+            let blocks = encode_ours(&gpu, &mut encoder, format, &[&sample], &[&source]).remove(0);
+            for (index, block) in blocks.chunks_exact(format.block_bytes() as usize).enumerate() {
+                let index = index as u32;
+                let texels = padded_block(&padded, width, index % BLOCKS_WIDE, index / BLOCKS_WIDE);
+                match bc7_block_kind(&texels, alpha) {
+                    Bc7BlockKind::Uniform => assert_eq!(block, cpu_bc7_block(&texels, alpha),
+                        "{}: block {index}, {:?}", format_name(format), texels[0]),
+                    Bc7BlockKind::OpaqueWithAlpha => assert!(bc7_block_error(block, &texels).1,
+                        "{}: block {index} decodes alpha below 255", format_name(format)),
+                    Bc7BlockKind::Other => assert!(!alpha, "{}: block {index}", format_name(format)),
+                }
+            }
+            assert_eq!(encode_ours(&gpu, &mut encoder, format, &[&sample], &[&source]).remove(0), blocks,
+                "{}: a second encode", format_name(format));
+        }
+    }
+}
+
 const ART_CLASSIC_PACKAGE: &str = "tex_art_cc.uddp";
 const ART_ENHANCED_PACKAGE: &str = "tex_art_ec.uddp";
 /// The side of the crops of real atlas pages, from their corner, where the packing starts.
@@ -988,9 +1042,8 @@ fn profiles_are_block_compressions_settings() {
 fn every_format_validates() {
     for format in MobileBlockFormat::ALL {
         let source = match format {
-            MobileBlockFormat::Bc7(quality) => format!("{BC7_SHADER}{}", Bc7Profile::of(quality, true).wgsl_constants()),
-            MobileBlockFormat::Bc7Opaque(quality) =>
-                format!("{BC7_SHADER}{}", Bc7Profile::of(quality, false).wgsl_constants()),
+            MobileBlockFormat::Bc7(quality) => bc7_source(&Bc7Profile::of(quality, true)),
+            MobileBlockFormat::Bc7Opaque(quality) => bc7_source(&Bc7Profile::of(quality, false)),
             MobileBlockFormat::Bc1 => BC1_SHADER.to_string(),
         };
         let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap_or_else(|error| {
@@ -1106,8 +1159,66 @@ fn block_all_opaque(sample: &Sample, x: u32, y: u32) -> bool {
     })
 }
 
-/// Our kernels against block_compression's on real frames and atlas pages: every BC7 profile's blocks, with alpha and
-/// opaque, byte for byte; BC1's where the crate's kernel can encode them (blocks all opaque), but for a block whose
+/// The kinds of BC7 block our kernel encodes apart from block_compression's: one colour, the CPU encoder's solid block;
+/// all opaque with alpha, no mode 4 or 5 and p-bits 1 in modes 6 and 7; then the rest, the crate's byte for byte.
+#[derive(Clone, Copy, PartialEq)]
+enum Bc7BlockKind {
+    Uniform,
+    OpaqueWithAlpha,
+    Other,
+}
+
+/// How much more RGB squared error our all-opaque blocks with alpha may have than the CPU encoder's.
+const OPAQUE_CPU_ERROR_RATIO: f64 = 1.0;
+/// BC7's modes 4 and 5, with a rotated channel, which an all-opaque block does not take.
+const DUAL_PLANE_MODES: [u32; 2] = [4, 5];
+
+/// The texels of the block at `x`, `y` (in blocks) of a sample as the kernels load them: padding transparent black.
+fn padded_block(padded: &[u8], padded_width: u32, x: u32, y: u32) -> [[u8; RGBA_BYTES]; BLOCK_TEXELS] {
+    std::array::from_fn(|texel| {
+        let (tx, ty) = (x * BLOCK_SIDE + texel as u32 % BLOCK_SIDE, y * BLOCK_SIDE + texel as u32 / BLOCK_SIDE);
+        padded[(ty * padded_width + tx) as usize * RGBA_BYTES..][..RGBA_BYTES].try_into().unwrap()
+    })
+}
+
+fn bc7_block_kind(texels: &[[u8; RGBA_BYTES]; BLOCK_TEXELS], alpha: bool) -> Bc7BlockKind {
+    if texels.iter().all(|texel| *texel == texels[0]) {
+        Bc7BlockKind::Uniform
+    } else if alpha && texels.iter().all(|texel| texel[ALPHA] == u8::MAX) {
+        Bc7BlockKind::OpaqueWithAlpha
+    } else {
+        Bc7BlockKind::Other
+    }
+}
+
+/// The CPU encoder's block for `texels`, opaque if `alpha` is false: AnalyticalWide's, with its flags.
+fn cpu_bc7_block(texels: &[[u8; RGBA_BYTES]; BLOCK_TEXELS], alpha: bool) -> [u8; 16] {
+    use uot_texture_codecs::bc7::analytical::{pack_bc7_rgba, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE,
+        FLAG_USE_TRIVIAL_M6};
+    let mut texels = *texels;
+    if !alpha {
+        texels.iter_mut().for_each(|texel| texel[ALPHA] = u8::MAX);
+    }
+    let mut block = [0; 16];
+    pack_bc7_rgba(&mut block, &texels, FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6);
+    block
+}
+
+/// The RGB squared error of a BC7 block against its texels, and whether it decodes every alpha 255.
+fn bc7_block_error(block: &[u8], texels: &[[u8; RGBA_BYTES]; BLOCK_TEXELS]) -> (f64, bool) {
+    let extent = ImageExtent::new(BLOCK_SIDE, BLOCK_SIDE).unwrap();
+    let decoded = uot_texture_codecs::bc7::decode_bc7_to_rgba8888(block, extent).unwrap();
+    let squared = texels.iter().zip(decoded.chunks_exact(RGBA_BYTES)).map(|(source, texel)| {
+        (0..ALPHA).map(|channel| f64::from(source[channel].abs_diff(texel[channel])).powi(2)).sum::<f64>()
+    }).sum();
+    (squared, decoded.chunks_exact(RGBA_BYTES).all(|texel| texel[ALPHA] == u8::MAX))
+}
+
+/// Our kernels against block_compression's on real frames and atlas pages. Every BC7 profile's blocks, with alpha and
+/// opaque, are the crate's byte for byte, but for two kinds the CPU encoder encodes more exactly and Zstd compresses
+/// better: a block of one colour is the CPU encoder's solid block, and an all-opaque block with alpha takes neither
+/// mode 4 nor 5 and decodes alpha 255 everywhere (its modes 6 and 7 keep p-bits 1), with at most
+/// [`OPAQUE_CPU_ERROR_RATIO`] times the CPU encoder's RGB error over those blocks. BC1's blocks are the crate's where its kernel can encode them (blocks all opaque), but for a block whose
 /// endpoints came out equal, which keeps the crate's endpoints with every index 0 (the crate's index 3 would be
 /// transparent there).
 #[test]
@@ -1140,20 +1251,51 @@ fn our_kernels_encode_as_block_compression() {
             let theirs = encode_with_crate(&gpu, &mut reference,
                 CompressionVariant::BC7(crate_settings(quality, alpha)), format, &samples, &sources);
             let theirs_ms = started.elapsed().as_secs_f64() * 1e3;
-            let (mut blocks, mut differing) = (0usize, 0usize);
+            let (mut blocks, mut differing, mut uniform, mut not_solid) = (0usize, 0usize, 0usize, 0usize);
+            let (mut opaque, mut opaque_differing, mut soft_alpha, mut dual_plane) = (0usize, 0usize, 0usize, 0usize);
+            let (mut ours_squared, mut theirs_squared, mut cpu_squared) = (0.0, 0.0, 0.0);
             for (sample, (ours, theirs)) in samples.iter().zip(ours.iter().zip(&theirs)) {
+                let padded = padded_rgba(sample);
+                let (padded_width, _) = padded_size(sample.width, sample.height);
+                let blocks_wide = padded_width / BLOCK_SIDE;
                 let block_bytes = format.block_bytes() as usize;
-                let differ = ours.chunks_exact(block_bytes).zip(theirs.chunks_exact(block_bytes))
-                    .filter(|(a, b)| a != b).count();
+                let mut differ = 0;
+                for (index, (ours, theirs)) in ours.chunks_exact(block_bytes).zip(theirs.chunks_exact(block_bytes))
+                    .enumerate() {
+                    let index = index as u32;
+                    let texels = padded_block(&padded, padded_width, index % blocks_wide, index / blocks_wide);
+                    match bc7_block_kind(&texels, alpha) {
+                        Bc7BlockKind::Uniform => {
+                            uniform += 1;
+                            not_solid += usize::from(ours != cpu_bc7_block(&texels, alpha));
+                        }
+                        Bc7BlockKind::OpaqueWithAlpha => {
+                            opaque += 1;
+                            opaque_differing += usize::from(ours != theirs);
+                            dual_plane += usize::from(DUAL_PLANE_MODES.contains(&ours[0].trailing_zeros()));
+                            let (squared, opaque_alpha) = bc7_block_error(ours, &texels);
+                            ours_squared += squared;
+                            soft_alpha += usize::from(!opaque_alpha);
+                            theirs_squared += bc7_block_error(theirs, &texels).0;
+                            cpu_squared += bc7_block_error(&cpu_bc7_block(&texels, alpha), &texels).0;
+                        }
+                        Bc7BlockKind::Other => differ += usize::from(ours != theirs),
+                    }
+                }
                 if differ > 0 {
                     println!("  {}: {differ} blocks differ", sample.name);
                 }
                 blocks += ours.len() / block_bytes;
                 differing += differ;
             }
-            println!("{}: {differing} of {blocks} blocks differ (wall ms with the compile: ours {ours_ms:.0}, the \
-                crate's {theirs_ms:.0})", format_name(format));
-            if differing > 0 {
+            let ratio = |other: f64| if other > 0.0 { ours_squared / other } else { 1.0 };
+            let (crate_ratio, cpu_ratio) = (ratio(theirs_squared), ratio(cpu_squared));
+            println!("{}: {differing} of {} other blocks differ; {not_solid} of {uniform} of one colour are not the \
+                CPU's; {opaque_differing} of {opaque} all opaque differ, {dual_plane} in mode 4 or 5, {soft_alpha} \
+                without alpha 255, RGB error {crate_ratio:.4}x the crate's and {cpu_ratio:.4}x the CPU's (wall ms with \
+                the compile: ours {ours_ms:.0}, the crate's {theirs_ms:.0})", format_name(format),
+                blocks - uniform - opaque);
+            if differing > 0 || not_solid > 0 || soft_alpha > 0 || dual_plane > 0 || cpu_ratio > OPAQUE_CPU_ERROR_RATIO {
                 failures.push(format_name(format));
             }
         }
@@ -1183,7 +1325,7 @@ fn our_kernels_encode_as_block_compression() {
     if differing > 0 {
         failures.push(format_name(format));
     }
-    assert!(failures.is_empty(), "blocks differ from block_compression's: {failures:?}");
+    assert!(failures.is_empty(), "blocks differ from block_compression's, or the CPU's: {failures:?}");
 }
 
 /// Blocks at BC1's edges, 22 texels wide (the last block half padding): an empty one with colour, one opaque texel,
