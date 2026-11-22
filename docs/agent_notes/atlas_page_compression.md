@@ -605,14 +605,16 @@ RGBA8888 test packages. Slow, the last profile, was left out: Basic already cost
   compiles nothing (60 ms, the device's start) and each format compiles at its first page: UltraFast in 5.2 s cold,
   47 ms warm, BC1 in 0.24 s cold, 7 ms warm (`page_encode` test `a_page_of_several_bands_encodes_close_to_its_texels`).
 
-**In the packers** (`udd_conv::atlas::bc_encode_device`): the mobile animation (Classic, Enhanced), art, land and
-aux packers encode their BC7 pages on the GPU when a wgpu adapter is there (Auto), otherwise on the CPU. If the GPU
-fails, Auto warns and the CPU encodes the page. `udd-cli pack --bc-encode-device auto|cpu|gpu` chooses the device;
-`gpu` fails without an adapter. The RDO, when on, runs after the encode on its own device (`--bc7-rdo-device`). The
-single Classic gumps' BC1 (`gumps_cc`, and the Classic colour space gumps of a lossy `gumps_ec`) takes the same device
-since our BC1 keeps their punch-through transparency (below, "GPU block encoding"). The other BC7 images (the Enhanced
-gumps, effects, radar) are not atlas pages and stay on the CPU, as the effects' BC1 does. The converter GUI has both
-choices on its BC7 cards, and the encode device as BC1 Encode on the gump cards packing lossy.
+**In the packers** (`udd_conv::atlas::bc_encode_device`): `udd-cli pack --bc-encode-device auto|cpu|gpu` chooses
+where the mobile animation (Classic, Enhanced), art, land and aux packers encode their BC7 pages and where the single
+Classic gumps' BC1 (`gumps_cc`, and the Classic colour space gumps of a lossy `gumps_ec`; our BC1 keeps their
+punch-through transparency, below, "GPU block encoding") is encoded. Auto, the default, encodes the BC1 on the GPU when
+a wgpu adapter is there and the BC7 on the CPU (the user, 2026-11-22: the GPU BC7 pages are 1–2.5 % larger after Zstd
+and faster only on some packs, so they wait for an optimized GPU encoder). If the GPU fails, Auto warns and the CPU
+encodes the image. `gpu` puts both on the GPU and fails without an adapter. The RDO, when on, runs after the encode on
+its own device (`--bc7-rdo-device`). The other BC7 images (the Enhanced gumps, effects, radar) are not atlas pages and
+stay on the CPU, as the effects' BC1 does. The converter GUI has both choices on its BC7 cards, and the encode device
+as BC1 Encode on the gump cards packing lossy.
 
 Full packs with their default formats (BC7 without RDO, Zstd 19; release build, 20 threads, a warm shader cache),
 the PSNR over every image against a lossless pack of the same sources, matched by id (`bc7_gpu compare`):
@@ -733,6 +735,9 @@ static-light and light-sprite digests. Side by side, and toggled in a video, the
 the ground, and it is one-sided: BC7 brightens the night frames by 0.2 to 0.5 levels on average (Britain's lamp posts
 +0.30, +0.23 and +0.13 in the Enhanced style; Deceit +0.38, +0.34 and +0.15). BC7 therefore costs nothing visible
 here, and it gains 52 KiB on disk and no VRAM unless the renderer uploads blocks.
+
+**Decision (the user, 2026-11-22): the atmosphere maps and the light textures stay lossless.** The BC7 option for them
+was not merged; the measurements above stay as the record of what it would give.
 
 A lossless copy of the client's own texels would be the DXT1 and DXT5 blocks as shipped: bit-exact, 0.5 to 1 byte
 per texel in VRAM, and no re-encode. `PagePixelFormat` has only RGBA8888 and BC7, though, so that needs a format

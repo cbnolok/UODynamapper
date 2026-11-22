@@ -140,10 +140,10 @@ cpu, or gpu (failing without one). The GPU RDO has the CPU's price model and com
 blocks of its own.";
 
 const BC_ENCODE_DEVICE_HELP: &str = "Where the BC7 atlas pages (mobile animations, art, land, auxiliary textures) \
-and the BC1 single gumps (Classic ones, in gumps_cc and a lossy gumps_ec) are encoded: auto (the GPU when a wgpu \
-adapter is there, else the CPU), cpu, or gpu (failing without one). The GPU encoders come to about the CPU's quality, \
-with blocks of their own; --bc7-rdo then runs on its own device. The other BC1 and BC7 images (Enhanced gumps, \
-effects, radar) stay on the CPU.";
+and the BC1 single gumps (Classic ones, in gumps_cc and a lossy gumps_ec) are encoded: auto (the BC1 on the GPU when a \
+wgpu adapter is there, else the CPU; the BC7 on the CPU, whose pages are 1-2.5 % smaller after Zstd), cpu, or gpu \
+(both on the GPU, failing without one). The GPU encoders come to about the CPU's quality, with blocks of their own; \
+--bc7-rdo then runs on its own device. The other BC1 and BC7 images (Enhanced gumps, effects, radar) stay on the CPU.";
 
 /// `--bc7-rdo-device` and `--bc-encode-device`.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]

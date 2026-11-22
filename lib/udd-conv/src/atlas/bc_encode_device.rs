@@ -1,5 +1,6 @@
-//! Where the packers' BC7 page encode and BC1 gump encode run: on the GPU (uot_gpu_compute::page_encode) when a wgpu
-//! adapter is there, on the CPU otherwise, or on the one the run asks for ([`set_bc_encode_device`]). The GPU encodes
+//! Where the packers' BC7 page encode and BC1 gump encode run ([`set_bc_encode_device`]): on the CPU, on the GPU
+//! (uot_gpu_compute::page_encode), or by default (Auto) the BC1 on the GPU when a wgpu adapter is there and the BC7 on
+//! the CPU, whose pages come out 1 to 2.5 % smaller after Zstd and in about the same time. The GPU encodes
 //! BC7 at [`GPU_BC7_QUALITY`], the profile whose quality matches the CPU encoder's, with blocks of its own; both give
 //! the same blocks from run to run. The GPU's BC1 ([`encode_bc1_on_device`]: the single Classic gumps) keeps the
 //! CPU's one bit of alpha on every texel, ten times faster, half a dB below its colour
@@ -30,12 +31,29 @@ pub const GPU_BC7_QUALITY: Bc7Quality = Bc7Quality::UltraFast;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BcEncodeDevice {
-    /// The GPU when an adapter is there, the CPU otherwise (and when the GPU fails).
+    /// The BC1 on the GPU when an adapter is there, the CPU otherwise (and when the GPU fails); the BC7 on the CPU.
     #[default]
     Auto = 0,
     Cpu = 1,
-    /// The GPU, failing the pack without one.
+    /// The GPU for both, failing the pack without one.
     Gpu = 2,
+}
+
+/// The formats the device setting places.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncodedFormat {
+    Bc7,
+    Bc1,
+}
+
+/// Where the images of one format are encoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncodeOn {
+    Cpu,
+    /// The GPU, the CPU when there is none or it fails.
+    GpuOrCpu,
+    /// The GPU, failing without one.
+    Gpu,
 }
 
 impl BcEncodeDevice {
@@ -46,6 +64,16 @@ impl BcEncodeDevice {
             _ => Self::Auto,
         }
     }
+
+    /// Where `format`'s images are encoded: Auto keeps the BC7 on the CPU, whose pages are smaller after Zstd for
+    /// about the GPU's time (docs/agent_notes/atlas_page_compression.md, "BC7 encode on the GPU").
+    fn encode_on(self, format: EncodedFormat) -> EncodeOn {
+        match (self, format) {
+            (Self::Cpu, _) | (Self::Auto, EncodedFormat::Bc7) => EncodeOn::Cpu,
+            (Self::Auto, EncodedFormat::Bc1) => EncodeOn::GpuOrCpu,
+            (Self::Gpu, _) => EncodeOn::Gpu,
+        }
+    }
 }
 
 /// Where the encode runs until [`set_bc_encode_device`]: the crate's own tests stay off the GPU, like its other GPU
@@ -54,24 +82,28 @@ const INITIAL_DEVICE: BcEncodeDevice = if cfg!(test) { BcEncodeDevice::Cpu } els
 
 static DEVICE: AtomicU8 = AtomicU8::new(INITIAL_DEVICE as u8);
 
-/// Sets where the packers' BC7 page encode runs (Auto by default, the CPU in this crate's tests).
+/// Sets where the packers' BC7 page encode and BC1 gump encode run (Auto by default, the CPU in this crate's tests).
 pub fn set_bc_encode_device(device: BcEncodeDevice) {
     DEVICE.store(device as u8, Ordering::Relaxed);
 }
 
-/// Where the packers' BC7 page encode runs.
+/// Where the packers' BC7 page encode and BC1 gump encode run.
 pub fn bc_encode_device() -> BcEncodeDevice {
     BcEncodeDevice::from_u8(DEVICE.load(Ordering::Relaxed))
 }
 
 /// `options` with the page encoded on the device [`bc_encode_device`] names.
 pub fn on_bc_encode_device(options: Bc7RdoOptions) -> Bc7RdoOptions {
-    let encoder: Option<Arc<dyn Bc7EncodeAccelerator>> = match bc_encode_device() {
-        BcEncodeDevice::Cpu => None,
-        BcEncodeDevice::Auto => Some(Arc::new(GpuEncode { fall_back: true })),
-        BcEncodeDevice::Gpu => Some(Arc::new(GpuEncode { fall_back: false })),
-    };
-    options.with_encoder(encoder)
+    options.with_encoder(bc7_encoder(bc_encode_device()))
+}
+
+/// The BC7 encoder `device` places the pages on: none for the CPU's own.
+fn bc7_encoder(device: BcEncodeDevice) -> Option<Arc<dyn Bc7EncodeAccelerator>> {
+    match device.encode_on(EncodedFormat::Bc7) {
+        EncodeOn::Cpu => None,
+        EncodeOn::GpuOrCpu => Some(Arc::new(GpuEncode { fall_back: true })),
+        EncodeOn::Gpu => Some(Arc::new(GpuEncode { fall_back: false })),
+    }
 }
 
 /// `options` with the encode on the device [`bc_encode_device`] names and the RDO on the one
@@ -81,13 +113,13 @@ pub fn on_bc7_devices(options: Bc7RdoOptions) -> Bc7RdoOptions {
 }
 
 /// Encodes `rgba` (straight RGBA8888 of `extent`) to BC1 blocks on the device [`bc_encode_device`] names: the GPU's
-/// BC1 or the CPU's, both with BC1's one bit of alpha (below one half is transparent black). Auto falls back on the CPU
-/// as the BC7 encode does.
+/// BC1 or the CPU's, both with BC1's one bit of alpha (below one half is transparent black). Auto takes the GPU's,
+/// falling back on the CPU without one or when it fails.
 pub fn encode_bc1_on_device(rgba: &[u8], extent: ImageExtent) -> Result<Vec<u8>, String> {
-    let fall_back = match bc_encode_device() {
-        BcEncodeDevice::Cpu => return encode_bc1(rgba, extent).map_err(|error| error.to_string()),
-        BcEncodeDevice::Auto => true,
-        BcEncodeDevice::Gpu => false,
+    let fall_back = match bc_encode_device().encode_on(EncodedFormat::Bc1) {
+        EncodeOn::Cpu => return encode_bc1(rgba, extent).map_err(|error| error.to_string()),
+        EncodeOn::GpuOrCpu => true,
+        EncodeOn::Gpu => false,
     };
     let result = match gpu() {
         Ok(gpu) => gpu.encode_bc1(rgba, extent.width(), extent.height())
@@ -164,5 +196,18 @@ mod tests {
             assert_eq!(BcEncodeDevice::from_u8(device as u8), device);
         }
         assert!(on_bc_encode_device(Bc7RdoOptions::default()).encoder.is_none());
+    }
+
+    /// Auto encodes the BC1 on the GPU (the CPU without one) and the BC7 on the CPU; GPU forces both onto the GPU, CPU
+    /// both onto the CPU.
+    #[test]
+    fn auto_puts_the_bc1_on_the_gpu_and_the_bc7_on_the_cpu() {
+        use EncodeOn::{Cpu, Gpu, GpuOrCpu};
+        for (device, bc7, bc1) in [(BcEncodeDevice::Auto, Cpu, GpuOrCpu), (BcEncodeDevice::Cpu, Cpu, Cpu),
+            (BcEncodeDevice::Gpu, Gpu, Gpu)] {
+            assert_eq!(device.encode_on(EncodedFormat::Bc7), bc7, "{device:?} BC7");
+            assert_eq!(device.encode_on(EncodedFormat::Bc1), bc1, "{device:?} BC1");
+            assert_eq!(bc7_encoder(device).is_some(), bc7 != Cpu, "{device:?} BC7 encoder");
+        }
     }
 }
