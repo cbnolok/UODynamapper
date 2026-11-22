@@ -2,8 +2,7 @@
 //! in-betweens: GPU time per frame (timestamp queries; each frame in a submission of its own, and the frames of a
 //! group in one pass), the error against the source (RGB where the source has alpha, alpha everywhere; for BC1,
 //! whether every alpha stays 0 or 255), and the bytes against RGBA8. It writes comparison sheets and the summary into
-//! a folder. Ignored: it needs a GPU adapter and the packages. BC1 takes part with the crate's `bc1` feature
-//! (`--features bc1`).
+//! a folder. Ignored: it needs a GPU adapter and the packages.
 //!
 //! ```sh
 //! BLOCK_ENCODE_PACKAGES=/path/to/uddp BLOCK_ENCODE_OUTPUT=/path/to/bc-eval \
@@ -23,6 +22,9 @@ use udd_assets::animation::mobile_anim_cc::{self as anim_cc, MobileAnimCcPackage
 use udd_assets::animation::mobile_anim_ec::{self as anim_ec, MobileAnimEcPackage};
 use uot_texture_codecs::bc7::{Bc7EncoderBackend, ImageExtent, RawImageFormat};
 use udd_assets::animation::mobile_strides::{MobileAnimClips, MobileClip};
+use udd_assets::tex_art_cc::TexArtCcPackage;
+use udd_assets::tex_art_ec::TexArtEcPackage;
+use block_compression::{BC7Settings, CompressionVariant, GpuBlockCompressor};
 use crate::network_shader_module;
 use crate::rife::{RifeModel, RifeWorkspace, RIFE_ALPHA_CHANNEL, RIFE_IMAGE_CHANNELS};
 
@@ -51,17 +53,10 @@ const IN_BETWEEN_SLOT: usize = 0;
 /// RIFE's backdrop and the Classic alpha snap, as rife/frames.wgsl gives them.
 const BACKDROP_GREY: f32 = 0.5;
 const CLASSIC_ALPHA_SNAP: f32 = 0.5;
-#[cfg(feature = "bc1")]
 const SHEET_FORMATS: [MobileBlockFormat; 4] = [MobileBlockFormat::Bc7(Bc7Quality::UltraFast),
     MobileBlockFormat::Bc7(Bc7Quality::Fast), MobileBlockFormat::Bc7(Bc7Quality::Basic), MobileBlockFormat::Bc1];
-#[cfg(not(feature = "bc1"))]
-const SHEET_FORMATS: [MobileBlockFormat; 3] = [MobileBlockFormat::Bc7(Bc7Quality::UltraFast),
-    MobileBlockFormat::Bc7(Bc7Quality::Fast), MobileBlockFormat::Bc7(Bc7Quality::Basic)];
-/// The formats evaluated besides BC7's qualities: BC1 with the `bc1` feature.
-#[cfg(feature = "bc1")]
+/// The formats evaluated besides BC7's qualities with alpha.
 const OTHER_FORMATS: &[MobileBlockFormat] = &[MobileBlockFormat::Bc1];
-#[cfg(not(feature = "bc1"))]
-const OTHER_FORMATS: &[MobileBlockFormat] = &[];
 const ZOOM: u32 = 4;
 const DIFF_GAIN: f32 = 8.0;
 const SHEET_GREY: u8 = 128;
@@ -149,8 +144,7 @@ fn readback_buffer(gpu: &Gpu, size: u64) -> wgpu::Buffer {
 struct Sample {
     name: String,
     group: String,
-    /// A Classic frame, which BC1 takes (only with the `bc1` feature).
-    #[cfg_attr(not(feature = "bc1"), expect(dead_code, reason = "only BC1 reads it"))]
+    /// A Classic frame, which BC1 takes.
     classic: bool,
     width: u32,
     height: u32,
@@ -164,13 +158,20 @@ struct Source {
     view: wgpu::TextureView,
 }
 
-fn upload(gpu: &Gpu, sample: &Sample) -> Source {
+/// A sample's texels padded to whole blocks, the padding transparent black.
+fn padded_rgba(sample: &Sample) -> Vec<u8> {
     let (width, height) = padded_size(sample.width, sample.height);
     let mut padded = vec![0u8; (width * height) as usize * RGBA_BYTES];
     let row = sample.width as usize * RGBA_BYTES;
     for (y, source_row) in sample.rgba.chunks_exact(row).enumerate() {
         padded[y * width as usize * RGBA_BYTES..][..row].copy_from_slice(source_row);
     }
+    padded
+}
+
+fn upload(gpu: &Gpu, sample: &Sample) -> Source {
+    let (width, height) = padded_size(sample.width, sample.height);
+    let padded = padded_rgba(sample);
     let texture = gpu.device.create_texture_with_data(&gpu.queue, &wgpu::TextureDescriptor {
         label: Some("block encode source"), size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
@@ -183,16 +184,15 @@ fn upload(gpu: &Gpu, sample: &Sample) -> Source {
 fn format_name(format: MobileBlockFormat) -> String {
     match format {
         MobileBlockFormat::Bc7(quality) => format!("BC7 {quality:?}"),
-        #[cfg(feature = "bc1")]
+        MobileBlockFormat::Bc7Opaque(quality) => format!("BC7 {quality:?} opaque"),
         MobileBlockFormat::Bc1 => "BC1".to_string(),
     }
 }
 
-#[cfg_attr(not(feature = "bc1"), allow(unused_variables))]
 fn takes(format: MobileBlockFormat, sample: &Sample) -> bool {
     match format {
         MobileBlockFormat::Bc7(_) => true,
-        #[cfg(feature = "bc1")]
+        MobileBlockFormat::Bc7Opaque(_) => false,
         MobileBlockFormat::Bc1 => sample.classic,
     }
 }
@@ -216,8 +216,8 @@ fn median(values: &mut [f64]) -> f64 {
     values.get(values.len() / 2).copied().unwrap_or(f64::NAN)
 }
 
-fn encode(gpu: &Gpu, encoder: &mut MobileBlockEncoder, format: MobileBlockFormat, samples: &[&Sample],
-    sources: &[&Source]) -> Encoded {
+/// Where each sample's blocks of `format` start in an output buffer of them all, and its size.
+fn block_offsets(format: MobileBlockFormat, samples: &[&Sample]) -> (Vec<u64>, u64) {
     let offsets: Vec<u64> = samples.iter().scan(0u64, |next, sample| {
         let offset = *next;
         *next += format.encoded_bytes(sample.width, sample.height).div_ceil(OUTPUT_ALIGNMENT) * OUTPUT_ALIGNMENT;
@@ -225,6 +225,12 @@ fn encode(gpu: &Gpu, encoder: &mut MobileBlockEncoder, format: MobileBlockFormat
     }).collect();
     let total = offsets.last().unwrap() + format.encoded_bytes(samples.last().unwrap().width,
         samples.last().unwrap().height);
+    (offsets, total)
+}
+
+fn encode(gpu: &Gpu, encoder: &mut MobileBlockEncoder, format: MobileBlockFormat, samples: &[&Sample],
+    sources: &[&Source]) -> Encoded {
+    let (offsets, total) = block_offsets(format, samples);
     let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("blocks"), size: total, mapped_at_creation: false,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -248,7 +254,7 @@ fn encode(gpu: &Gpu, encoder: &mut MobileBlockEncoder, format: MobileBlockFormat
     let mut alone = vec![Vec::new(); samples.len()];
     let mut together = Vec::new();
     for run in 0..=RUNS {
-        // Alone: a submission per sample, since block_compression writes its uniforms through the queue.
+        // Alone: a submission per sample.
         for (index, (sample, source)) in samples.iter().zip(sources).enumerate() {
             let mut commands = gpu.device.create_command_encoder(&Default::default());
             {
@@ -325,7 +331,8 @@ impl UnboundedBc7 {
             label: None, contents: bytemuck::cast_slice(&[width, height, 0, 0]), usage: wgpu::BufferUsages::UNIFORM,
         });
         let settings = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None, contents: bytemuck::bytes_of(&quality.settings()), usage: wgpu::BufferUsages::STORAGE,
+            label: None, contents: bytemuck::bytes_of(&crate_settings(quality, true)),
+            usage: wgpu::BufferUsages::STORAGE,
         });
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None, layout: &self.pipeline.get_bind_group_layout(0),
@@ -381,8 +388,8 @@ fn decode(format: MobileBlockFormat, sample: &Sample, blocks: &[u8]) -> Vec<u8> 
     let (width, height) = padded_size(sample.width, sample.height);
     let extent = ImageExtent::new(width, height).unwrap();
     let padded = match format {
-        MobileBlockFormat::Bc7(_) => uot_texture_codecs::bc7::decode_bc7_to_rgba8888(blocks, extent),
-        #[cfg(feature = "bc1")]
+        MobileBlockFormat::Bc7(_) | MobileBlockFormat::Bc7Opaque(_) =>
+            uot_texture_codecs::bc7::decode_bc7_to_rgba8888(blocks, extent),
         MobileBlockFormat::Bc1 => uot_texture_codecs::bc1::decode_bc1_to_rgba8888(blocks, extent),
     }.unwrap();
     let row = sample.width as usize * RGBA_BYTES;
@@ -520,7 +527,6 @@ fn check_gpu_decoding(gpu: &Gpu, format: MobileBlockFormat, sample: &Sample, blo
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: format.texture_format(),
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
     });
-    #[cfg(feature = "bc1")]
     if format == MobileBlockFormat::Bc1 {
         let blocks_per_layer = (width / BLOCK_SIDE * height / BLOCK_SIDE) as usize;
         gpu.queue.write_texture(
@@ -662,6 +668,38 @@ fn in_between(gpu: &Gpu, model: &RifeModel, side: u32, canvases: &[Vec<u8>; 2], 
     }).collect()
 }
 
+/// The walks of [`CLASSIC_BODIES`] and [`ENHANCED_BODIES`] facing [`DIRECTION`]: name, whether Classic, frames.
+fn walk_clips(classic: &MobileAnimCcPackage, enhanced: &MobileAnimEcPackage) -> Vec<(String, bool, MobileClip)> {
+    let mut clips = Vec::new();
+    for body in CLASSIC_BODIES {
+        let action = classic.movement_action(body as u16, anim_cc::MOVE_WALK, false).expect("a Classic walk");
+        let clip = classic.clip(body, action, DIRECTION).unwrap().expect("Classic frames");
+        clips.push((format!("Classic body {body} walk"), true, clip));
+    }
+    for body in ENHANCED_BODIES {
+        let action = enhanced.move_action(body, anim_ec::GROUP_PEACE, anim_ec::MOVE_WALK).expect("an Enhanced walk");
+        let clip = enhanced.clip(body, action, DIRECTION).unwrap().expect("Enhanced frames");
+        clips.push((format!("Enhanced body {body} walk"), false, clip));
+    }
+    clips
+}
+
+/// The first [`FRAMES_PER_CLIP`] frames of each clip, a sheet of the first.
+fn clip_samples(clips: &[(String, bool, MobileClip)]) -> Vec<Sample> {
+    let mut samples = Vec::new();
+    for (name, classic, clip) in clips {
+        for (index, frame) in clip.frames.iter().take(FRAMES_PER_CLIP).enumerate() {
+            samples.push(Sample {
+                name: format!("{name} frame {index}"),
+                group: if *classic { "Classic frames" } else { "Enhanced frames" }.to_string(),
+                classic: *classic, width: u32::from(frame.width), height: u32::from(frame.height),
+                rgba: frame.rgba.clone(), sheet: index == 0,
+            });
+        }
+    }
+    samples
+}
+
 /// The page layout of a package, for uploading its BC7 pages' blocks as they are.
 fn layout_line(name: &str, formats: Vec<String>, gutter: u16, packing: String, frames: impl Iterator<Item = (u16, u16)>)
     -> String {
@@ -704,28 +742,8 @@ fn evaluate_block_formats() {
         .collect(), enhanced.gutter(), format!("{:?}", enhanced.packing_mode()),
         enhanced.frames().iter().filter(|frame| frame.width > 0).map(|frame| (frame.x, frame.y)))).unwrap();
 
-    let mut clips: Vec<(String, bool, MobileClip)> = Vec::new();
-    for body in CLASSIC_BODIES {
-        let action = classic.movement_action(body as u16, anim_cc::MOVE_WALK, false).expect("a Classic walk");
-        let clip = classic.clip(body, action, DIRECTION).unwrap().expect("Classic frames");
-        clips.push((format!("Classic body {body} walk"), true, clip));
-    }
-    for body in ENHANCED_BODIES {
-        let action = enhanced.move_action(body, anim_ec::GROUP_PEACE, anim_ec::MOVE_WALK).expect("an Enhanced walk");
-        let clip = enhanced.clip(body, action, DIRECTION).unwrap().expect("Enhanced frames");
-        clips.push((format!("Enhanced body {body} walk"), false, clip));
-    }
-    let mut samples = Vec::new();
-    for (name, classic, clip) in &clips {
-        for (index, frame) in clip.frames.iter().take(FRAMES_PER_CLIP).enumerate() {
-            samples.push(Sample {
-                name: format!("{name} frame {index}"),
-                group: if *classic { "Classic frames" } else { "Enhanced frames" }.to_string(),
-                classic: *classic, width: u32::from(frame.width), height: u32::from(frame.height),
-                rgba: frame.rgba.clone(), sheet: index == 0,
-            });
-        }
-    }
+    let clips = walk_clips(&classic, &enhanced);
+    let mut samples = clip_samples(&clips);
     for (name, classic, clip) in &clips {
         let transparent = clip.frames.iter().flat_map(|frame| frame.rgba.chunks_exact(RGBA_BYTES))
             .filter(|texel| texel[ALPHA] == 0).count();
@@ -831,11 +849,7 @@ fn evaluate_block_formats() {
         for &index in &members {
             let sample = &samples[index];
             let (width, height) = padded_size(sample.width, sample.height);
-            let mut padded = vec![0u8; (width * height) as usize * RGBA_BYTES];
-            let row = sample.width as usize * RGBA_BYTES;
-            for (y, source_row) in sample.rgba.chunks_exact(row).enumerate() {
-                padded[y * width as usize * RGBA_BYTES..][..row].copy_from_slice(source_row);
-            }
+            let padded = padded_rgba(sample);
             let started = Instant::now();
             let encoded = uot_texture_codecs::bc7::encode_to_bc7(&padded, ImageExtent::new(width, height).unwrap(),
                 RawImageFormat::Rgba8888, Bc7EncoderBackend::Analytical).unwrap();
@@ -869,13 +883,13 @@ fn evaluate_block_formats() {
 }
 
 /// A frame encodes to the same blocks at a row of its texture below other frames (`add_frame_at`, as Dynamapper's
-/// in-betweens wait in their scratch texture) as at the corner of its own, both in one record.
+/// in-betweens wait in their scratch texture) as at the corner of its own, in BC7 and BC1, all in one record.
 #[test]
 #[ignore = "requires a GPU adapter; run explicitly for block encoder changes"]
 fn a_frame_below_others_encodes_as_at_its_own_corner() {
     const SIDE: u32 = 24;
     const ROW: u32 = 12;
-    const FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(Bc7Quality::UltraFast);
+    const FORMATS: [MobileBlockFormat; 2] = [MobileBlockFormat::Bc7(Bc7Quality::UltraFast), MobileBlockFormat::Bc1];
     let Some(gpu) = gpu() else {
         println!("skipped: no GPU adapter");
         return;
@@ -893,24 +907,398 @@ fn a_frame_below_others_encodes_as_at_its_own_corner() {
         width: SIDE, height, rgba, sheet: false };
     let (frame, stacked) = (sample(rgba, SIDE), sample(stacked, ROW + SIDE));
     let (own, below) = (upload(&gpu, &frame), upload(&gpu, &stacked));
-    let bytes = FORMAT.encoded_bytes(SIDE, SIDE);
+    // Each format's two encodings, one after the other, from its own offset.
+    let bytes = FORMATS.map(|format| format.encoded_bytes(SIDE, SIDE));
+    let starts = [0, 2 * bytes[0]];
+    let total = starts[1] + 2 * bytes[1];
     let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None, size: 2 * bytes, mapped_at_creation: false,
+        label: None, size: total, mapped_at_creation: false,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
     let mut encoder = MobileBlockEncoder::new(&gpu.device, &gpu.queue);
     let mut commands = gpu.device.create_command_encoder(&Default::default());
     {
         let mut pass = commands.begin_compute_pass(&Default::default());
-        encoder.add_frame(FORMAT, &own.view, SIDE, SIDE, &output, 0);
-        encoder.add_frame_at(FORMAT, &below.view, ROW, SIDE, SIDE, &output, bytes);
+        for (index, format) in FORMATS.into_iter().enumerate() {
+            encoder.add_frame(format, &own.view, SIDE, SIDE, &output, starts[index]);
+            encoder.add_frame_at(format, &below.view, ROW, SIDE, SIDE, &output, starts[index] + bytes[index]);
+        }
         encoder.record(&mut pass);
     }
-    let readback = readback_buffer(&gpu, 2 * bytes);
-    commands.copy_buffer_to_buffer(&output, 0, &readback, 0, 2 * bytes);
+    let readback = readback_buffer(&gpu, total);
+    commands.copy_buffer_to_buffer(&output, 0, &readback, 0, total);
     gpu.queue.submit([commands.finish()]);
     let blocks = read_back(&gpu, &readback);
-    let (at_corner, at_row) = blocks.split_at(bytes as usize);
-    assert!(at_corner.iter().any(|&byte| byte != 0));
-    assert_eq!(at_corner, at_row);
+    for (index, format) in FORMATS.into_iter().enumerate() {
+        let (at_corner, at_row) = blocks[starts[index] as usize..][..2 * bytes[index] as usize]
+            .split_at(bytes[index] as usize);
+        assert!(at_corner.iter().any(|&byte| byte != 0), "{format:?}");
+        assert_eq!(at_corner, at_row, "{format:?}");
+    }
+}
+
+const ART_CLASSIC_PACKAGE: &str = "tex_art_cc.uddp";
+const ART_ENHANCED_PACKAGE: &str = "tex_art_ec.uddp";
+/// The side of the crops of real atlas pages, from their corner, where the packing starts.
+const PAGE_CROP_SIDE: u32 = 512;
+/// A BC1 block's endpoints, then its indices.
+const BC1_ENDPOINT_BYTES: usize = 4;
+/// The alpha from which a texel is opaque in BC1, as the dds crate's CPU BC1 (and bc1.wgsl) take it: half of 255.
+const BC1_OPAQUE_FROM: u8 = 128;
+/// How far below the CPU BC1's RGB PSNR ours may fall on the punch-through blocks of a group of samples.
+/// block_compression's four-colour encode, which ours is byte for byte on the blocks all opaque, is itself 0.57 to
+/// 0.75 dB below the CPU's (the dds crate) on the frames and pages, and our punch-through blocks 0.52 to 0.63 dB
+/// (2026-11-22): the gap is ISPC's endpoint search, not the three-colour mode.
+const BC1_PSNR_TOLERANCE_DB: f64 = 1.0;
+/// The kinds of BC1 block the comparison with the CPU's reports apart: all opaque, then with transparent texels.
+const BC1_BLOCK_KINDS: [&str; 2] = ["opaque blocks", "punch-through blocks"];
+/// The kind of [`BC1_BLOCK_KINDS`] held to the CPU's colour.
+const BC1_PUNCH_THROUGH_KIND: usize = 1;
+
+/// block_compression's settings of a profile.
+fn crate_settings(quality: Bc7Quality, alpha: bool) -> BC7Settings {
+    match (alpha, quality) {
+        (true, Bc7Quality::UltraFast) => BC7Settings::alpha_ultrafast(),
+        (true, Bc7Quality::VeryFast) => BC7Settings::alpha_very_fast(),
+        (true, Bc7Quality::Fast) => BC7Settings::alpha_fast(),
+        (true, Bc7Quality::Basic) => BC7Settings::alpha_basic(),
+        (true, Bc7Quality::Slow) => BC7Settings::alpha_slow(),
+        (false, Bc7Quality::UltraFast) => BC7Settings::opaque_ultra_fast(),
+        (false, Bc7Quality::VeryFast) => BC7Settings::opaque_very_fast(),
+        (false, Bc7Quality::Fast) => BC7Settings::opaque_fast(),
+        (false, Bc7Quality::Basic) => BC7Settings::opaque_basic(),
+        (false, Bc7Quality::Slow) => BC7Settings::opaque_slow(),
+    }
+}
+
+/// Each profile's constants are block_compression's settings, field by field in the crate's order.
+#[test]
+fn profiles_are_block_compressions_settings() {
+    for alpha in [true, false] {
+        for quality in Bc7Quality::ALL {
+            let words = Bc7Profile::of(quality, alpha).settings_words();
+            assert_eq!(bytemuck::cast_slice::<u32, u8>(&words), bytemuck::bytes_of(&crate_settings(quality, alpha)),
+                "{quality:?}, alpha {alpha}");
+        }
+    }
+}
+
+/// Every format's kernel is valid WGSL, its profile's constants included.
+#[test]
+fn every_format_validates() {
+    for format in MobileBlockFormat::ALL {
+        let source = match format {
+            MobileBlockFormat::Bc7(quality) => format!("{BC7_SHADER}{}", Bc7Profile::of(quality, true).wgsl_constants()),
+            MobileBlockFormat::Bc7Opaque(quality) =>
+                format!("{BC7_SHADER}{}", Bc7Profile::of(quality, false).wgsl_constants()),
+            MobileBlockFormat::Bc1 => BC1_SHADER.to_string(),
+        };
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap_or_else(|error| {
+            panic!("{}: {}", format.compile_name(), error.emit_to_string(&source))
+        });
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default()).validate(&module)
+            .unwrap_or_else(|error| panic!("{}: {error:?}", format.compile_name()));
+    }
+}
+
+/// Crops of real atlas pages: the first and the middle page of each package, a Classic one's marked so.
+fn page_crops(folder: &Path) -> Vec<Sample> {
+    let mut samples = Vec::new();
+    let mut crop = |name: String, classic: bool, rgba: Vec<u8>, width: u32, height: u32| {
+        assert_eq!(rgba.len(), (width * height) as usize * RGBA_BYTES, "{name}: a page of its used size");
+        let (crop_width, crop_height) = (width.min(PAGE_CROP_SIDE), height.min(PAGE_CROP_SIDE));
+        let row = crop_width as usize * RGBA_BYTES;
+        let rgba = (0..crop_height as usize)
+            .flat_map(|y| rgba[y * width as usize * RGBA_BYTES..][..row].iter().copied()).collect();
+        samples.push(Sample { name, group: "pages".to_string(), classic, width: crop_width, height: crop_height, rgba,
+            sheet: false });
+    };
+    let picked = |count: usize| if count == 0 { vec![] } else { vec![0, count / 2] };
+    let package = MobileAnimCcPackage::load(folder.join(CLASSIC_PACKAGE)).unwrap();
+    for at in picked(package.pages().len()) {
+        let page = package.pages()[at];
+        crop(format!("Classic mobile page {}", page.page_index), true, package.read_page_rgba(page.page_index).unwrap(),
+            page.used_width, page.used_height);
+    }
+    let package = MobileAnimEcPackage::load(folder.join(ENHANCED_PACKAGE)).unwrap();
+    for at in picked(package.pages().len()) {
+        let page = package.pages()[at];
+        crop(format!("Enhanced mobile page {}", page.page_index), false,
+            package.read_page_rgba(page.page_index).unwrap(), page.used_width, page.used_height);
+    }
+    let package = TexArtCcPackage::load(folder.join(ART_CLASSIC_PACKAGE)).unwrap();
+    for at in picked(package.pages().len()) {
+        let page = package.pages()[at];
+        crop(format!("Classic art page {}", page.page_index), true, package.read_page_rgba(page.page_index).unwrap(),
+            page.used_width, page.used_height);
+    }
+    let package = TexArtEcPackage::load(folder.join(ART_ENHANCED_PACKAGE)).unwrap();
+    for at in picked(package.pages().len()) {
+        let page = package.pages()[at];
+        crop(format!("Enhanced art page {}", page.page_index), false, package.read_page_rgba(page.page_index).unwrap(),
+            page.used_width, page.used_height);
+    }
+    samples
+}
+
+/// The frames of the evaluation's walks and the page crops of the packages in `folder`.
+fn real_samples(folder: &Path) -> Vec<Sample> {
+    let classic = MobileAnimCcPackage::load(folder.join(CLASSIC_PACKAGE)).unwrap();
+    let enhanced = MobileAnimEcPackage::load(folder.join(ENHANCED_PACKAGE)).unwrap();
+    let mut samples = clip_samples(&walk_clips(&classic, &enhanced));
+    samples.extend(page_crops(folder));
+    samples
+}
+
+/// Records `record` into one pass, with an output buffer for each sample's blocks of `format` at the offsets it is
+/// given, and reads the blocks back.
+fn encode_blocks(gpu: &Gpu, format: MobileBlockFormat, samples: &[&Sample],
+    record: impl FnOnce(&mut wgpu::ComputePass<'_>, &wgpu::Buffer, &[u64])) -> Vec<Vec<u8>> {
+    let (offsets, total) = block_offsets(format, samples);
+    let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("blocks"), size: total, mapped_at_creation: false,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    let readback = readback_buffer(gpu, total);
+    let mut commands = gpu.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = commands.begin_compute_pass(&Default::default());
+        record(&mut pass, &output, &offsets);
+    }
+    commands.copy_buffer_to_buffer(&output, 0, &readback, 0, total);
+    gpu.queue.submit([commands.finish()]);
+    let bytes = read_back(gpu, &readback);
+    samples.iter().zip(&offsets).map(|(sample, &offset)| {
+        bytes[offset as usize..][..format.encoded_bytes(sample.width, sample.height) as usize].to_vec()
+    }).collect()
+}
+
+fn encode_ours(gpu: &Gpu, encoder: &mut MobileBlockEncoder, format: MobileBlockFormat, samples: &[&Sample],
+    sources: &[&Source]) -> Vec<Vec<u8>> {
+    encode_blocks(gpu, format, samples, |pass, output, offsets| {
+        for ((sample, source), &offset) in samples.iter().zip(sources).zip(offsets) {
+            encoder.add_frame(format, &source.view, sample.width, sample.height, output, offset);
+        }
+        encoder.record(pass);
+    })
+}
+
+/// block_compression's own encoding, its kernel of `variant`.
+fn encode_with_crate(gpu: &Gpu, compressor: &mut GpuBlockCompressor, variant: CompressionVariant,
+    format: MobileBlockFormat, samples: &[&Sample], sources: &[&Source]) -> Vec<Vec<u8>> {
+    encode_blocks(gpu, format, samples, |pass, output, offsets| {
+        for ((sample, source), &offset) in samples.iter().zip(sources).zip(offsets) {
+            let (width, height) = padded_size(sample.width, sample.height);
+            compressor.add_compression_task(variant, &source.view, width, height, output, None,
+                Some(u32::try_from(offset).unwrap()));
+        }
+        compressor.compress(pass);
+    })
+}
+
+/// Whether every texel of the block at `x`, `y` (in blocks) of a sample is opaque for BC1; padding is transparent.
+fn block_all_opaque(sample: &Sample, x: u32, y: u32) -> bool {
+    (0..BLOCK_SIDE * BLOCK_SIDE).all(|texel| {
+        let (tx, ty) = (x * BLOCK_SIDE + texel % BLOCK_SIDE, y * BLOCK_SIDE + texel / BLOCK_SIDE);
+        tx < sample.width && ty < sample.height
+            && sample.rgba[(ty * sample.width + tx) as usize * RGBA_BYTES + ALPHA] >= BC1_OPAQUE_FROM
+    })
+}
+
+/// Our kernels against block_compression's on real frames and atlas pages: every BC7 profile's blocks, with alpha and
+/// opaque, byte for byte; BC1's where the crate's kernel can encode them (blocks all opaque), but for a block whose
+/// endpoints came out equal, which keeps the crate's endpoints with every index 0 (the crate's index 3 would be
+/// transparent there).
+#[test]
+#[ignore = "requires a GPU adapter and mobile_anim_cc/ec and tex_art_cc/ec in BLOCK_ENCODE_PACKAGES; run explicitly \
+            for block encoder changes"]
+fn our_kernels_encode_as_block_compression() {
+    let Some(folder) = std::env::var_os(PACKAGES_VARIABLE).map(PathBuf::from) else {
+        println!("skipped: {PACKAGES_VARIABLE} is not set");
+        return;
+    };
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let samples = real_samples(&folder);
+    let sources: Vec<Source> = samples.iter().map(|sample| upload(&gpu, sample)).collect();
+    let (samples, sources): (Vec<&Sample>, Vec<&Source>) = samples.iter().zip(&sources).unzip();
+    let texels: u64 = samples.iter().map(|sample| u64::from(sample.width * sample.height)).sum();
+    println!("{} samples, {texels} texels", samples.len());
+    let mut encoder = MobileBlockEncoder::new(&gpu.device, &gpu.queue);
+    let mut reference = GpuBlockCompressor::new(gpu.device.clone(), gpu.queue.clone());
+    let mut failures = Vec::new();
+    for alpha in [true, false] {
+        for quality in Bc7Quality::ALL {
+            let format = if alpha { MobileBlockFormat::Bc7(quality) } else { MobileBlockFormat::Bc7Opaque(quality) };
+            let started = Instant::now();
+            let ours = encode_ours(&gpu, &mut encoder, format, &samples, &sources);
+            let ours_ms = started.elapsed().as_secs_f64() * 1e3;
+            let started = Instant::now();
+            let theirs = encode_with_crate(&gpu, &mut reference,
+                CompressionVariant::BC7(crate_settings(quality, alpha)), format, &samples, &sources);
+            let theirs_ms = started.elapsed().as_secs_f64() * 1e3;
+            let (mut blocks, mut differing) = (0usize, 0usize);
+            for (sample, (ours, theirs)) in samples.iter().zip(ours.iter().zip(&theirs)) {
+                let block_bytes = format.block_bytes() as usize;
+                let differ = ours.chunks_exact(block_bytes).zip(theirs.chunks_exact(block_bytes))
+                    .filter(|(a, b)| a != b).count();
+                if differ > 0 {
+                    println!("  {}: {differ} blocks differ", sample.name);
+                }
+                blocks += ours.len() / block_bytes;
+                differing += differ;
+            }
+            println!("{}: {differing} of {blocks} blocks differ (wall ms with the compile: ours {ours_ms:.0}, the \
+                crate's {theirs_ms:.0})", format_name(format));
+            if differing > 0 {
+                failures.push(format_name(format));
+            }
+        }
+    }
+    let format = MobileBlockFormat::Bc1;
+    let ours = encode_ours(&gpu, &mut encoder, format, &samples, &sources);
+    let theirs = encode_with_crate(&gpu, &mut reference, CompressionVariant::BC1, format, &samples, &sources);
+    let (mut compared, mut equal_endpoints, mut differing) = (0usize, 0usize, 0usize);
+    for (sample, (ours, theirs)) in samples.iter().zip(ours.iter().zip(&theirs)) {
+        let blocks_wide = padded_size(sample.width, sample.height).0 / BLOCK_SIDE;
+        let block_bytes = format.block_bytes() as usize;
+        for (index, (ours, theirs)) in ours.chunks_exact(block_bytes).zip(theirs.chunks_exact(block_bytes)).enumerate() {
+            if !block_all_opaque(sample, index as u32 % blocks_wide, index as u32 / blocks_wide) {
+                continue;
+            }
+            compared += 1;
+            let endpoint = |at: usize| u16::from_le_bytes([theirs[at], theirs[at + 1]]);
+            let expected = if endpoint(0) > endpoint(2) { theirs.to_vec() } else {
+                equal_endpoints += 1;
+                [&theirs[..BC1_ENDPOINT_BYTES], &[0; BC1_ENDPOINT_BYTES][..]].concat()
+            };
+            differing += usize::from(ours != expected.as_slice());
+        }
+    }
+    println!("BC1: {differing} of {compared} opaque blocks differ from the crate's ({equal_endpoints} of them with \
+        equal endpoints, indices 0 in ours)");
+    if differing > 0 {
+        failures.push(format_name(format));
+    }
+    assert!(failures.is_empty(), "blocks differ from block_compression's: {failures:?}");
+}
+
+/// Blocks at BC1's edges, 22 texels wide (the last block half padding): an empty one with colour, one opaque texel,
+/// one colour, alpha 127 and 128 in a checkerboard, a gradient with one transparent corner, and opaque texels
+/// against the padding.
+fn bc1_edge_sample() -> Sample {
+    const WIDTH: u32 = 22;
+    const GRADIENT_STEP: u32 = 64;
+    const CHECKER_STEP: u32 = 60;
+    let texel = |x: u32, y: u32| -> [u8; RGBA_BYTES] {
+        let (lx, ly) = (x % BLOCK_SIDE, y % BLOCK_SIDE);
+        let corner = BLOCK_SIDE - 1;
+        match x / BLOCK_SIDE {
+            0 => [200, 10, 10, 0],
+            1 => if (lx, ly) == (1, 2) { [30, 200, 90, u8::MAX] } else { [0; RGBA_BYTES] },
+            2 => [120, 60, 200, u8::MAX],
+            3 => [(lx * CHECKER_STEP) as u8, (ly * CHECKER_STEP) as u8, 100,
+                if (lx + ly) % 2 == 0 { BC1_OPAQUE_FROM - 1 } else { BC1_OPAQUE_FROM }],
+            4 => [(lx * GRADIENT_STEP) as u8, (ly * GRADIENT_STEP) as u8, (u8::MAX as u32 - lx * GRADIENT_STEP / 2) as u8,
+                if (lx, ly) == (corner, corner) { 0 } else { u8::MAX }],
+            _ => [250, 250, 0, u8::MAX],
+        }
+    };
+    let rgba = (0..BLOCK_SIDE).flat_map(|y| (0..WIDTH).flat_map(move |x| texel(x, y))).collect();
+    Sample { name: "BC1 edge blocks".to_string(), group: "edge blocks".to_string(), classic: true, width: WIDTH,
+        height: BLOCK_SIDE, rgba, sheet: false }
+}
+
+/// Our BC1 against the packages' CPU BC1 (uot-texture-codecs, the dds crate) on Classic frames, Classic page crops and
+/// the edge blocks: each texel decodes opaque or transparent as the CPU's does (opaque from alpha 128), a transparent
+/// one to transparent black in both, and the RGB of the opaque texels of the blocks with transparent ones within
+/// [`BC1_PSNR_TOLERANCE_DB`] of the CPU's, by group (the blocks all opaque reported beside them).
+#[test]
+#[ignore = "requires a GPU adapter and mobile_anim_cc/ec and tex_art_cc/ec in BLOCK_ENCODE_PACKAGES; run explicitly \
+            for block encoder changes"]
+fn bc1_keeps_the_cpu_encoders_alpha() {
+    let Some(folder) = std::env::var_os(PACKAGES_VARIABLE).map(PathBuf::from) else {
+        println!("skipped: {PACKAGES_VARIABLE} is not set");
+        return;
+    };
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let mut samples: Vec<Sample> = real_samples(&folder).into_iter().filter(|sample| sample.classic).collect();
+    samples.push(bc1_edge_sample());
+    let sources: Vec<Source> = samples.iter().map(|sample| upload(&gpu, sample)).collect();
+    let (sample_refs, source_refs): (Vec<&Sample>, Vec<&Source>) = samples.iter().zip(&sources).unzip();
+    let mut encoder = MobileBlockEncoder::new(&gpu.device, &gpu.queue);
+    let ours = encode_ours(&gpu, &mut encoder, MobileBlockFormat::Bc1, &sample_refs, &source_refs);
+    let mut groups: Vec<String> = samples.iter().map(|sample| sample.group.clone()).collect();
+    groups.dedup();
+    let mut failures = Vec::new();
+    for group in &groups {
+        let (mut mask_differs, mut not_black, mut texels) = (0u64, 0u64, 0u64);
+        // The squared RGB errors, ours and the CPU's, and the channel count, of the opaque texels in the blocks all
+        // opaque (four colours) and in those with transparent texels (three colours, our punch-through).
+        let mut errors = [[0f64; 3]; BC1_BLOCK_KINDS.len()];
+        for (sample, blocks) in samples.iter().zip(&ours).filter(|(sample, _)| &sample.group == group) {
+            let padded = padded_rgba(sample);
+            let (width, height) = padded_size(sample.width, sample.height);
+            let extent = ImageExtent::new(width, height).unwrap();
+            let cpu_blocks = uot_texture_codecs::bc1::encode_bc1(&padded, extent).unwrap();
+            let gpu_decoded = uot_texture_codecs::bc1::decode_bc1_to_rgba8888(blocks, extent).unwrap();
+            let cpu_decoded = uot_texture_codecs::bc1::decode_bc1_to_rgba8888(&cpu_blocks, extent).unwrap();
+            for (index, ((source, gpu_texel), cpu_texel)) in padded.chunks_exact(RGBA_BYTES)
+                .zip(gpu_decoded.chunks_exact(RGBA_BYTES)).zip(cpu_decoded.chunks_exact(RGBA_BYTES)).enumerate() {
+                texels += 1;
+                let opaque = if source[ALPHA] >= BC1_OPAQUE_FROM { u8::MAX } else { 0 };
+                mask_differs += u64::from(gpu_texel[ALPHA] != cpu_texel[ALPHA] || gpu_texel[ALPHA] != opaque);
+                if opaque == 0 {
+                    not_black += u64::from(gpu_texel != [0; RGBA_BYTES]);
+                    continue;
+                }
+                let (x, y) = (index as u32 % width, index as u32 / width);
+                let kind = &mut errors[usize::from(!block_all_opaque(sample, x / BLOCK_SIDE, y / BLOCK_SIDE))];
+                for channel in 0..ALPHA {
+                    kind[0] += f64::from(gpu_texel[channel].abs_diff(source[channel])).powi(2);
+                    kind[1] += f64::from(cpu_texel[channel].abs_diff(source[channel])).powi(2);
+                }
+                kind[2] += ALPHA as f64;
+            }
+        }
+        let psnrs: Vec<(f64, f64)> = errors.iter().map(|[gpu, cpu, count]| {
+            (Errors::psnr(*gpu, *count as u64), Errors::psnr(*cpu, *count as u64))
+        }).collect();
+        let by_kind: Vec<String> = BC1_BLOCK_KINDS.iter().zip(&psnrs)
+            .map(|(kind, (gpu, cpu))| format!("{kind} ours {gpu:.2}, the CPU's {cpu:.2}")).collect();
+        println!("{group}: {texels} texels, alpha differing {mask_differs}, transparent not black {not_black}; RGB PSNR \
+            dB of the opaque texels: {}", by_kind.join("; "));
+        // The blocks all opaque are block_compression's own four-colour encode, byte for byte (checked above), so only
+        // the punch-through blocks are held to the CPU's.
+        let (gpu_psnr, cpu_psnr) = psnrs[BC1_PUNCH_THROUGH_KIND];
+        if mask_differs > 0 || not_black > 0 || gpu_psnr < cpu_psnr - BC1_PSNR_TOLERANCE_DB {
+            failures.push(group.clone());
+        }
+    }
+    assert!(failures.is_empty(), "BC1 against the CPU's: {failures:?}");
+}
+
+/// Times each format's compile, UltraFast with alpha first (the encoder's own). Run it with `MESA_SHADER_CACHE_DIR`
+/// set to a new folder for a cold driver cache, and again for a warm one.
+#[test]
+#[ignore = "requires a GPU adapter; run explicitly to time the block encoder's compiles"]
+fn time_every_format_compile() {
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let started = Instant::now();
+    let mut encoder = MobileBlockEncoder::new(&gpu.device, &gpu.queue);
+    println!("{:>9.1} ms  {}", started.elapsed().as_secs_f64() * 1e3, WARM_BLOCK_FORMAT.compile_name());
+    for format in MobileBlockFormat::ALL.into_iter().filter(|&format| format != WARM_BLOCK_FORMAT) {
+        let started = Instant::now();
+        encoder.compile_format(format, &mut CompileReport::silent(1));
+        println!("{:>9.1} ms  {}", started.elapsed().as_secs_f64() * 1e3, format.compile_name());
+    }
 }

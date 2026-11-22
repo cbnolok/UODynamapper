@@ -1,8 +1,8 @@
 //! The BC7 encoding of the frames the GPU makes for the BC7 frame atlas (frame_atlas.rs), shared in the render world by
 //! the RIFE in-betweens and the SPAN upscales: the encoder of the warm-up (`MobileBlockEncoder`, BC7 UltraFast), a
 //! scratch `Rgba8Unorm` texture the frames wait in, row by row, the blocks they encode to, and the bounce buffer of
-//! the in-betweens' first frames' block copies. The encoder takes its parameters through the queue, so each user
-//! records one `compress` per submission of its own, after which the scratch rows are free again.
+//! the in-betweens' first frames' block copies. Each user records one `compress` per submission of its own, after
+//! which the scratch rows are free again.
 
 use bevy::prelude::*;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};

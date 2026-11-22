@@ -1,8 +1,8 @@
 //! The GPU compute pipelines of `uot_gpu_compute`, compiled ahead of use on the render device, each group on a thread
 //! of its own (at most three, one per group, each started once): a cold driver cache takes seconds to tens of
 //! seconds, which would hold a worker of the background pool (whose jobs are never interrupted) all that time. RIFE's
-//! and the SPAN upscaler's compile at startup. The block encoder (block_compression's BC7 compressor, about 21 s cold
-//! on the Radeon 880M) compiles only while a loaded animation package is BC7, the one atlas whose in-betweens it
+//! and the SPAN upscaler's compile at startup. The block encoder (its BC7 UltraFast pipeline, about 6.6 s cold on the
+//! Radeon 880M) compiles only while a loaded animation package is BC7, the one atlas whose in-betweens it
 //! encodes: from the first frame such a package is loaded, never on the frame path. RADV compiles the threads'
 //! pipelines side by side without slowing any, so none waits for another. The RIFE in-betweens take the warmed
 //! pipelines when first turned on, and wait for them while they compile, so nothing compiles twice; so does the BC7

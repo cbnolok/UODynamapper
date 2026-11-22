@@ -14,15 +14,7 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 type_complexity = "allow"
 
-[features]
-default = []
-# The BC1 encoder (block_encode.rs, with its punch-through pass): block_compression's BC1 to BC5 kernels, whose
-# pipelines then compile with the BC7 one. No app uses BC1 yet; its evaluation (block_encode/tests.rs) takes it.
-bc1 = ["block_compression/bc15"]
-
 [dependencies]
-# GPU BC7 (and, with `bc1`, BC1) encoding of frames (block_encode.rs); its wgpu is ours (30).
-block_compression.workspace = true
 bytemuck.workspace = true
 color-eyre.workspace = true
 # Waits on wgpu's adapter and device requests where no async runtime runs (the stride measurement, the tests).
@@ -35,6 +27,9 @@ wgpu.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The reference block_encode.rs's kernels (our copies of its BC7 and BC1 ones) are checked against, block for block
+# (block_encode/tests.rs); its wgpu is ours (30).
+block_compression = { workspace = true, features = ["bc15"] }
 # The block encoding evaluation (block_encode/tests.rs): PNG sheets (the CPU decoding of the blocks and the CPU BC7
 # encoder for reference come from uot-texture-codecs).
 image = { workspace = true, features = ["png"] }

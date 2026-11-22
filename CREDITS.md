@@ -15,7 +15,7 @@
 Used as references or sources for Rust translation, which has been incrementally optimized further.
 
 - BC7 codec: [basis-universal implementation](https://github.com/BinomialLLC/basis_universal/tree/master/transcoder)
-- GPU BC1/BC7 encoding (mobile frames, evaluated): [hasenbanck/block_compression](https://github.com/hasenbanck/block_compression) (MIT), a WGSL port of Intel's [ISPC Texture Compressor](https://github.com/GameTechDev/ISPCTextureCompressor) kernels (MIT); used as a crate.
+- GPU BC1/BC7 encoding (mobile frames, atlas pages): [hasenbanck/block_compression](https://github.com/hasenbanck/block_compression) 0.11.0 (MIT, Copyright (c) 2025 Nils Hasenbanck; Copyright (c) 2016-2024 Intel Corporation), a WGSL port of Intel's [ISPC Texture Compressor](https://github.com/GameTechDev/ISPCTextureCompressor) kernels (MIT). Its BC7 and BC1 kernels are copied, with their licence notice, into `lib/support/uot-gpu-compute/shaders/block_encode/` (`bc7.wgsl`: the modes a profile runs as per-profile constants; `bc1.wgsl`: BC1 punch-through alpha added); the crate itself is a dev-dependency, the reference the copies are checked against.
 - RDO implementation: [richgel999/bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) and [richgel999/bc7enc_rdo_devel](https://github.com/richgel999/bc7enc_rdo_devel/blob/master/bc7enc.cpp#L3711)
 - Upscalers:
   - NEDI: [Python implementation](https://github.com/Kirstihly/Edge-Directed_Interpolation)

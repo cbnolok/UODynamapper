@@ -1,13 +1,21 @@
-//! GPU block compression of frames, for a BC7 or BC1 frame atlas such as Dynamapper's mobiles' (evaluated in
-//! `tests.rs`; Dynamapper's BC7 frame atlas encodes its RIFE in-betweens with it, at UltraFast). BC7 keeps soft alpha
-//! (Enhanced, KR); BC1 keeps one bit of it, which is all Classic art and its in-betweens have. The encoding is
-//! block_compression's (a WGSL port of Intel's ISPC Texture Compressor kernels, MIT): its BC7 as it is, its BC1
-//! followed by the punch-through pass (bc1_punch_through.wgsl), since that kernel encodes colour only. BC1 is behind
-//! the crate's `bc1` feature, which turns on block_compression's BC1 to BC5 kernels; without it the compressor builds
-//! BC7's pipeline alone.
+//! GPU block compression of frames and atlas pages, BC7 or BC1, for Dynamapper's mobiles' frame atlas (evaluated in
+//! `tests.rs`; Dynamapper's BC7 frame atlas encodes its RIFE in-betweens with it, at UltraFast) and for a converter's
+//! pages. BC7 keeps soft alpha (Enhanced, KR); BC1 keeps one bit of it, which is all Classic art and its in-betweens
+//! have. The kernels are our copies of block_compression's (a WGSL port of Intel's ISPC Texture Compressor kernels,
+//! MIT; CREDITS.md):
 //!
-//! A frame to encode lies at the top-left corner of a texture whose view is a non-sRGB RGBA8 format (`Rgba8Unorm`)
-//! holding the frame's sRGB-encoded, straight-alpha bytes: an `Rgba8UnormSrgb` texture needs `Rgba8Unorm` among its
+//! - bc7.wgsl, its BC7 kernel with the modes a profile runs as constants ([`Bc7Profile`]): each quality, with alpha
+//!   or opaque, is a pipeline of its own, which compiles only the modes it selects. The crate reads all its settings at
+//!   run time, so its one pipeline holds every mode (about 21 s on a cold RADV cache). The settings of the arithmetic
+//!   stay a buffer, as the crate's (see bc7.wgsl).
+//! - bc1.wgsl, its BC1 kernel with BC1's one bit of alpha added (the crate's encodes colour only).
+//!
+//! The BC7 blocks are the crate's byte for byte, and the opaque BC1 blocks the crate's BC1 ones (`tests.rs`).
+//! [`MobileBlockEncoder::compile`] compiles BC7 UltraFast with alpha, Dynamapper's format; every other format compiles
+//! the first time a frame of it is added, or ahead with [`MobileBlockEncoder::compile_format`].
+//!
+//! A frame to encode lies at the left edge of a texture whose view is a non-sRGB RGBA8 format (`Rgba8Unorm`) holding
+//! the frame's sRGB-encoded, straight-alpha bytes: an `Rgba8UnormSrgb` texture needs `Rgba8Unorm` among its
 //! `view_formats`. The encoders work on those bytes as they are, so an `*UnormSrgb` BC texture decodes them to the same
 //! sRGB bytes and samples them as the RGBA8 atlas does. The texture covers the frame padded to whole 4x4 blocks
 //! ([`padded_size`]), the padding transparent. The blocks go to a storage buffer row by row of blocks, tightly, and
@@ -20,38 +28,39 @@
 #[cfg(test)]
 mod tests;
 
-use block_compression::{BC7Settings, CompressionVariant, GpuBlockCompressor};
-#[cfg(feature = "bc1")]
+use std::collections::HashMap;
+use std::fmt::Write as _;
 use wgpu::util::DeviceExt;
-#[cfg(feature = "bc1")]
-use crate::network_shader_module;
 use crate::warm_up::CompileReport;
 
 /// Texels per side of a block.
 pub const BLOCK_SIDE: u32 = 4;
 const BC7_BLOCK_BYTES: u32 = 16;
-#[cfg(feature = "bc1")]
 const BC1_BLOCK_BYTES: u32 = 8;
 /// A transparent BC1 block: equal endpoints (the three-colour mode) and index 3 everywhere.
-#[cfg(feature = "bc1")]
 pub const BC1_TRANSPARENT_BLOCK: [u8; BC1_BLOCK_BYTES as usize] = [0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff];
-#[cfg(feature = "bc1")]
-const U32_BYTES: u64 = 4;
-/// Matches the workgroup size of bc1_punch_through.wgsl.
-#[cfg(feature = "bc1")]
-const PUNCH_THROUGH_WORKGROUP_SIDE: u32 = 8;
+const U32_BYTES: u32 = 4;
+/// The workgroup size of bc7.wgsl and bc1.wgsl, in blocks per side.
+const WORKGROUP_SIDE: u32 = 8;
+/// A frame's uniforms (the kernels' `Uniforms`): its padded width and height, its first row in the texture and where
+/// its blocks start in the output, in u32.
+const FRAME_UNIFORM_WORDS: usize = 4;
+const FRAME_UNIFORM_BYTES: u64 = (FRAME_UNIFORM_WORDS as u32 * U32_BYTES) as u64;
 
-#[cfg(feature = "bc1")]
-const PUNCH_THROUGH_SHADER: &str = include_str!("../shaders/block_encode/bc1_punch_through.wgsl");
+const BC7_SHADER: &str = include_str!("../shaders/block_encode/bc7.wgsl");
+const BC7_ENTRY: &str = "compress_bc7";
+const BC1_SHADER: &str = include_str!("../shaders/block_encode/bc1.wgsl");
+const BC1_ENTRY: &str = "compress_bc1";
+/// bc7.wgsl's settings buffer.
+const SETTINGS_BINDING: u32 = 3;
 
-/// The compile of block_compression's pipelines, as reported.
-#[cfg(feature = "bc1")]
-const COMPRESSOR_COMPILE: &str = "BC7 compressor (every quality; and BC1-BC5)";
-#[cfg(not(feature = "bc1"))]
-const COMPRESSOR_COMPILE: &str = "BC7 compressor (every quality)";
+/// The format [`MobileBlockEncoder::compile`] compiles: Dynamapper's frames'.
+pub const WARM_BLOCK_FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(Bc7Quality::UltraFast);
+/// The compiles [`MobileBlockEncoder::compile`] reports: [`WARM_BLOCK_FORMAT`]'s.
+pub const BLOCK_ENCODER_COMPILES: usize = 1;
 
-/// block_compression's BC7 settings for colour with alpha, fastest to slowest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// block_compression's BC7 settings profiles, fastest to slowest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Bc7Quality {
     UltraFast,
     VeryFast,
@@ -62,42 +71,43 @@ pub enum Bc7Quality {
 
 impl Bc7Quality {
     pub const ALL: [Self; 5] = [Self::UltraFast, Self::VeryFast, Self::Fast, Self::Basic, Self::Slow];
-
-    fn settings(self) -> BC7Settings {
-        match self {
-            Self::UltraFast => BC7Settings::alpha_ultrafast(),
-            Self::VeryFast => BC7Settings::alpha_very_fast(),
-            Self::Fast => BC7Settings::alpha_fast(),
-            Self::Basic => BC7Settings::alpha_basic(),
-            Self::Slow => BC7Settings::alpha_slow(),
-        }
-    }
 }
 
-/// A block format of the frame atlas.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A block format, and for BC7 the settings it encodes with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MobileBlockFormat {
     /// 1 byte per texel, soft alpha.
     Bc7(Bc7Quality),
+    /// BC7 of colour alone: the alpha is ignored and decodes opaque.
+    Bc7Opaque(Bc7Quality),
     /// Half a byte per texel; a texel is opaque or transparent (alpha from one half up is opaque).
-    #[cfg(feature = "bc1")]
     Bc1,
 }
 
 impl MobileBlockFormat {
+    /// Every format: BC7 with alpha at each quality, then opaque, then BC1.
+    pub const ALL: [Self; 2 * Bc7Quality::ALL.len() + 1] = {
+        let mut all = [Self::Bc1; 2 * Bc7Quality::ALL.len() + 1];
+        let mut index = 0;
+        while index < Bc7Quality::ALL.len() {
+            all[index] = Self::Bc7(Bc7Quality::ALL[index]);
+            all[Bc7Quality::ALL.len() + index] = Self::Bc7Opaque(Bc7Quality::ALL[index]);
+            index += 1;
+        }
+        all
+    };
+
     /// The texture format of an atlas of these blocks.
     pub fn texture_format(self) -> wgpu::TextureFormat {
         match self {
-            Self::Bc7(_) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-            #[cfg(feature = "bc1")]
+            Self::Bc7(_) | Self::Bc7Opaque(_) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
             Self::Bc1 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
         }
     }
 
     pub fn block_bytes(self) -> u32 {
         match self {
-            Self::Bc7(_) => BC7_BLOCK_BYTES,
-            #[cfg(feature = "bc1")]
+            Self::Bc7(_) | Self::Bc7Opaque(_) => BC7_BLOCK_BYTES,
             Self::Bc1 => BC1_BLOCK_BYTES,
         }
     }
@@ -108,11 +118,12 @@ impl MobileBlockFormat {
         u64::from(width / BLOCK_SIDE) * u64::from(height / BLOCK_SIDE) * u64::from(self.block_bytes())
     }
 
-    fn variant(self) -> CompressionVariant {
+    /// The name of its pipeline's compile, as reported.
+    pub fn compile_name(self) -> String {
         match self {
-            Self::Bc7(quality) => CompressionVariant::BC7(quality.settings()),
-            #[cfg(feature = "bc1")]
-            Self::Bc1 => CompressionVariant::BC1,
+            Self::Bc7(quality) => format!("BC7 encoder ({quality:?})"),
+            Self::Bc7Opaque(quality) => format!("BC7 encoder ({quality:?}, opaque)"),
+            Self::Bc1 => "BC1 encoder".to_string(),
         }
     }
 }
@@ -122,122 +133,209 @@ pub fn padded_size(width: u32, height: u32) -> (u32, u32) {
     (width.div_ceil(BLOCK_SIDE) * BLOCK_SIDE, height.div_ceil(BLOCK_SIDE) * BLOCK_SIDE)
 }
 
-/// A BC1 frame waiting for its alpha pass.
-#[cfg(feature = "bc1")]
-struct PunchThroughFrame {
-    bind_group: wgpu::BindGroup,
-    workgroups: (u32, u32),
+/// The settings of a BC7 profile, block_compression 0.11.0's `BC7Settings` (src/settings.rs) field by field: bc7.wgsl
+/// reads `mode_selection` and `skip_mode2` as constants ([`Bc7Profile::wgsl_constants`]), and all of them from its
+/// settings buffer ([`Bc7Profile::settings_words`]), as the crate's kernel does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bc7Profile {
+    pub refine_iterations: [u32; BC7_MODES],
+    /// Modes 0 and 2, modes 1, 3 and 7, modes 4 and 5, mode 6.
+    pub mode_selection: [bool; BC7_MODE_GROUPS],
+    pub skip_mode2: bool,
+    pub fast_skip_threshold_mode1: u32,
+    pub fast_skip_threshold_mode3: u32,
+    pub fast_skip_threshold_mode7: u32,
+    /// The first channel modes 4 and 5 rotate into alpha (3, alpha itself, rotates none).
+    pub mode45_channel0: u32,
+    pub refine_iterations_channel: u32,
+    /// 4 with alpha, 3 opaque.
+    pub channels: u32,
 }
 
-/// The BC1 punch-through pass, and the frames recorded for it.
-#[cfg(feature = "bc1")]
-struct PunchThrough {
+const ALPHA_CHANNELS: u32 = 4;
+const BC7_MODES: usize = 8;
+const BC7_MODE_GROUPS: usize = 4;
+/// The words of bc7.wgsl's `Settings`: the refinements by mode, the mode groups, then seven more.
+pub const BC7_SETTINGS_WORDS: usize = BC7_MODES + BC7_MODE_GROUPS + 7;
+const OPAQUE_CHANNELS: u32 = 3;
+
+impl Bc7Profile {
+    /// block_compression's `BC7Settings::alpha_*` and `opaque_*` constructors, by quality.
+    pub const fn of(quality: Bc7Quality, alpha: bool) -> Self {
+        let (t, f) = (true, false);
+        match (alpha, quality) {
+            (true, Bc7Quality::UltraFast) => Self::new(ALPHA_CHANNELS, [f, f, t, t], t, 0, 0, 4, 3, 1, [2, 1, 2, 1, 1, 1, 2, 2]),
+            (true, Bc7Quality::VeryFast) => Self::new(ALPHA_CHANNELS, [f, t, t, t], t, 0, 0, 4, 3, 2, [2, 1, 2, 1, 2, 2, 2, 2]),
+            (true, Bc7Quality::Fast) => Self::new(ALPHA_CHANNELS, [f, t, t, t], t, 4, 4, 8, 3, 2, [2, 1, 2, 1, 2, 2, 2, 2]),
+            (true, Bc7Quality::Basic) => Self::new(ALPHA_CHANNELS, [t, t, t, t], t, 12, 8, 8, 0, 2, [2; 8]),
+            (true, Bc7Quality::Slow) => Self::new(ALPHA_CHANNELS, [t, t, t, t], f, 64, 64, 64, 0, 4, [4; 8]),
+            (false, Bc7Quality::UltraFast) => Self::new(OPAQUE_CHANNELS, [f, f, f, t], t, 3, 1, 0, 0, 0, [2, 2, 2, 1, 2, 2, 1, 0]),
+            (false, Bc7Quality::VeryFast) => Self::new(OPAQUE_CHANNELS, [f, t, f, t], t, 3, 1, 0, 0, 0, [2, 2, 2, 1, 2, 2, 1, 0]),
+            (false, Bc7Quality::Fast) => Self::new(OPAQUE_CHANNELS, [f, t, f, t], t, 12, 4, 0, 0, 0, [2, 2, 2, 1, 2, 2, 2, 0]),
+            (false, Bc7Quality::Basic) => Self::new(OPAQUE_CHANNELS, [t, t, t, t], t, 12, 8, 0, 0, 2, [2, 2, 2, 2, 2, 2, 2, 0]),
+            (false, Bc7Quality::Slow) => Self::new(OPAQUE_CHANNELS, [t, t, t, t], f, 64, 64, 0, 0, 4, [4, 4, 4, 4, 4, 4, 4, 0]),
+        }
+    }
+
+    /// In the order of the crate's constructors' fields.
+    #[allow(clippy::too_many_arguments)]
+    const fn new(channels: u32, mode_selection: [bool; BC7_MODE_GROUPS], skip_mode2: bool,
+        fast_skip_threshold_mode1: u32, fast_skip_threshold_mode3: u32, fast_skip_threshold_mode7: u32,
+        mode45_channel0: u32, refine_iterations_channel: u32, refine_iterations: [u32; BC7_MODES]) -> Self {
+        Self { refine_iterations, mode_selection, skip_mode2, fast_skip_threshold_mode1, fast_skip_threshold_mode3,
+            fast_skip_threshold_mode7, mode45_channel0, refine_iterations_channel, channels }
+    }
+
+    /// The WGSL constants bc7.wgsl reads: which modes run.
+    pub fn wgsl_constants(&self) -> String {
+        let [modes_0_2, modes_1_3_7, modes_4_5, mode_6] = self.mode_selection;
+        let mut constants = String::from("\n// The profile's modes (block_encode.rs, Bc7Profile).\n");
+        writeln!(constants, "const MODES_0_2 = {modes_0_2};\nconst MODES_1_3_7 = {modes_1_3_7};").unwrap();
+        writeln!(constants, "const MODES_4_5 = {modes_4_5};\nconst MODE_6 = {mode_6};").unwrap();
+        writeln!(constants, "const SKIP_MODE_2 = {};", self.skip_mode2).unwrap();
+        constants
+    }
+
+    /// The settings as bc7.wgsl's `Settings` holds them, in the layout of the crate's `BC7Settings`.
+    pub fn settings_words(&self) -> [u32; BC7_SETTINGS_WORDS] {
+        let mut words = [0; BC7_SETTINGS_WORDS];
+        words[..BC7_MODES].copy_from_slice(&self.refine_iterations);
+        for (word, &selected) in words[BC7_MODES..].iter_mut().zip(&self.mode_selection) {
+            *word = u32::from(selected);
+        }
+        words[BC7_MODES + BC7_MODE_GROUPS..].copy_from_slice(&[u32::from(self.skip_mode2),
+            self.fast_skip_threshold_mode1, self.fast_skip_threshold_mode3, self.fast_skip_threshold_mode7,
+            self.mode45_channel0, self.refine_iterations_channel, self.channels]);
+        words
+    }
+}
+
+/// A kernel's pipeline: the source texture, the output blocks and the frame's uniforms, at a dynamic offset; for BC7,
+/// the profile's settings too.
+struct Kernel {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
-    frames: Vec<PunchThroughFrame>,
+    settings: Option<wgpu::Buffer>,
 }
 
-#[cfg(feature = "bc1")]
-impl PunchThrough {
-    fn compile(device: &wgpu::Device, report: &mut CompileReport) -> Self {
+impl Kernel {
+    fn compile(device: &wgpu::Device, format: MobileBlockFormat) -> Self {
+        let label = format.compile_name();
+        let mut settings = None;
+        let (module, entry_point) = match format {
+            MobileBlockFormat::Bc7(quality) | MobileBlockFormat::Bc7Opaque(quality) => {
+                let profile = Bc7Profile::of(quality, matches!(format, MobileBlockFormat::Bc7(_)));
+                settings = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&label), contents: bytemuck::cast_slice(&profile.settings_words()),
+                    usage: wgpu::BufferUsages::STORAGE,
+                }));
+                // block_compression's checks for its BC7 kernel, loop bounding kept: the crate found that without
+                // it RADV/Navi can encode alpha and Basic wrongly. The checks left out concern ray queries, task and
+                // mesh shaders, of which the kernel has none.
+                let checks = wgpu::ShaderRuntimeChecks {
+                    bounds_checks: true, force_loop_bounding: true, ray_query_initialization_tracking: false,
+                    task_shader_dispatch_tracking: false, mesh_shader_primitive_indices_clamp: false,
+                    int_div_checks: true,
+                };
+                let source = format!("{BC7_SHADER}{}", profile.wgsl_constants());
+                let descriptor = wgpu::ShaderModuleDescriptor {
+                    label: Some(&label), source: wgpu::ShaderSource::Wgsl(source.into()),
+                };
+                // SAFETY: the checks turned off guard ray queries and task and mesh shaders, which the module has none
+                // of.
+                (unsafe { device.create_shader_module_trusted(descriptor, checks) }, BC7_ENTRY)
+            }
+            // Checked, as block_compression creates its BC1 kernel.
+            MobileBlockFormat::Bc1 => (device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&label), source: wgpu::ShaderSource::Wgsl(BC1_SHADER.into()),
+            }), BC1_ENTRY),
+        };
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None,
         };
+        let mut entries = vec![
+            entry(0, wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2, multisampled: false,
+            }),
+            entry(1, wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false,
+                min_binding_size: None,
+            }),
+            entry(2, wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: true,
+                min_binding_size: wgpu::BufferSize::new(FRAME_UNIFORM_BYTES),
+            }),
+        ];
+        if settings.is_some() {
+            entries.push(entry(SETTINGS_BINDING, wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false,
+                min_binding_size: None,
+            }));
+        }
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bc1 punch-through"),
-            entries: &[
-                entry(0, wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2, multisampled: false,
-                }),
-                entry(1, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false,
-                    min_binding_size: None,
-                }),
-                entry(2, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None,
-                }),
-            ],
+            label: Some(&label), entries: &entries,
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bc1 punch-through"), bind_group_layouts: &[Some(&layout)], immediate_size: 0,
+            label: Some(&label), bind_group_layouts: &[Some(&layout)], immediate_size: 0,
         });
-        let pipeline = report.compile("BC1 punch-through", || {
-            // SAFETY: every loop of bc1_punch_through.wgsl runs to a constant, counting up by one.
-            let module = unsafe { network_shader_module(device, "bc1 punch-through", PUNCH_THROUGH_SHADER.to_string()) };
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("bc1 punch-through"), layout: Some(&pipeline_layout), module: &module,
-                entry_point: Some("punch_through"), compilation_options: Default::default(), cache: None,
-            })
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(&label), layout: Some(&pipeline_layout), module: &module, entry_point: Some(entry_point),
+            compilation_options: Default::default(), cache: None,
         });
-        Self { layout, pipeline, frames: Vec::new() }
-    }
-
-    /// Adds the pass over a `width` by `height` frame (padded) at the corner of `source`, its blocks in `output` from
-    /// byte `offset`.
-    fn add_frame(&mut self, device: &wgpu::Device, source: &wgpu::TextureView, width: u32, height: u32,
-        output: &wgpu::Buffer, offset: u64) {
-        let uniforms = [width, height, (offset / U32_BYTES) as u32, 0];
-        let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("bc1 punch-through frame"), contents: bytemuck::cast_slice(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bc1 punch-through"), layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source) },
-                wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: uniforms.as_entire_binding() },
-            ],
-        });
-        let blocks = |side: u32| (side / BLOCK_SIDE).div_ceil(PUNCH_THROUGH_WORKGROUP_SIDE);
-        self.frames.push(PunchThroughFrame { bind_group, workgroups: (blocks(width), blocks(height)) });
-    }
-
-    fn record(&mut self, pass: &mut wgpu::ComputePass<'_>) {
-        if self.frames.is_empty() {
-            return;
-        }
-        pass.set_pipeline(&self.pipeline);
-        for frame in self.frames.drain(..) {
-            pass.set_bind_group(0, &frame.bind_group, &[]);
-            pass.dispatch_workgroups(frame.workgroups.0, frame.workgroups.1, 1);
-        }
+        Self { layout, pipeline, settings }
     }
 }
 
-/// The compiles [`MobileBlockEncoder::compile`] reports: block_compression's pipelines, then, with the `bc1` feature,
-/// the BC1 punch-through.
-pub const BLOCK_ENCODER_COMPILES: usize = if cfg!(feature = "bc1") { 2 } else { 1 };
+/// A frame added for the next [`MobileBlockEncoder::record`].
+struct Frame {
+    format: MobileBlockFormat,
+    source: wgpu::TextureView,
+    output: wgpu::Buffer,
+    uniforms: [u32; FRAME_UNIFORM_WORDS],
+    workgroups: (u32, u32),
+}
 
-/// The encoders and the frames recorded for the next [`MobileBlockEncoder::record`].
+/// The encoders' pipelines compiled so far, and the frames recorded for the next [`MobileBlockEncoder::record`].
 pub struct MobileBlockEncoder {
-    #[cfg(feature = "bc1")]
     device: wgpu::Device,
-    compressor: GpuBlockCompressor,
-    #[cfg(feature = "bc1")]
-    punch_through: PunchThrough,
+    kernels: HashMap<MobileBlockFormat, Kernel>,
+    /// A frame's uniforms' stride in the buffer of a record: the device's dynamic offset alignment.
+    uniform_stride: u64,
+    frames: Vec<Frame>,
 }
 
 impl MobileBlockEncoder {
-    /// Compiles the encoders' pipelines: block_compression builds its BC7 pipeline here, and its BC1 to BC5 ones with
-    /// the `bc1` feature.
+    /// Compiles the pipeline of [`WARM_BLOCK_FORMAT`]. The queue is not used (the frames' parameters go into a buffer
+    /// at each record); it stays for the callers of the encoder this one replaced, which wrote them through it.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self::compile(device, queue, &mut CompileReport::silent(BLOCK_ENCODER_COMPILES))
     }
 
     /// [`MobileBlockEncoder::new`], telling `report` of each of [`BLOCK_ENCODER_COMPILES`].
-    pub fn compile(device: &wgpu::Device, queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
-        // One compile for every BC7 quality (a setting the kernel reads, not a pipeline of its own), with
-        // block_compression's BC1 to BC5 kernels when they are on.
-        let compressor = report.compile(COMPRESSOR_COMPILE, || GpuBlockCompressor::new(device.clone(), queue.clone()));
-        Self {
-            #[cfg(feature = "bc1")]
-            device: device.clone(),
-            compressor,
-            #[cfg(feature = "bc1")]
-            punch_through: PunchThrough::compile(device, report),
+    pub fn compile(device: &wgpu::Device, _queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
+        let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment);
+        let mut encoder = Self {
+            device: device.clone(), kernels: HashMap::new(),
+            uniform_stride: FRAME_UNIFORM_BYTES.div_ceil(alignment) * alignment, frames: Vec::new(),
+        };
+        encoder.compile_format(WARM_BLOCK_FORMAT, report);
+        encoder
+    }
+
+    /// Compiles `format`'s pipeline unless it is compiled already, telling `report` of it (one compile) if it compiles.
+    /// [`MobileBlockEncoder::add_frame`] compiles a format not compiled yet itself, on the caller's thread: a slow BC7
+    /// profile with every mode can take tens of seconds on a cold driver cache.
+    pub fn compile_format(&mut self, format: MobileBlockFormat, report: &mut CompileReport) {
+        if !self.kernels.contains_key(&format) {
+            let kernel = report.compile(&format.compile_name(), || Kernel::compile(&self.device, format));
+            self.kernels.insert(format, kernel);
         }
+    }
+
+    /// Whether `format`'s pipeline is compiled.
+    pub fn is_compiled(&self, format: MobileBlockFormat) -> bool {
+        self.kernels.contains_key(&format)
     }
 
     /// Adds the encoding of a `width` by `height` frame at the top-left corner of `source` (see the module doc) to
@@ -249,28 +347,63 @@ impl MobileBlockEncoder {
     }
 
     /// [`MobileBlockEncoder::add_frame`] for a frame at row `y` (a multiple of [`BLOCK_SIDE`]) of `source`'s left
-    /// edge, so frames stacked in one texture encode in one [`MobileBlockEncoder::record`]. BC7 only:
-    /// block_compression's BC1 kernel, and the punch-through pass after it, read from the texture's corner.
+    /// edge, so frames stacked in one texture encode in one [`MobileBlockEncoder::record`].
     #[allow(clippy::too_many_arguments)]
     pub fn add_frame_at(&mut self, format: MobileBlockFormat, source: &wgpu::TextureView, y: u32, width: u32,
         height: u32, output: &wgpu::Buffer, offset: u64) {
-        #[cfg(feature = "bc1")]
-        assert!(y == 0 || format != MobileBlockFormat::Bc1, "a BC1 frame lies at its texture's corner");
+        assert!(y % BLOCK_SIDE == 0, "a frame starts on a block row");
+        assert!(output.usage().contains(wgpu::BufferUsages::STORAGE), "the blocks go to a storage buffer");
+        assert!(offset + format.encoded_bytes(width, height) <= output.size(), "the blocks fit the buffer");
+        self.compile_format(format, &mut CompileReport::silent(1));
         let (width, height) = padded_size(width, height);
-        let blocks_offset = u32::try_from(offset).expect("block offsets fit u32");
-        self.compressor.add_compression_task(format.variant(), source, width, height, output, Some(y),
-            Some(blocks_offset));
-        #[cfg(feature = "bc1")]
-        if format == MobileBlockFormat::Bc1 {
-            self.punch_through.add_frame(&self.device, source, width, height, output, offset);
-        }
+        let blocks_offset = u32::try_from(offset / u64::from(U32_BYTES)).expect("block offsets fit u32");
+        let workgroups = |side: u32| (side / BLOCK_SIDE).div_ceil(WORKGROUP_SIDE);
+        self.frames.push(Frame {
+            format, source: source.clone(), output: output.clone(), uniforms: [width, height, y, blocks_offset],
+            workgroups: (workgroups(width), workgroups(height)),
+        });
     }
 
-    /// Records the encoding of the frames added since the last call into `pass`.
+    /// Records the encoding of the frames added since the last call into `pass`. Their parameters go into a buffer of
+    /// this record's own, so several records may share a submission.
     pub fn record(&mut self, pass: &mut wgpu::ComputePass<'_>) {
-        self.compressor.compress(pass);
-        #[cfg(feature = "bc1")]
-        self.punch_through.record(pass);
+        if self.frames.is_empty() {
+            return;
+        }
+        let stride = self.uniform_stride as usize;
+        let mut contents = vec![0u8; self.frames.len() * stride];
+        for (frame, slot) in self.frames.iter().zip(contents.chunks_exact_mut(stride)) {
+            slot[..FRAME_UNIFORM_BYTES as usize].copy_from_slice(bytemuck::cast_slice(&frame.uniforms));
+        }
+        let uniforms = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("block encoder frames"), contents: &contents, usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let mut bound = None;
+        for (index, frame) in self.frames.drain(..).enumerate() {
+            let kernel = &self.kernels[&frame.format];
+            let mut entries = vec![
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&frame.source) },
+                wgpu::BindGroupEntry { binding: 1, resource: frame.output.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &uniforms, offset: 0, size: wgpu::BufferSize::new(FRAME_UNIFORM_BYTES),
+                }) },
+            ];
+            if let Some(settings) = &kernel.settings {
+                entries.push(wgpu::BindGroupEntry {
+                    binding: SETTINGS_BINDING, resource: settings.as_entire_binding(),
+                });
+            }
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("block encoder frame"), layout: &kernel.layout, entries: &entries,
+            });
+            if bound != Some(frame.format) {
+                pass.set_pipeline(&kernel.pipeline);
+                bound = Some(frame.format);
+            }
+            let dynamic_offset = u32::try_from(index * stride).expect("uniform offsets fit u32");
+            pass.set_bind_group(0, &bind_group, &[dynamic_offset]);
+            pass.dispatch_workgroups(frame.workgroups.0, frame.workgroups.1, 1);
+        }
     }
 }
 

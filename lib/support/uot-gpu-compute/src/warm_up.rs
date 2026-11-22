@@ -2,9 +2,9 @@
 //! running anything. An app calls [`warm_up`] once, off its frame path (the first compile on a cold driver cache takes
 //! seconds), and builds its models from what it returns ([`crate::rife::RifeModel::with_pipelines`],
 //! [`crate::upscale::UpscaleModel::with_pipelines`]), so nothing compiles again when they are first needed. The block
-//! encoder is not part of it: block_compression's BC7 pipeline alone takes about 21 s on a cold cache, so an app
-//! compiles it ([`crate::block_encode::MobileBlockEncoder::compile`], with a [`CompileReport`] of its own) only when it
-//! will encode blocks. The driver's own shader cache (Mesa's on disk) makes a later warm-up, in another run, much
+//! encoder is not part of it: its BC7 UltraFast pipeline takes about 6.6 s on a cold cache, so an app compiles it
+//! ([`crate::block_encode::MobileBlockEncoder::compile`], with a [`CompileReport`] of its own) only when it will
+//! encode blocks. The driver's own shader cache (Mesa's on disk) makes a later warm-up, in another run, much
 //! shorter; this crate keeps no pipeline cache of its own.
 //!
 //! The callback hears each compile twice, as it starts and as it ends, with its name, its place among the
@@ -22,8 +22,8 @@ pub const WARM_UP_COMPILES: usize = RIFE_COMPILES + UPSCALE_COMPILES;
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineCompile<'a> {
     /// What compiles, as the pipeline's label: `"RIFE conv Stride1/Leaky tile 64x32"`, `"RIFE pixel step: merge"`,
-    /// `"upscale conv 3x3/Silu tile 64x48"`, `"upscale prepare"`, `"BC7 compressor (every quality)"` (with the `bc1`
-    /// feature `"BC7 compressor (every quality; and BC1-BC5)"`, then `"BC1 punch-through"`). A RIFE conv compiles two
+    /// `"upscale conv 3x3/Silu tile 64x48"`, `"upscale prepare"`, `"BC7 encoder (UltraFast)"` (the block
+    /// encoder's others: [`crate::block_encode::MobileBlockFormat::compile_name`]). A RIFE conv compiles two
     /// pipelines of one shader (`main` and `reduce`).
     pub name: &'a str,
     /// Its place among the compiles of the run (0-based), and how many there are.
@@ -84,7 +84,7 @@ pub fn warm_up(device: &wgpu::Device, callback: impl FnMut(PipelineCompile)) -> 
 mod tests {
     use std::cell::Cell;
     use super::*;
-    use crate::block_encode::{MobileBlockEncoder, BLOCK_ENCODER_COMPILES};
+    use crate::block_encode::{MobileBlockEncoder, MobileBlockFormat, BLOCK_ENCODER_COMPILES};
 
     /// A callback printing each of `total` compiles as it ends, checking that it started first, and counting it in
     /// `ended`.
@@ -102,8 +102,8 @@ mod tests {
         }
     }
 
-    /// Times each compile of a warm-up, and of the block encoder after it. Run it with `MESA_SHADER_CACHE_DIR` set to
-    /// a new folder for a cold driver cache, and again for a warm one.
+    /// Times each compile of a warm-up, and of the block encoder after it (and its BC1 pipeline). Run it with
+    /// `MESA_SHADER_CACHE_DIR` set to a new folder for a cold driver cache, and again for a warm one.
     #[test]
     #[ignore = "requires a GPU adapter; run explicitly to time the warm-up"]
     fn time_the_warm_up() {
@@ -124,9 +124,12 @@ mod tests {
         println!("warm-up: {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
         let started = Instant::now();
         let ended = Cell::new(0);
-        MobileBlockEncoder::compile(&device, &queue,
+        let mut encoder = MobileBlockEncoder::compile(&device, &queue,
             &mut CompileReport::new(BLOCK_ENCODER_COMPILES, printer(BLOCK_ENCODER_COMPILES, &ended)));
         assert_eq!(ended.get(), BLOCK_ENCODER_COMPILES);
         println!("block encoder: {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
+        let ended = Cell::new(0);
+        encoder.compile_format(MobileBlockFormat::Bc1, &mut CompileReport::new(1, printer(1, &ended)));
+        assert_eq!(ended.get(), 1);
     }
 }
