@@ -2,10 +2,13 @@
 // It is composed over the lit liquid, before the frame's color processing.
 import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_texture_uv, ec_liquid_world_uv};
 
+const SHORELINE_FILTER_ZOOM: f32 = 20.0;
+const SHORELINE_FILTER_TAPS_PER_AXIS: u32 = 4u;
+
 fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
                         lookup: texture_2d<u32>, liquid_sampler: sampler, item: u32,
                         local_uv: vec2<f32>, world_xz: vec2<f32>, time: f32,
-                        animate: bool, linear: bool) -> vec4<f32> {
+                        animate: bool, linear: bool, footprint: vec2<f32>) -> vec4<f32> {
     let dims = textureDimensions(lookup);
     let index = item * 2u;
     let source = textureLoad(lookup, vec2<i32>(i32(index % dims.x), i32(index / dims.x)), 0);
@@ -20,7 +23,23 @@ fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
     // Unit-repetition item masks clamp; tiled sources wrap. Reflection source 2
     // forces WRAP separately in the original draw path.
     let slot = EcLiquidSlot(true, i32(source.x), vec2<u32>(0u), source.yz, repetition);
-    let overlay = ec_liquid_sample(atlas, liquid_sampler, slot, transformed, linear, repetition != 1.0);
+    var overlay: vec4<f32>;
+    if (any(footprint > vec2<f32>(0.0))) {
+        // Average premultiplied coverage over a pixel footprint, then recover
+        // the straight color for the original texture-combine modes.
+        var sum = vec4<f32>(0.0);
+        let taps = f32(SHORELINE_FILTER_TAPS_PER_AXIS);
+        for (var y = 0u; y < SHORELINE_FILTER_TAPS_PER_AXIS; y++) {
+            for (var x = 0u; x < SHORELINE_FILTER_TAPS_PER_AXIS; x++) {
+                let offset = ((vec2<f32>(f32(x), f32(y)) + 0.5) / taps - 0.5) * footprint / repetition;
+                let sample = ec_liquid_sample(atlas, liquid_sampler, slot, transformed + offset, true, repetition != 1.0);
+                sum += vec4<f32>(sample.rgb * sample.a, sample.a);
+            }
+        }
+        overlay = vec4<f32>(sum.rgb / max(sum.a, 0.0001), sum.a / (taps * taps));
+    } else {
+        overlay = ec_liquid_sample(atlas, liquid_sampler, slot, transformed, linear, repetition != 1.0);
+    }
     return compose_ec_item_liquid(current, overlay, source.w);
 }
 

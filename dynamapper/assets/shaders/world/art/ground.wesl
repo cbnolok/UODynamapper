@@ -10,7 +10,7 @@ import bevy_pbr::render::{
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
 import package::shaders::world::ec_liquid::sample_ec_liquid;
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
-import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
+import package::shaders::world::ec_item_liquid::{apply_ec_item_liquid, SHORELINE_FILTER_ZOOM};
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
@@ -79,7 +79,7 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
     out.instance_index = instance_index;
-    out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance);
+    out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance, scene.render_zoom);
     out.local_light_rgba = art_local_light_at_corner(inst.local_light_corners, corner);
     out.client_grunge_uv = vec2<f32>(0.0);
     if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
@@ -117,18 +117,21 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     // The client filter's footprint: the quad's atlas uv per screen pixel, taken before any branch.
     let ground_uv_dx = dpdx(in.uv);
     let ground_uv_dy = dpdy(in.uv);
+    let wide_view = scene.render_zoom >= SHORELINE_FILTER_ZOOM;
+    let liquid_footprint = select(vec2<f32>(0.0), fwidth(in.world_pos.xz), wide_view);
+    let animate_liquid = effects.enable_water_animation == 1u && !wide_view;
     let use_ec_water_material = (inst.material_flags & GROUND_FLAG_EC_WATER_MATERIAL) != 0u;
     var color: vec4<f32>;
     if (use_ec_water_material) {
         color = sample_ec_liquid(land_page_atlas, land_page_lookup, liquid_sampler,
             inst.material_payload, in.world_pos.xz, vec2<f32>(uv_in_tile.x, 1.0 - uv_in_tile.y), in.reflection_uv, globals.time,
-            effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
+            animate_liquid, effects.enable_linear_filtering == 1u);
         let energy = global_light.ambient_strength
             + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
         color = apply_ec_item_liquid(vec4<f32>(clamp(color.rgb * energy, vec3<f32>(0.0), vec3<f32>(1.0)), color.a),
             item_liquid_atlas, item_liquid_lookup, liquid_sampler, inst.material_item_id,
             uv_in_tile, in.world_pos.xz, globals.time,
-            effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
+            animate_liquid, effects.enable_linear_filtering == 1u, liquid_footprint);
         color = vec4<f32>(texture_color_rgb(color.rgb), color.a);
     } else {
         if (inst.texture_stretch > 0.0) {

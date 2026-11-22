@@ -1980,7 +1980,7 @@ fn fragment() -> @location(0) vec4<f32> {
         0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
     let liquid = apply_ec_item_liquid(vec4<f32>(color, normal.w),
         land_page_atlas, land_page_lookup, tex_small_sampler, 6038u,
-        uv, uv, 0.0, true, true);
+        uv, uv, 0.0, true, true, vec2<f32>(0.0));
     return apply_ec_item_surface(liquid, land_page_atlas, land_page_lookup, tex_small_sampler,
         vec4<u32>(0u), uv, uv, true, true);
 }

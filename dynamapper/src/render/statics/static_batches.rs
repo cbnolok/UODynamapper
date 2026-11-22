@@ -28,6 +28,8 @@ pub(crate) const STATIC_FLAG_CAP_MEETS_FLOOR: u32 = 1 << 24;
 /// (`static_continues_land`) or is foliage, so it takes the land's colour grading, KR-like's chroma knee included; the
 /// other statics keep their own colour (`land_grade_flag`). Kept in sync with art/shading.wesl.
 pub(crate) const STATIC_FLAG_LAND_GRADE: u32 = 1 << 25;
+/// A plain Classic water diamond in the overview keeps the same sampling as the sea.
+pub(super) const STATIC_FLAG_CC_WATER_FILL: u32 = 1 << 26;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticRenderTile {

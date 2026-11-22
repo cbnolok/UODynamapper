@@ -21,6 +21,7 @@ use crate::content::{
 };
 use crate::prelude::*;
 use super::client_grunge::STATIC_FLAG_CLIENT_GRUNGE;
+use super::static_batches::STATIC_FLAG_CC_WATER_FILL;
 use bevy::prelude::*;
 use bevy::platform::collections::HashSet;
 use std::collections::HashMap;
@@ -954,8 +955,14 @@ fn emit_static_render_tile(
     build: &mut StaticChunkBuildState,
 ) {
     let enhanced_package = resources.tilemeta_package();
-    let enhanced_tilemeta = enhanced_package.and_then(|meta| meta.item_tile(render_tile.graphic as u32));
-    let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source| {
+    let graphic = u32::from(render_tile.graphic);
+    let enhanced_tilemeta = enhanced_package.and_then(|meta| meta.item_tile(graphic));
+    // Resolve the same art and material as at street level for liquid statics. Avoid
+    // resolving the full art inventory for ordinary radar statics.
+    let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode
+        || enhanced_tilemeta.is_some_and(|meta| meta.is_wet())
+        || enhanced_package.is_some_and(|package| package.uses_water_shader(graphic))
+        || resources.kingdom_reborn.is_some_and(|kr| kr.tilemeta.uses_water_shader(graphic))).map(|source| {
         let kind = resolve_static_visual_kind_cached(source, frame.land_style, render_tile.graphic, enhanced_package,
             enhanced_tilemeta, resources.tex_art_cc_package(), resources.tex_art_ec_package(),
             resources.tex_land_ec_package(), surface_resolution_cache);
@@ -963,12 +970,20 @@ fn emit_static_render_tile(
             enhanced_tilemeta, resources.tex_art_ec_package(), resources.tex_land_ec_package(), kr,
             surface_resolution_cache))
             .unwrap_or(kind)
+    }).filter(|kind| !frame.is_dot_mode || match kind {
+        StaticVisualKind::TexLandEc { resolution } => resolution.liquid_payload.is_some(),
+        StaticVisualKind::CcRegular { .. } | StaticVisualKind::EcSurface { .. } => {
+            let (package, meta) = drawn_tile_data(Some(*kind), render_tile.graphic, enhanced_package,
+                resources.tilemeta_package_for_art(Some(ClientTextureSource::Cc)), resources.kingdom_reborn);
+            static_visual_renders_wet(*kind, meta, package, graphic)
+        }
+        _ => false,
     });
     // From here on the static is drawn by the tile data of the art it is drawn from (`drawn_tile_data`).
     let (tilemeta_package, tilemeta) =
         drawn_tile_data(visual_kind, render_tile.graphic, enhanced_package,
             resources.tilemeta_package_for_art(Some(ClientTextureSource::Cc)), resources.kingdom_reborn);
-    if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
+    if visual_kind.is_some() && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
     let (cell_x, cell_y) = (render_tile.world_x as i32, render_tile.world_z as i32);
@@ -1046,9 +1061,7 @@ fn emit_static_render_tile(
     };
 
     let before = (build.sprite_instances.len(), build.ground_instances.len());
-    if frame.is_dot_mode {
-        emit_dot_static_tile(info, frame, resources, build);
-    } else if let Some(visual_kind) = visual_kind {
+    if let Some(visual_kind) = visual_kind {
         emit_art_static_tile(
             info,
             frame,
@@ -1058,6 +1071,9 @@ fn emit_static_render_tile(
             ground_atlas,
             build,
         );
+    }
+    if frame.is_dot_mode && before == (build.sprite_instances.len(), build.ground_instances.len()) {
+        emit_dot_static_tile(info, frame, resources, build);
     }
     // Every instance has its pick tile and its cut, the dots' too.
     if before != (build.sprite_instances.len(), build.ground_instances.len()) {
@@ -1587,6 +1603,14 @@ fn emit_cc_surface_like_flat_static_instance(
     hue_flags: u32,
     build: &mut StaticChunkBuildState,
 ) {
+    // The six opaque water diamonds share the Classic sea's art family.
+    // Adjacent foam graphics have their own authored shape and are filtered.
+    const CLASSIC_WATER_FILLS: std::ops::RangeInclusive<u16> = 0x1797..=0x179C;
+    let water_fill = if frame.is_dot_mode && CLASSIC_WATER_FILLS.contains(&info.tile.graphic) {
+        STATIC_FLAG_CC_WATER_FILL
+    } else {
+        0
+    };
     let bounds = resolve_cc_surface_like_flat_quad_bounds(
         resolved.logical_width,
         resolved.logical_height,
@@ -1629,7 +1653,7 @@ fn emit_cc_surface_like_flat_static_instance(
         tile_y,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
+        is_wet_flags: info.is_wet_flags | info.client_grunge_flag | water_fill,
         hue_id,
         hue_flags,
         flat_quad: FLAT_QUAD_CC_FLAT,

@@ -46,6 +46,7 @@ import package::shaders::world::art::shading::{apply_art_surface_shading, art_lo
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
+import package::shaders::world::ec_item_liquid::SHORELINE_FILTER_TAPS_PER_AXIS;
 import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priority_view_z, view_z_depth,
     cave_lifted_view_z, cave_outside_rgb, perspective_cap_may_move, perspective_cap_row_shift,
     perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL, mobile_ground_strip};
@@ -80,6 +81,8 @@ struct ArtFragmentOutput {
 // A projected shadow lies half a priority z under the base it is cast from: in front of the land (z - 2) and the
 // Background floors (z - 1) there, behind the statics standing at that base (z and up).
 const PROJECTED_SHADOW_PRIORITY_Z_OFFSET: f32 = -0.5;
+// static_batches.rs: an opaque Classic water diamond keeps the sea's sampling.
+const STATIC_FLAG_CC_WATER_FILL: u32 = 1u << 26u;
 
 // The view z of an upright sprite's logical point: its anchor at its priority z and tie level (art/depth.wesl).
 fn sprite_logical_view_z(inst: SpriteInstance) -> f32 {
@@ -223,7 +226,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     if (inst.flat_quad >= 2u && (inst.is_wet_flags & 1u) != 0u) {
         // Fixed-function reflection is generated at vertices. Ordinary sprites
         // and Classic flat art do not need this additional coordinate work.
-        out.reflection_uv = ec_liquid_camera_reflection_uv(projected_world_pos, scene.ec_reflection_camera_distance);
+        out.reflection_uv = ec_liquid_camera_reflection_uv(projected_world_pos, scene.ec_reflection_camera_distance, scene.render_zoom);
     }
     @if(STATIC_PICK)
     out.position = pick_clip(out.position);
@@ -269,8 +272,13 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     var out: ArtFragmentOutput;
     out.depth = view_z_depth(in.logical_view_z);
 
-    if sprite_params.render_mode == 1u {
-        // Dot mode (radarcol)
+    let page = art_page(in.uv_b);
+    @if(!MOBILE_FRAMES)
+    let inst = instances[in.instance_index];
+    @if(MOBILE_FRAMES)
+    let inst = mobile_instances[in.instance_index].sprite;
+    if (sprite_params.render_mode == 1u && all(inst.uv_max == vec2<f32>(0.0))) {
+        // Only the untextured instances are radar dots. Liquid statics keep their atlas rectangles.
         @if(LIGHT_SCENE) {
             discard;
         }
@@ -279,11 +287,6 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         return out;
     }
 
-    let page = art_page(in.uv_b);
-    @if(!MOBILE_FRAMES)
-    let inst = instances[in.instance_index];
-    @if(MOBILE_FRAMES)
-    let inst = mobile_instances[in.instance_index].sprite;
     let cap_height_z = light_scene_height(inst.is_wet_flags);
     if (cap_height_z > 0 && perspective_cap_may_move(inst.is_wet_flags) && inst.flat_quad == 0u
         && sprite_params.pass_mode != PASS_MODE_SHADOW && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
@@ -457,7 +460,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         }
     }
     let use_ec_item_water = ec_item_is_water(surface_header);
-    if (effects.enable_water_animation == 1u && in.is_wet == 1u && !use_ec_item_water) {
+    let wide_flat_water = sprite_params.render_mode == 1u && inst.flat_quad == 1u && in.is_wet == 1u;
+    let filter_wide_water = wide_flat_water && (inst.is_wet_flags & STATIC_FLAG_CC_WATER_FILL) == 0u;
+    if (effects.enable_water_animation == 1u && in.is_wet == 1u && !use_ec_item_water && !wide_flat_water) {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
@@ -471,6 +476,22 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,
             in.reflection_uv, globals.time, effects.enable_water_animation == 1u,
             effects.enable_linear_filtering == 1u, energy);
+    } else if (filter_wide_water) {
+        // The Classic atlas has no mip levels. Average the authored diamond and
+        // foam in premultiplied space over the screen pixel, bounded to this art.
+        let taps = f32(SHORELINE_FILTER_TAPS_PER_AXIS);
+        var sum = vec4<f32>(0.0);
+        for (var y = 0u; y < SHORELINE_FILTER_TAPS_PER_AXIS; y++) {
+            for (var x = 0u; x < SHORELINE_FILTER_TAPS_PER_AXIS; x++) {
+                let offset = (vec2<f32>(f32(x), f32(y)) + 0.5) / taps - 0.5;
+                let tap_uv = uv + offset.x * sprite_uv_dx + offset.y * sprite_uv_dy;
+                if (all(tap_uv >= inst.uv_min) && all(tap_uv < inst.uv_max)) {
+                    let tap = sprite_page_tap(page, tap_uv, in.instance_index);
+                    sum += vec4<f32>(tap.rgb * tap.a, tap.a);
+                }
+            }
+        }
+        color = vec4<f32>(sum.rgb / max(sum.a, 0.0001), sum.a / (taps * taps));
     } else {
         if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
             color = sprite_page_client_filtered(page, uv, inst.uv_min, inst.uv_max,
@@ -504,7 +525,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     // pass. Testing image alpha alone would make translucent legacy art opaque.
     let visible_alpha = color.a * in.color.a;
     let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999,
-        surface_header.x != 0u || blend_surface || in.color.a < 0.9999);
+        surface_header.x != 0u || blend_surface || filter_wide_water || in.color.a < 0.9999);
     var pass_mode = sprite_params.pass_mode;
     @if(STATIC_PICK)
     pass_mode = pick_pass();
@@ -551,7 +572,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     }
     // The existing fractional-edge color adjustment is not a material opacity
     // rule. Explicitly translucent art keeps straight RGB for standard blending.
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface
+    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface && !filter_wide_water
         && in.color.a >= 0.9999) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }

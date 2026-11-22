@@ -377,7 +377,7 @@ z = -5
 
 [[fixture]]
 name = "minoc-wide-water-statics"
-guards = "At overview zoom, river statics stay above the seabed and below nearer geometry, with their packed radar colors displayed correctly."
+guards = "At overview zoom, Minoc's water statics keep their liquid material and foam coverage above the seabed and below bridges."
 tier = "quick"
 tags = ["water", "terrain", "minoc", "zoom"]
 map = 0
@@ -385,6 +385,30 @@ x = 2542
 y = 488
 z = -5
 zoom = 20.0
+
+[[fixture]]
+name = "britain-wide-shoreline-water"
+guards = "At overview zoom, coast statics keep authored coverage and join the sea without a radar-colored fringe."
+tier = "quick"
+tags = ["water", "terrain", "britannia", "zoom"]
+map = 0
+x = 1447
+y = 1790
+z = -5
+zoom = 20.0
+
+[[fixture]]
+name = "trammel-overview"
+guards = "At maximum zoom the shoreline water keeps the terrain liquid material, and the sea has no camera-centered reflection spokes."
+tier = "full"
+tags = ["water", "terrain", "zoom"]
+map = 1
+x = 2550
+y = 2025
+z = 0
+styles = ["kr"]
+sources = ["ec/kr"]
+zoom = 50.0
 
 [[fixture]]
 name = "minoc-river-water-msaa"

@@ -291,3 +291,25 @@ normals, contact shadow, the cobblestones' boundary fade, variation) changes
 it; the strip and the forest differ as their textures do, and UOD-Painterly's
 grading saturates the greener grass most (0.94 against 0.79 for the forest).
 No change was made.
+
+## Shoreline water in overview views
+
+The overview collector resolves liquid statics through the same source
+selection and draw paths as close views. Enhanced and KR ground items sample
+the active land atlas and keep their authored fourth-source coverage. Classic
+water keeps its flat art geometry and flat-water lighting. The ordinary
+0x1797–0x179C water fills use the same sampling as the Classic sea diamonds
+(0x1797 and land 0xA8 have the same pixels in the Classic atlas). Foam and
+partial coverage use a bounded premultiplied footprint filter. Dry statics
+retain the radar path.
+
+Terrain and static liquids share the camera reflection coordinates. These fade
+from zoom 10 to 20 because a near-camera projection stretches into spokes at
+facet scale. The world-space bump texture and liquids with explicit UVs retain
+their sampling.
+
+For overview comparisons, pin the renderer binary and verify the static
+collection digest and counts in the manifest. A separate build can replace the
+workspace executable while the shader tree still points at the current
+checkout. The pre-fix wide Minoc build dropped the low water and exposed its dry
+seabed, even with the corrected radar shader loaded.

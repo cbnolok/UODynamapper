@@ -137,6 +137,10 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, dx: vec2<f32>, dy: 
             include_str!("../../../../assets/shaders/world/land/cc_transitions.wesl"),
             "shaders/world/land/cc_transitions.wesl",
         ));
+        shaders.set_shader(shader_id(18), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/land/transitions.wesl"),
+            "shaders/world/land/transitions.wesl",
+        ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
 import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
@@ -217,11 +221,11 @@ fn main() {
     samples[32] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(0.0, 1.0, 0.0))), 0.0, 0.0);
     let lit = vec4<f32>(0.4, 0.3, 0.2, 0.8);
     samples[33] = apply_ec_item_liquid(lit, atlas, item_lookup, linear_sampler, 0u,
-        vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true);
+        vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true, vec2<f32>(0.0));
     samples[34] = apply_ec_item_liquid(lit, atlas, item_lookup, linear_sampler, 1u,
-        vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true);
+        vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true, vec2<f32>(0.0));
     samples[35] = apply_ec_item_liquid(lit, atlas, item_lookup, linear_sampler, 2u,
-        vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true);
+        vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true, vec2<f32>(0.0));
     samples[36] = vec4<f32>(ec_item_quad_screen(vec2<f32>(0.0)), 0.0, 1.0);
     samples[37] = vec4<f32>(ec_item_quad_screen(vec2<f32>(1.0, 0.0)), 0.0, 1.0);
     samples[38] = vec4<f32>(ec_item_quad_screen(vec2<f32>(0.0, 1.0)), 0.0, 1.0);
@@ -312,6 +316,9 @@ fn main() {
         let input = projection_inputs[index];
         samples[111u + index] = camera_relative_world_to_clip(input.origin.xyz, input.offset.xyz) * input.offset.w;
     }
+    // The centre falls on a transparent texel, but the footprint covers part of its opaque neighbours.
+    samples[117] = apply_ec_item_liquid(lit, atlas, item_lookup, linear_sampler, 0u,
+        vec2<f32>(0.75), vec2<f32>(0.0), 0.0, false, true, vec2<f32>(1.0));
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -381,7 +388,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 117 * 16;
+        let result_size = 118 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -561,7 +568,9 @@ fn main() {
             let cpu = bank_vertex(cell, Vec2::new(1.0, -1.0), &read).unwrap() - Vec3::new(cell.x as f32, 0.0, cell.y as f32);
             assert!((cpu - Vec3::from_slice(&actual[index][..3])).abs().max_element() < 0.0001, "bank cursor case {index}");
         }
-        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual.len(), expected.len() + 1);
+        let wide_mask_alpha = (normalized[0][3] + 3.0 * (normalized[1][3] + normalized[2][3])) / 16.0;
+        assert!((actual[117][3] - wide_mask_alpha).abs() < 0.001, "wide shoreline coverage");
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,
