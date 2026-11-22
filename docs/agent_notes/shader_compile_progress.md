@@ -224,9 +224,80 @@ shader out, and dev's is no more defined than the loop's. The neighbour loop alo
 identical; over the whole full tier it gives 476 identical and 17 within tolerance (at most 2 levels, EC land in
 Enhanced, KR-like and UOD-Painterly), none changed.
 
-Next: with the pass loop the land pipeline is 8.9 s of the cold start (the app log's "ready after") and the other 119
-shaders about 4 s (112,000 instructions in all; the art and ground pixel shaders the largest at 12,753 and 8,841);
-without it the land pipeline stays about 27 s of it.
+The main.wesl comments at the pass loop and the neighbour loop say why they are loops; keep every `shade_land` and
+material sample at its one call site. The full tier against dev 72c65d90 when it was committed: 423 identical, 66
+within tolerance (at most 2 levels, mostly KR-like and UOD-Painterly), and the same 4 acid-pools captures changed
+(0.010 to 0.017 %, at most 18 levels).
+
+## What the cold start compiles now
+
+With the pass loop committed (2026-11-22), a measurement build that logs every pipeline as it becomes ready
+(`SLOW_COMPILE` at zero, not kept), the headless KWin below at Britain, each style's afternoon, one cold run each:
+
+| style | pipelines done | land pipeline | art `main.wesl` pipelines | ground pipelines |
+|---|---:|---:|---:|---:|
+| Classic | 10.9 s | 7.4 s | 3: 0.47 s | none at Britain |
+| Enhanced | 11.3 s | 7.5 s | 3: 0.40 s | 2: 0.25 s |
+| KR-like | 11.7 s | 7.5 s | 3: 0.57 s | 2: 0.25 s |
+| UOD-Painterly | 11.5 s | 7.5 s | 3: 0.40 s | 2: 0.27 s |
+
+The times are the gaps between pipelines becoming ready on Bevy's one compile thread. Until about 2.3 s the app loads
+and nothing compiles; Bevy's own and the window's pipelines (64 to 66 logged) are ready by 3.1 s, none over 0.15 s and
+0.6 to 0.7 s in all; then the land, then the art and ground pipelines (0.02 to 0.37 s each). RIFE and SPAN compile on
+their own threads beside them (ready by 3.3 s). The land takes 7.4 to 7.5 s here against the probe's 4.2 to 4.6 s
+because the harness runs the app at idle priority on the second CPU cluster, beside the warm-up threads; its share of
+the start is the same.
+
+The next levers, measured:
+
+- **Two async compute threads**: pipelines done at 10.5 to 10.9 s against 10.9 to 11.7 s (same runs, `UOD_ASYNC_THREADS`
+  override in the measurement build, one run each), as the art and ground compile beside the land. The pool kept its
+  one thread when the land was the whole start (above); 0.4 to 0.8 s is now 4 to 7 % and worth a repeated measurement.
+- **The land's two `shade_land` copies** (cached and uncached) are the rest of the land's time. One copy with `cached`
+  a runtime value costs frame time (above); one copy for free needs the uncached reconstruction to stop being a second
+  shading path. A shader def per shading mode is not a lever: the probe's land pixel shader with `effects.shading_mode`
+  a constant has 71,267 (mode 0), 72,749 (1) and 75,688 (2) instructions against 76,314, and compiles in 4.1 to 4.2 s
+  against 4.4 s (one run each), while every style switch would compile a land pipeline of its own.
+- **The BC7 block encoder** is the largest compile left anywhere, though off the world's path and only with a BC7
+  animation package (below): block_compression's `compress_bc7` reads its `BC7Settings` from a storage buffer, so the
+  one pipeline holds every mode, while the mobiles encode at UltraFast only (`MOBILE_BC7_QUALITY`, bc7_encoding.rs:
+  modes 4/5 and 6). With the settings a WGSL `const` of UltraFast's values, block_compression's runtime checks, one
+  core, a fresh Mesa cache per run (median of 3): 4.50 s (4.50 to 4.68) against 22.34 s (21.76 to 22.66). It needs our
+  own copy of bc7.wgsl with the settings as constants (or override constants upstream) and a byte-exact check of the
+  encoded blocks against the crate's kernel; not done.
+
+## Atlas page formats and what compiles
+
+Nothing Bevy compiles depends on a package's page format, so there is no RGBA8888 or BC7 pipeline to leave out. The
+format is chosen where each texture is made: the Classic and EC land arrays (`land.rs`: `Rgba8UnormSrgb` or
+`Bc7RgbaUnormSrgb`; the EC land atlas `Rgba8Unorm` or `Bc7RgbaUnorm`), the EC auxiliary layers (`aux_layers.rs`), the
+art page atlases (`atlas_texture_format`, statics_draw.rs) and the mobiles' frame atlases (`AtlasFormat`,
+frame_atlas.rs: the RGBA8 one bound as the first art atlas, the BC7 one as the Enhanced, `ART_LAYER_ENHANCED_ATLAS_BIT`
+on the instance's layer). Every material binding declares a float filterable `texture_2d_array` (or `texture_2d`),
+which a view of either format satisfies, and no shader def or pipeline key names a format (`ArtSpriteMaterialKey`
+holds `mobile_frames` and `client_shadow`; the land material has no key), so one pipeline serves both formats.
+
+What a format leaves dead is the other atlas's branch of the art shader: `art_page_sample` and
+`art_page_client_filtered` (art/atlas_pages.wesl), and with `MOBILE_FRAMES` `mobile_frames_tap` and
+`mobile_frames_client_filtered`, are inlined once per atlas. In the probe (art/main.wesl composed with the land's
+defs, the page's `enhanced` forced false, median of 3 cold compiles, 2026-11-22):
+
+| art pipeline | pixel shader instructions | compile |
+|---|---:|---:|
+| statics, both atlases | 12,742 | 0.20 s |
+| statics, the first atlas only | 10,056 | 0.20 s |
+| mobiles (`MOBILE_FRAMES`), both atlases | 18,602 | 0.37 s |
+| mobiles, the RGBA8 atlas only | 13,039 | 0.29 s |
+
+So a shader def for the formats loaded would save at most about 0.08 s per mobile pipeline, compiled after the land,
+and would recompile the mobiles' pipelines (mobiles not drawn meanwhile) whenever a package of the other format
+loads; the statics of the Enhanced styles draw from both atlases whatever the formats. Not done.
+
+On the compute side the only format-dependent compile is the BC7 block encoder, started only while a loaded animation
+package is BC7 (`sys_extract_block_encoder_wanted`, compute_warm_up.rs), on its own thread, or on the background pool
+when a package needs it later; RGBA8 frames are copied into their atlas with nothing to compile. RIFE's and SPAN's
+pipelines (and the RIFE frame steps, which read any float texture) serve both formats. The test packages are RGBA8,
+so none of the runs above compiles the encoder.
 
 ## Testing with a cold cache
 
