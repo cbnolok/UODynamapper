@@ -1,7 +1,7 @@
 # Reproduces the measurements in ../atlas_page_compression.md. Standalone: build it outside the workspace's target, e.g.
 #   CARGO_TARGET_DIR=/path/to/scratch cargo run --release --bin atlas-page-compression-bench -- /path/to/uddp
 # and the binaries in src/bin the same way (strip_levels, block_pages, upscaled_pages, anim_rdo, rdo_gpu_proto, rdo_gpu,
-# aux_maps, aux_bc7_variant, bc7_gpu, classic_formats).
+# aux_maps, aux_bc7_variant, bc7_gpu, classic_formats, classic_span).
 [package]
 name = "atlas-page-compression-bench"
 version = "0.1.0"

@@ -846,7 +846,8 @@ Classic mobile pages: 61 % transparent, 21 % all opaque, 17 % mixed (art 67, 19,
 texels straight, not premultiplied, then cuts at alpha one half (the opaque pass) and draws the rest blended. The RGB
 of a transparent texel therefore reaches every edge pixel: next to a transparent black texel the edge darkens. Against
 a premultiplied tap (sum of alpha x RGB over sum of alpha, where a transparent texel lends no colour) the lossless
-pages' edges are at 22.2 to 22.8 dB: the dark fringe is in the data and the filter, whatever the format.
+pages' edges are at 22.2 to 22.8 dB: the dark fringe is in the data and the filter, whatever the format. (The
+renderer has taken the premultiplied tap since, see "What to do"; the measurements below are of the straight one.)
 
 Measured on the pages `bc7_gpu` samples (Classic mobile 20 pages, 56.8 Mpx; Classic art 20, 20.5 Mpx; Enhanced mobile
 16, 48.0 Mpx, for contrast), each page compressed alone. Opaque PSNR is RGB over the texels of alpha 255 only. Flips
@@ -963,17 +964,60 @@ What the renderer would need (a proposal, not made; a UDDP format change needs t
 - Hues: the Classic hue tables map the colour, which the palette lookup gives as before.
 - The RIFE and SPAN in-between frames are made as RGBA on the GPU and stay BC7, in their own atlas as now.
 
+### BC7 frames as they show, at 1x and after SPAN
+
+Whether the BC7 UltraFast of the Classic animation frames shows, and whether SPAN 2x makes it worse (2026-11-22,
+`--bin classic_span`, Radeon 880M). The frames are encoded as the packer does (whole lossless pages on the GPU), then
+cut out. SPAN 2x is uot-gpu-compute's `FrameUpscaler` with the alpha snapped, as the renderer runs it on Classic frames,
+and its output is encoded BC7 UltraFast as the renderer does (`MOBILE_BLOCK_FORMAT`). PSNR is RGB over the texels the
+reference has opaque; flips are texels whose alpha crosses one half. 200 frames from 20 pages of `mobile_anim_cc.uddp`:
+
+| 1x input | 1x vs lossless | flips | SPAN 2x vs SPAN of lossless | flips | × MSE of 1x | game's 2x (SPAN, then BC7) vs SPAN of lossless | game's 2x vs the lossless package's | flips |
+|---|---|---|---|---|---|---|---|---|
+| lossless | lossless | 0 | lossless | 0 | - | 35.86 dB | lossless | 0 |
+| BC7 UltraFast (the packages) | 33.14 dB | 0 | 32.35 dB | 0 | 1.20 | 31.36 dB | 32.11 dB | 0 |
+| BC7 VeryFast | 34.69 dB | 0 | 33.87 dB | 6 | 1.21 | 32.28 dB | 33.34 dB | 6 |
+| BC1 | 29.45 dB | 0 | 29.10 dB | 0 | 1.08 | 28.61 dB | 28.95 dB | 0 |
+
+Per frame (median, tenth percentile, worst): UltraFast at 1x 33.0, 27.2, 24.4 dB; the game's 2x from the BC7 package
+30.3, 26.3, 23.7 dB and from the lossless one 34.2, 29.6, 25.8 dB. The seven frames of the sheets, at 1x: human 35.7,
+monk's robe 30.8, orc 34.7, horse 38.9, dragon 38.1, fire elemental 29.4, skeleton 32.0 dB (UltraFast).
+
+- **SPAN does not amplify the BC7 error.** Its 2x output from a BC7 frame is 1.2 times the 1x error in MSE (0.8 dB),
+  and no alpha flips. It neither sharpens the blocks' noise into structure nor smooths it away.
+- **The 2x frame is BC7 anyway.** Its own UltraFast encode costs 35.9 dB from a lossless input; from the BC7 package
+  the two errors add to 31.4 dB. Lossless source frames would buy those 4.5 dB on the upscaled frames, as they buy
+  33.1 dB to lossless at 1x.
+
+In game (Classic style, Classic sources, Britain, the player as human 400, orc 17 and human on horse 200, standing; the
+RGBA8 against the BC7 `mobile_anim_cc.uddp`, everything else the same): at zoom 1, 0.46 to 1.05 % of the pixels around
+the mobile differ by more than 6 of 255, mean difference 0.16 to 0.44; magnified 4x, 0.94 to 2.13 % with SPAN off and
+2.35 to 4.53 % with SPAN 2x, mean 0.32 to 1.32. Every difference is on the mobile (none on the art, the same package).
+
+Verdict, by eye on the two states side by side (the stills of the flicker videos) and on the amplified differences:
+
+- **At 1x it does not show.** At zoom 1 the two packages' mobiles look the same; the per-frame sheets at 3x nearest
+  show UltraFast and lossless the same too. The difference appears only amplified 8x.
+- **Magnified 4x it does not show either.** Side by side the human, the orc and the rider look the same. Amplified,
+  the error sits on the sharp colour steps (the dark outlines against a bright fill, the fire elemental's rim) more
+  than on flat shading. No edge moves (no flips) and no block shows as a block. A toggle between the two may let
+  the eye catch a slight shimmer on those steps; a single view does not.
+- **After SPAN the same, a little more.** The SPAN frame from BC7 differs from the one from lossless in fine noise
+  along the same steps (31.4 against 35.9 dB from the lossless package), not in any artefact SPAN made of the blocks.
+- **So the palette indices are worth it for exactness and size, not for a visible flaw.** They remain the better
+  format (lossless, 5 % smaller than BC7 on disk, same VRAM), and they would lift the SPAN frames by those 4.5 dB, but
+  BC7 UltraFast is not visibly worse at any zoom the renderer offers, with SPAN or without.
+
 ### What to do
 
 - Keep the GPU's BC7 UltraFast for the Classic art and as the frames' fallback. It matches the CPU's size and
   quality, nothing gains more per byte, and the opaque-profile split does not pay.
 - For the Classic mobile frames, use R8 palette indices: lossless, 5 % smaller than BC7 on disk, at BC7's VRAM, with
   the renderer work above. It is the largest quality step on offer (from BC7's 33.6 dB to lossless) at no size cost.
-- The edge bleed comes from the straight tap, not the format. A premultiplied tap in `client_bilinear_rect` and
-  `mobile_frame_bilinear` (blend alpha x RGB, divide by the blended alpha, as `mobile_frames_mix` already does for the
-  crossfade) would remove the dark fringe for every format at no size cost, where filling the texels costs 5 %. It
-  changes how edges look under the client filter, so it should be checked against the clients' captures first. With
-  it, a "don't care" encode of the transparent texels would be safe.
+- The edge bleed came from the straight tap, not the format. Since 2026-11-22 the sprite taps under the client filter
+  (`client_filtered_rect`, `mobile_frame_client_filtered`) blend premultiplied and return straight alpha, which removes
+  the dark fringe for every format at no size cost, where filling the texels would cost 5 %. With it, a "don't care"
+  encode of the transparent texels would be safe.
 - Use BC1 only where half the size matters more than 3.5 dB (it is what the Classic gumps use), and BC2 or BC3 never
   for these pages.
 
@@ -1142,4 +1186,8 @@ of one page at a time (`packed` as `page_encode` sends its bands). `--bin bc7_gp
 every GPU format's blocks on the pages, to compare two builds of the kernels. `--bin classic_formats <dir> <mobile_cc|art_cc|mobile_ec>
 <pages> [variant,...]` measures the formats of "Formats for the Classic pages" on a lossless package's pages, `texels`
 their alpha and transparent texels, `palettes <dir> <pages>` the Classic animations' palettes and the pages as indices,
-and `split` the GPU's UltraFast against the two dispatches.
+and `split` the GPU's UltraFast against the two dispatches. `--bin classic_span psnr <dir> <pages> <frames>` gives
+"BC7 frames as they show" on frames sampled from an RGBA8888 `mobile_anim_cc.uddp`, and `--bin classic_span frames
+<dir> <out dir> <name>=<body>:<action>:<direction>:<frame> ...` writes each named frame lossless, BC7 UltraFast,
+VeryFast and BC1, and SPAN 2x of the lossless and the UltraFast frame, as raw RGBA (`<name>_<variant>_<w>x<h>.rgba`);
+`python3 -I -B classic_span_sheets.py <out dir> <sheets dir>` draws their sheets and the flicker pictures.
