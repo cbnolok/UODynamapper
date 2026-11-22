@@ -23,7 +23,7 @@ use crate::app::system_sets::{MovementSystems, SceneRenderArtSystems};
 use crate::prelude::*;
 use crate::render::statics::static_source::StaticArtSourceState;
 use crate::settings::{ClientTextureSource, Settings};
-use crate::world::mobile_motion::{MobileMotion, Movement};
+use crate::world::mobile_motion::{MobileMotion, Movement, STEP_SECS_MOUNTED_WALK};
 use crate::world::player::Player;
 use clips::{AnimPackages, AnimSource, Clip, MobileClips};
 use draw::{MobileActions, MobileAppearance, MobileShownLayers};
@@ -54,6 +54,8 @@ pub enum MobileCycle {
     /// The lead clip's own length.
     #[default]
     LeadClip,
+    /// The lead clip's own length times this.
+    LeadClipTimes(f32),
     /// One cycle every so many seconds.
     Secs(f32),
     /// The lead clip paced to the ground.
@@ -66,6 +68,7 @@ impl MobileCycle {
         match self {
             Self::OwnClips => None,
             Self::LeadClip => Some(lead.cycle_secs()),
+            Self::LeadClipTimes(factor) => Some(lead.cycle_secs() * factor),
             Self::Secs(secs) => Some(secs),
             Self::Ground(stride) => Some(stride.cycle_secs(lead.cycle_secs())),
         }
@@ -233,10 +236,17 @@ fn enhanced_movement(movement: Movement) -> u8 {
 /// The Classic client's actions (`MobileAnimCcPackage::movement_action`: a UOP body's sequence actions, ClassicUO
 /// `GetGroupForAnimation` for the rest): the body's own, or its mounted ones on a mount,
 /// which moves with its own; the rider sits the mount's offset lower (ClassicUO `Mounts`, `MobileView`). Matched to
-/// the ground (`strides`), the mount's stride, or the body's on foot, paces the cycle.
+/// the ground (`strides`), the body's stride paces the cycle on foot, and a ridden mount on the move gallops: a mounted
+/// walk steps a tile in 0.2 s, a run's step on foot, and a Classic run cycle at the clients' frame time covers about two
+/// tiles, so the mount plays its run and the rider its fast ride, one cycle in the run's own time on a mounted walk and
+/// in half of it on a mounted run (`MobileCycle::LeadClipTimes`). The walk (a trot of about one tile a cycle) needs
+/// five cycles a second for its hooves to keep up with a mounted walk, and the clients' two and a half let them slide.
+/// The measured strides don't pace a mount: the flow loses the hooves of five-frame Classic clips, which jump 10 to 25
+/// pixels a frame (the horse's gallop measures 1.08 tiles where its planted hooves travel 2 to 2.8).
 fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&mut MobileStrides>, appearance: &MobileAppearance,
     motion: &MobileMotion) -> MobileClipChoice {
-    let movement = classic_movement(motion.movement);
+    let gallop = appearance.mount_body.is_some() && motion.movement != Movement::Stand && strides.is_some();
+    let movement = classic_movement(if gallop { Movement::Run } else { motion.movement });
     let body = u16::try_from(appearance.body).ok();
     let mount = appearance.mount_body.and_then(|mount| u16::try_from(mount).ok());
     let body_action = body.and_then(|body| package.movement_action(body, movement, mount.is_some()));
@@ -250,10 +260,10 @@ fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&mut MobileStri
         body_offset_px: (0.0, f32::from(rider_offset_y)),
         mount_offset_px: (0.0, 0.0),
         cycle: match mount {
-            // On a mount, the mount's stride paces both; at the clients' timing, ClassicUO steps the rider and the
-            // mount with one frame counter at the same frame time.
-            Some(mount) => ground_stride(strides, AnimSource::Classic, u32::from(mount), mount_action, motion, true)
-                .map_or(MobileCycle::OwnClips, MobileCycle::Ground),
+            // A gallop's cycle shortens with the mounted step; standing, or at the clients' timing, ClassicUO steps
+            // the rider and the mount with one frame counter at the same frame time.
+            Some(_) if gallop => MobileCycle::LeadClipTimes(motion.step_secs(true) / STEP_SECS_MOUNTED_WALK),
+            Some(_) => MobileCycle::OwnClips,
             None => ground_stride(strides, AnimSource::Classic, appearance.body, body_action, motion, false)
                 .map_or(MobileCycle::LeadClip, MobileCycle::Ground),
         },

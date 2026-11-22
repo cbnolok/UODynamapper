@@ -128,10 +128,32 @@ user judged from the prototype videos (Enhanced wyrm 46, stygian 826) and most E
 each facing's stride, and the generator prints their spread for inspection. A clip whose median is not positive or
 under a quarter tile is recorded without a stride and keeps the client timing: bodies without planted feet (gazers,
 slimes, wisps) and the smallest creatures measure a few hundredths of a tile, and the clamp would play them at twice
-their speed. The 2026-11-21 strides pace 882 of 1914 Classic clips with frames and 1627 of 4125 Enhanced ones. Riders never use a stride of their own: the mount's clip is
-paced from the mount's stride and the rider shows the same point of that cycle, with the by-eye Enhanced mounted
-cycles as the fallback. The cycle position is a phase accumulator (`MobileCycleClock`), so a cycle length that changes
+their speed. The 2026-11-21 strides pace 882 of 1914 Classic clips with frames and 1627 of 4125 Enhanced ones. Riders never use a stride of their own: an Enhanced mount's clip is
+paced from the mount's stride (a Classic mount's from its run's own time, see below) and the rider shows the same point
+of that cycle, with the by-eye Enhanced mounted cycles as the fallback. The cycle position is a phase accumulator (`MobileCycleClock`), so a cycle length that changes
 mid-walk doesn't make the frame jump.
+
+### Classic mounts gallop (2026-11-22)
+
+The user found the Classic horse's legs too fast on a mounted walk (human 400 on horse 200). Measured on the recording
+and the clip: the ground went by at 5.0 tiles/s (a mounted step is 0.2 s, a run's step on foot), and the horse played
+its walk, a trot, at 5 cycles a second, its stride (0.90 tiles) times the step clamped to twice its own speed. The
+trot's hooves, followed by hand on the side facing (they move back 6–12 px a frame), cover about 1.05 tiles a cycle,
+so 5 cycles a second kept them on the ground: the walk art, made for a horse walking on foot (a tile in 0.4 s, its
+own 0.4 s cycle), can only keep up with a mounted walk by scurrying. Both clients play it at 80 ms a frame (2.5 cycles
+a second, ClassicUO `ProcessAnimation`; the Classic client advances the frame once a mobile tick of over 75 ms and
+mounted changes only the step time, [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#pacing-and-idle)),
+and the hooves slide forward at half the ground's speed.
+
+Matched to the ground, a ridden Classic mount on the move now plays its run (a gallop; the animal layout's action 1)
+and the rider its fast ride (24), on a mounted walk too, one cycle in the run clip's own time (0.4 s) on a mounted
+walk and in half of it on a mounted run (`MobileCycle::LeadClipTimes`): the gallop's planted hooves travel 18–25 px a
+frame on the side facing, 2.0–2.8 tiles a cycle, the two tiles of a mounted walk's 0.4 s. At client timing nothing
+changes (walk at a mounted walk, the clients' frame time). The measured strides no longer pace Classic mounts: the
+flow loses the hooves of five-frame clips, which jump 10–25 px a frame (per-pair travel of the horse's trot on the side
+facing 7.0, 8.4, -2.2, 6.0, 16.8 px; of its gallop 0.9, 17.5, 2.2, 12.5, 14.6, summing to 1.08 tiles where the hooves
+travel more than twice that). Enhanced mounts keep their measured strides (ten-frame clips); clamped to half their
+own speed they slide on the move (horse 200: trot 1.44 tiles in 0.56 s against 5 tiles/s).
 
 The port must feed RIFE exactly what the prototype did: the grey backdrop (RGB over 0.5 grey) covers the whole canvas
 the clip's frames share, and only the padding up to a multiple of 64 stays black. With the grey on each frame's own
