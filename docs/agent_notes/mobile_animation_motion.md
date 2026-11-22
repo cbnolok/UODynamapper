@@ -338,16 +338,16 @@ atlas of their clip, in its format. The format is one value of the page-manifest
   gutter is outside the copied blocks.
 - **In-betweens** (`rife_in_betweens/render.rs`): an in-between of a BC7 clip goes from the staging rows to rows of its
   own in a 1024² `Rgba8Unorm` scratch texture, cleared around it. After the frame's steps the warm-up's
-  `MobileBlockEncoder` (BC7 UltraFast) encodes them all in one pass, the one `compress` of the submission (the crate
-  writes its uniforms through the queue), each at its scratch row through `texture_y_offset` (BC7 honours it;
-  BC1–BC5 don't, so `add_frame_at` refuses a row for them). Their blocks are copied into the atlas a block row at a
+  `MobileBlockEncoder` (BC7 UltraFast) encodes them all in one pass, one `record` (each record has a uniform buffer of
+  its own; block_compression's compressor wrote them through the queue, one `compress` per submission), each at its
+  scratch row (`add_frame_at`; our BC7 and BC1 kernels both take a row). Their blocks are copied into the atlas a block row at a
   time (a multi-row copy needs 256-byte rows). A pair's first frame is copied block by block through a 1 MiB bounce
   buffer, since a copy within one texture layer is not allowed. A frame takes the BC7 steps the scratch rows and the
   bounce buffer hold and leaves the rest to the next. The cost model adds 0.25 ms + 4 ms per megapixel for the encode
   of each in-between, inside the same 2 ms budget; the measured scale corrects the rest. The BC7 work holds 6 MiB
   more in the render world (scratch 4 MiB, blocks 1 MiB, bounce 1 MiB).
-- **BC1** stays in `uot-gpu-compute` (with its punch-through pass) behind the crate's `bc1` feature, which no app
-  turns on: no atlas uses it.
+- **BC1** (`MobileBlockFormat::Bc1`, punch-through alpha) is in `uot-gpu-compute` with the other formats, compiled
+  only when first used: no atlas uses it, so dynamapper never compiles it.
 
 Measured on the Radeon 880M (RADV), Britain, four styles, Classic human 400 on horse 200, dog 217, Enhanced daemon 9
 and stygian 826, crossfade / RIFE ×2 / ×4:
@@ -371,16 +371,20 @@ The evaluation that chose BC7 UltraFast is `lib/support/uot-gpu-compute/src/bloc
 (`evaluate_block_formats`, ignored); its sheets and summary are in `uodynamapper-scratch/bc-eval/`.
 
 - **Encoder**: [block_compression](https://github.com/hasenbanck/block_compression) 0.11.0 (MIT), a WGSL port of
-  Intel's ISPC kernels, on wgpu "30" (our 30.0.1, no second wgpu), feature `bc7` (and `bc15` with uot-gpu-compute's `bc1`). `block_encode.rs`
+  Intel's ISPC kernels, at first through the crate on wgpu "30" (our 30.0.1, no second wgpu). Since 2026-11-22
+  uot-gpu-compute runs its own copies of the crate's BC7 and BC1 kernels (`shaders/block_encode/`), one pipeline per
+  format and BC7 profile, with the profile's modes as constants and its blocks the crate's byte for byte; the crate is
+  a dev-dependency, the reference of the tests. `block_encode.rs`
   encodes the sRGB bytes through an `Rgba8Unorm` view, so a `*UnormSrgb` BC texture decodes to the same bytes and
-  samples like the RGBA8 atlas; the GPU decode matched the CPU one exactly for BC7. Creating the compressor compiles
-  all its pipelines (38.6 s cold on RADV in the app, 21 s alone, nearly all of it BC7; 25 ms with Mesa's cache warm),
-  so the warm-up makes it off the frame path, on a thread of its own and only while a loaded package is BC7
-  (shader_compile_progress.md has each pipeline's time).
+  samples like the RGBA8 atlas; the GPU decode matched the CPU one exactly for BC7. The crate's compressor compiled
+  all its pipelines (38.6 s cold on RADV in the app, 21 s alone, nearly all of it BC7; 25 ms with Mesa's cache warm);
+  our BC7 UltraFast alone takes 6.6 s. The warm-up compiles it off the frame path, on a thread of its own and only
+  while a loaded package is BC7 (shader_compile_progress.md has each pipeline's time).
 - **Loop bounding**: 0.9.1 turned it back on for BC7 (off gave wrong output on RADV/Navi). Off was 1.3–2× faster on
-  the 880M with the same output; it would need a vendored bc7.wgsl.
-- **BC1**: colour only, four-colour mode in the crate; our `bc1_punch_through.wgsl` re-encodes blocks with transparent
-  texels in the three-colour mode, so Classic alpha stays exactly 0/255.
+  the 880M with the same output; our copy keeps it on, as the crate does.
+- **BC1**: colour only and four-colour mode in the crate, which also ignores a frame's row. Our `bc1.wgsl` encodes
+  blocks with transparent texels (alpha below 128) in the three-colour mode, index 3 transparent black, so Classic
+  alpha stays exactly 0/255 as with the CPU's BC1, and takes a row like BC7.
 
 Evaluation results on the Radeon 880M. Times are GPU per frame, encoded alone. "Shown" is the error on colour ×
 alpha. "Halo" counts texels transparent in the source that decode with alpha.

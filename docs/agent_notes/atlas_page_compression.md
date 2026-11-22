@@ -734,6 +734,46 @@ A lossless copy of the client's own texels would be the DXT1 and DXT5 blocks as 
 per texel in VRAM, and no re-encode. `PagePixelFormat` has only RGBA8888 and BC7, though, so that needs a format
 change.
 
+## GPU block encoding (uot-gpu-compute)
+
+`uot_gpu_compute::block_encode::MobileBlockEncoder` encodes RGBA8 textures to BC7 or BC1 blocks on the GPU, with our
+copies of block_compression 0.11.0's kernels (`shaders/block_encode/bc7.wgsl`, `bc1.wgsl`; MIT, CREDITS.md). The
+renderer uses it for its BC7 in-betweens; the converter's GPU device is meant to use it for pages (2026-11-22). The API:
+
+- `MobileBlockFormat::{Bc7(Bc7Quality), Bc7Opaque(Bc7Quality), Bc1}`, `Bc7Quality::{UltraFast, VeryFast, Fast, Basic,
+  Slow}` (block_compression's `alpha_*` and `opaque_*` settings, `Bc7Profile::of`). `texture_format()`,
+  `block_bytes()`, `encoded_bytes(width, height)` and `compile_name()` on the format; `padded_size` for the block grid.
+- `MobileBlockEncoder::new(device, queue)` (or `compile(device, queue, report)`) compiles `WARM_BLOCK_FORMAT`
+  (`Bc7(UltraFast)`); `compile_format(format, report)` compiles another ahead of use, `is_compiled(format)` asks.
+  Each format is its own pipeline, compiled once, the first time it is wanted.
+- `add_frame(format, source_view, width, height, output_buffer, offset)` and `add_frame_at(..., y, ...)` (a frame at
+  row `y` of the source, a multiple of 4, for BC7 and BC1 alike) queue frames of any formats, compiling a format not
+  compiled yet on the caller's thread; `record(pass)` records them into a compute pass, with a uniform buffer of that
+  record's own, so several records may share a submission. The blocks are written row-major into the storage buffer
+  from `offset` (a multiple of 4); `record_copy_to_layer` copies a frame's blocks into a texture layer.
+
+**The same blocks as the crate.** Every BC7 profile (5 qualities, alpha and opaque) encodes the crate's blocks byte for
+byte: 0 of 188,169 blocks differ on the first and middle page of `mobile_anim_cc`/`_ec` and `tex_art_cc`/`_ec`
+(512² crops) and Classic and Enhanced frames. Only the modes a profile tries are WGSL constants; the numeric settings
+stay in the crate's storage buffer, since as constants up to 0.3 % of the blocks came out different
+(shader_compile_progress.md, "Our block encoder").
+
+**BC1 punch-through.** The packages' BC1 is the CPU's (uot-texture-codecs, the dds crate): CC gumps, Classic EC gumps
+and the EC effects; no atlas page or mobile frame is BC1, so the renderer has no GPU BC1 user. The crate's BC1 is colour
+only, in the four-colour mode, and ignores a frame's row. Ours keeps its four-colour encode for the blocks all opaque
+(byte for byte the crate's: 0 of 62,629 differ, but for 415 blocks whose two endpoints come out equal, which a
+decoder reads in the three-colour mode, where the crate's index 3 would be transparent black: ours writes indices 0
+there, the one colour of the block), and encodes a block with a
+texel of alpha below 128 in the three-colour mode, index 3 transparent black, as the CPU's does; an empty block is
+endpoints 0 and indices all 3. Against the CPU's on Classic frames, Classic page crops and frames on a block's edge:
+every texel decodes opaque or transparent as the CPU's, every transparent one black. The colour of the opaque texels is
+0.57 to 0.75 dB below the CPU's in the four-colour blocks (ISPC's endpoint search, as the crate has it) and 0.52 to
+0.63 dB in the three-colour ones (`bc1_keeps_the_cpu_encoders_alpha`).
+
+**Compile times** (Radeon 880M, RADV, cold Mesa cache): BC7 UltraFast 5.4 to 8 s, Slow with alpha 22 s (the crate's
+one pipeline for every quality was 22 to 25 s), BC1 0.25 s; warm 5 to 15 ms each. Every profile in
+shader_compile_progress.md.
+
 ## Reproducing
 
 [`atlas_page_compression/`](atlas_page_compression/) is the benchmark, a standalone crate that reads its pages from a

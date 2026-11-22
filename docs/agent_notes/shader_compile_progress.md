@@ -15,7 +15,7 @@ Two sources feed it:
   warm-up callback). Fed now: the GPU compute warm-up (`mobiles/compute_warm_up.rs`), every pipeline of
   `lib/support/uot-gpu-compute` by its label, on up to three threads side by side: RIFE's at startup (`RIFE conv
   Stride1/Leaky tile 64x32`, `RIFE pixel step: merge`), SPAN's at startup (`upscale conv 3x3/Silu tile 64x48`,
-  `upscale prepare`), and the block encoder's (`BC7 compressor (every quality)`) only while a loaded animation package
+  `upscale prepare`), and the block encoder's (`BC7 encoder (UltraFast)`) only while a loaded animation package
   is BC7, from the first frame one is (below); the RIFE network when the warm-up did not give it,
   and the atlas steps (`rife_in_betweens/render.rs`, background pool); the static picking MSAA resolve
   (`gpu_picking.rs`, render thread, only with MSAA). The SPAN pipelines are warmed but not drawn with yet
@@ -40,9 +40,9 @@ alone in a fresh process; cold is a new empty `MESA_SHADER_CACHE_DIR`, warm the 
 | RIFE and SPAN (`uot_gpu_compute::warm_up`) | 1.29 s (1.29–1.32) | 84 ms |
 
 The naga parse and validation of the modules is 4 ms (bc1_to_5.wgsl) and 10 ms (bc7.wgsl) a process, cold or warm.
-BC1 to BC5 together are 0.4 s, 2 % of the compressor; they and the BC1 punch-through are behind uot-gpu-compute's
-`bc1` feature (block_compression's `bc15`), which no app turns on (hakari leaves block_compression out of the
-workspace-hack, so dynamapper builds without `bc15`). In the app the compressor took 27 to 50 s cold (37 s in an
+BC1 to BC5 together are 0.4 s, 2 % of the compressor. These rows are block_compression's own pipelines, which the
+app no longer builds: uot-gpu-compute runs its own copies of the crate's BC7 and BC1 kernels (below), and the crate is
+a dev-dependency, the reference the copies are checked against. In the app the compressor took 27 to 50 s cold (37 s in an
 earlier run), with Bevy's own pipelines compiling at the same time on its async compute thread and the machine more or
 less busy.
 
@@ -258,13 +258,55 @@ The next levers, measured:
   shading path. A shader def per shading mode is not a lever: the probe's land pixel shader with `effects.shading_mode`
   a constant has 71,267 (mode 0), 72,749 (1) and 75,688 (2) instructions against 76,314, and compiles in 4.1 to 4.2 s
   against 4.4 s (one run each), while every style switch would compile a land pipeline of its own.
-- **The BC7 block encoder** is the largest compile left anywhere, though off the world's path and only with a BC7
+- **The BC7 block encoder** was the largest compile left anywhere, though off the world's path and only with a BC7
   animation package (below): block_compression's `compress_bc7` reads its `BC7Settings` from a storage buffer, so the
   one pipeline holds every mode, while the mobiles encode at UltraFast only (`MOBILE_BC7_QUALITY`, bc7_encoding.rs:
   modes 4/5 and 6). With the settings a WGSL `const` of UltraFast's values, block_compression's runtime checks, one
-  core, a fresh Mesa cache per run (median of 3): 4.50 s (4.50 to 4.68) against 22.34 s (21.76 to 22.66). It needs our
-  own copy of bc7.wgsl with the settings as constants (or override constants upstream) and a byte-exact check of the
-  encoded blocks against the crate's kernel; not done.
+  core, a fresh Mesa cache per run (median of 3): 4.50 s (4.50 to 4.68) against 22.34 s (21.76 to 22.66). Done
+  (2026-11-22) with the modes only as constants, at 6.6 s: see [Our block encoder](#our-block-encoder).
+
+## Our block encoder
+
+`uot-gpu-compute` runs its own copies of block_compression 0.11.0's kernels (`shaders/block_encode/bc7.wgsl` and
+`bc1.wgsl`, MIT, CREDITS.md), one pipeline per `MobileBlockFormat` (`Bc7(quality)`, `Bc7Opaque(quality)`, `Bc1`),
+each compiled the first time it is used. dynamapper compiles `Bc7(UltraFast)` only. A BC7 profile's modes (which of
+the groups 0/2, 1/3/7, 4/5 and 6 it tries, and whether it skips mode 2) are WGSL constants appended to the source
+(`Bc7Profile::wgsl_constants`), so the driver drops every mode the profile never runs. Its numeric settings
+(refinement iterations, fast-skip thresholds, channels) stay in the crate's storage buffer: as constants too (the 4.5 s
+above), 502 of 188,169 blocks of UltraFast with alpha and 32 of Slow opaque came out different from the crate's (the
+compiler folds and reorders the float math), and with them in the buffer every profile is the crate's byte for byte
+(`our_kernels_encode_as_block_compression`, block_encode/tests.rs, on real atlas page crops and frames).
+
+Cold, a new empty `MESA_SHADER_CACHE_DIR` per run, the time of `warm_up::tests::time_the_warm_up`'s block encoder
+(test binary, Radeon 880M, other agents' previews running; 2026-11-22, three runs):
+
+| block encoder | cold | warm |
+|---|---:|---:|
+| block_compression's compressor (BC7 every quality) | 23.0 s (21.9–24.6) | 20 ms |
+| with BC1–BC5 and the BC1 punch-through (the old `bc1` feature) | 26.2 s (22.8–28.7) | 25 ms |
+| ours, `Bc7(UltraFast)` | 6.6 s (6.5–8.0) | 15 ms |
+| ours, `Bc1` (after it) | 0.28 s (0.25–0.28) | 6 ms |
+
+Each format compiled in turn in one process (`block_encode::tests::time_every_format_compile`, cold): profiles with
+the same modes give the same source, which Mesa's cache then hands back in about 12 ms (alpha Fast is VeryFast's
+modes, opaque Basic alpha Basic's and opaque Slow alpha Slow's):
+
+| format | cold, alpha | cold, opaque |
+|---|---:|---:|
+| UltraFast (modes 4/5, 6; opaque 6) | 5.65 s (5.37–6.61) | 0.98 s (0.96–0.98) |
+| VeryFast (1/3/7, 4/5, 6; opaque 1/3/7, 6) | 14.5 s (14.0–15.6) | 5.6 s (5.6–5.7) |
+| Fast (VeryFast's modes) | 13 ms | 13 ms |
+| Basic (every mode, mode 2 skipped) | 18.4 s (17.5–18.5) | 12 ms (alpha Basic's) |
+| Slow (every mode) | 21.8 s (21.7–22.0) | 12 ms (alpha Slow's) |
+| `Bc1` | 0.25 s (0.23–0.25) | |
+
+Warm, every format takes 12 to 15 ms (BC1 5 ms). A converter that wants Slow pays about what the crate's one pipeline
+cost; dynamapper pays UltraFast's 5.4 to 8 s, on its own thread, and never the others.
+
+In the app (dev build, Britain, Desktop 4, the BC7 animation packages, one run each, other agents' previews queued;
+2026-11-22), the warm-up's `The BC7 block encoder is compiled, in X s.`: cold 26.1 s with dev's crate compressor, 7.1 s
+with ours; warm 0.0 s with both. The window's pipelines were ready after 0.9 to 1.0 s cold and 0.5 to 0.6 s warm with
+both.
 
 ## Atlas page formats and what compiles
 
