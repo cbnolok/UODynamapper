@@ -14,6 +14,10 @@ const POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const FLOW_TOLERANCE_PX: f32 = 0.05;
 const MASK_TOLERANCE: f32 = 0.01;
 const MERGED_TOLERANCE: f32 = 2.0 / 255.0;
+/// On the matrix units, where the blocks' activations are rounded to fp16 too, the mask logit moves by up to 0.034
+/// on the references (flow 0.018 px, merged frame 1.2/255, both within the f32 tolerances): through the sigmoid
+/// (slope at most 1/4) at most 0.0125 of the blend's weight.
+const MATRIX_MASK_TOLERANCE: f32 = 0.05;
 const BENCHMARK_SIZES: [(u32, u32); 4] = [(64, 64), (128, 128), (256, 256), (576, 512)];
 const BENCHMARK_RUNS: usize = 20;
 /// The benchmark's input: the fractional parts of multiples of this, so every pixel differs.
@@ -26,6 +30,8 @@ struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
     timestamps: bool,
+    /// Where the convolutions can run: the shader cores, and the matrix units when the device has them.
+    units: Vec<ConvUnits>,
 }
 
 fn gpu() -> Option<Gpu> {
@@ -38,10 +44,19 @@ fn gpu() -> Option<Gpu> {
         println!("adapter: {} ({:?}, {})", info.name, info.backend, info.driver_info);
         let timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: if timestamps { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() },
-            required_limits: adapter.limits(), ..Default::default()
+            required_features: (if timestamps { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() })
+                | (adapter.features() & ConvUnits::MATRIX_FEATURES),
+            required_limits: adapter.limits(),
+            // SAFETY: the cooperative matrices are a wgpu experimental feature, used only where ConvUnits::of finds
+            // them supported.
+            experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+            ..Default::default()
         }).await.ok()?;
-        Some(Gpu { device, queue, timestamps })
+        let mut units = vec![ConvUnits::ShaderCores];
+        if ConvUnits::of(&adapter, &device) == ConvUnits::Matrix {
+            units.push(ConvUnits::Matrix);
+        }
+        Some(Gpu { device, queue, timestamps, units })
     })
 }
 
@@ -91,72 +106,79 @@ fn matches_pytorch_reference() {
         return;
     };
     let index: serde_json::Value = serde_json::from_slice(&std::fs::read(directory.join("reference.json")).unwrap()).unwrap();
-    let model = RifeModel::with_bilinear_final_warp(&gpu.device).unwrap();
     let mut failures = Vec::new();
-    for (case, entry) in index.as_object().unwrap() {
-        let width = entry["width"].as_u64().unwrap() as u32;
-        let height = entry["height"].as_u64().unwrap() as u32;
-        let workspace = RifeWorkspace::new(&model, &gpu.device, width, height).unwrap();
-        assert_eq!(workspace.size(), (width, height), "reference sizes are padded already");
-        let plane = (width * height) as u64;
-        let input = read_f32(&directory.join(entry["files"]["input"].as_str().unwrap()));
-        gpu.queue.write_buffer(workspace.input(), 0, bytemuck::cast_slice(&input));
-        // Per slot: each block's flow, the mask logit, the merged frame.
-        let flow_bytes = RIFE_FLOW_CHANNELS as u64 * plane * F32_BYTES;
-        let mask_bytes = plane * F32_BYTES;
-        let merged_bytes = RIFE_IMAGE_CHANNELS as u64 * plane * F32_BYTES;
-        let slot_bytes = RIFE_BLOCKS as u64 * flow_bytes + mask_bytes + merged_bytes;
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None, size: slot_bytes * RIFE_TIMESTEP_SLOTS as u64, mapped_at_creation: false,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        });
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        let record = |encoder: &mut wgpu::CommandEncoder, dispatches: &mut dyn Iterator<Item = &RifeDispatch>| {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            dispatches.for_each(|dispatch| dispatch.record(&mut pass));
+    for &units in &gpu.units {
+        let model = RifeModel::with_bilinear_final_warp(&gpu.device, units).unwrap();
+        let mask_tolerance = match units {
+            ConvUnits::ShaderCores => MASK_TOLERANCE,
+            ConvUnits::Matrix => MATRIX_MASK_TOLERANCE,
         };
-        record(&mut encoder, &mut workspace.encode().iter());
-        for (slot, &timestep) in TIMESTEPS.iter().enumerate() {
-            workspace.set_timestep(&gpu.queue, slot, timestep);
-            let base = slot as u64 * slot_bytes;
-            for block in 0..RIFE_BLOCKS {
-                record(&mut encoder, &mut workspace.block(slot, block).iter());
-                encoder.copy_buffer_to_buffer(workspace.state(), 0, &readback, base + block as u64 * flow_bytes, flow_bytes);
-            }
-            let mask_offset = RIFE_MASK_CHANNEL as u64 * plane * F32_BYTES;
-            encoder.copy_buffer_to_buffer(workspace.state(), mask_offset, &readback,
-                base + RIFE_BLOCKS as u64 * flow_bytes, mask_bytes);
-            record(&mut encoder, &mut workspace.merge().iter());
-            encoder.copy_buffer_to_buffer(workspace.merged(), 0, &readback,
-                base + RIFE_BLOCKS as u64 * flow_bytes + mask_bytes, merged_bytes);
-        }
-        gpu.queue.submit([encoder.finish()]);
-        let actual = read_back(&gpu, &readback);
-        let floats = |bytes: u64| (bytes / F32_BYTES) as usize;
-        for (slot, &timestep) in TIMESTEPS.iter().enumerate() {
-            let tag = entry["files"][timestep.to_string()].as_str().unwrap();
-            let mut at = floats(slot as u64 * slot_bytes);
-            let mut check = |what: String, length: usize, tolerance: f32, expected: &[f32]| {
-                let (max, mean) = errors(&actual[at..at + length], expected);
-                println!("{case} t={timestep} {what:<16} max {max:.6} mean {mean:.7}");
-                if max > tolerance {
-                    failures.push(format!("{case} t={timestep} {what}: max {max} > {tolerance}"));
-                }
-                at += length;
+        for (case, entry) in index.as_object().unwrap() {
+            let width = entry["width"].as_u64().unwrap() as u32;
+            let height = entry["height"].as_u64().unwrap() as u32;
+            let workspace = RifeWorkspace::new(&model, &gpu.device, width, height).unwrap();
+            assert_eq!(workspace.size(), (width, height), "reference sizes are padded already");
+            let plane = (width * height) as u64;
+            let input = read_f32(&directory.join(entry["files"]["input"].as_str().unwrap()));
+            gpu.queue.write_buffer(workspace.input(), 0, bytemuck::cast_slice(&input));
+            // Per slot: each block's flow, the mask logit, the merged frame.
+            let flow_bytes = RIFE_FLOW_CHANNELS as u64 * plane * F32_BYTES;
+            let mask_bytes = plane * F32_BYTES;
+            let merged_bytes = RIFE_IMAGE_CHANNELS as u64 * plane * F32_BYTES;
+            let slot_bytes = RIFE_BLOCKS as u64 * flow_bytes + mask_bytes + merged_bytes;
+            let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None, size: slot_bytes * RIFE_TIMESTEP_SLOTS as u64, mapped_at_creation: false,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            });
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            let record = |encoder: &mut wgpu::CommandEncoder, dispatches: &mut dyn Iterator<Item = &RifeDispatch>| {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                dispatches.for_each(|dispatch| dispatch.record(&mut pass));
             };
-            for block in 0..RIFE_BLOCKS {
-                let expected = read_f32(&directory.join(format!("{tag}_flow_block{block}.f32")));
-                check(format!("flow block{block}"), floats(flow_bytes), FLOW_TOLERANCE_PX, &expected);
+            record(&mut encoder, &mut workspace.encode().iter());
+            for (slot, &timestep) in TIMESTEPS.iter().enumerate() {
+                workspace.set_timestep(&gpu.queue, slot, timestep);
+                let base = slot as u64 * slot_bytes;
+                for block in 0..RIFE_BLOCKS {
+                    record(&mut encoder, &mut workspace.block(slot, block).iter());
+                    encoder.copy_buffer_to_buffer(workspace.state(), 0, &readback, base + block as u64 * flow_bytes, flow_bytes);
+                }
+                let mask_offset = RIFE_MASK_CHANNEL as u64 * plane * F32_BYTES;
+                encoder.copy_buffer_to_buffer(workspace.state(), mask_offset, &readback,
+                    base + RIFE_BLOCKS as u64 * flow_bytes, mask_bytes);
+                record(&mut encoder, &mut workspace.merge().iter());
+                encoder.copy_buffer_to_buffer(workspace.merged(), 0, &readback,
+                    base + RIFE_BLOCKS as u64 * flow_bytes + mask_bytes, merged_bytes);
             }
-            let expected = read_f32(&directory.join(format!("{tag}_mask_logit.f32")));
-            check("mask logit".into(), floats(mask_bytes), MASK_TOLERANCE, &expected);
-            let expected = read_f32(&directory.join(format!("{tag}_merged.f32")));
-            let merged_at = floats(slot as u64 * slot_bytes + RIFE_BLOCKS as u64 * flow_bytes + mask_bytes);
-            let merged = &actual[merged_at..merged_at + floats(merged_bytes)];
-            let premultiplied = (RIFE_IMAGE_CHANNELS - 4) as usize * plane as usize;
-            let (max, mean) = errors(&merged[premultiplied..], &expected[premultiplied..]);
-            println!("{case} t={timestep} {:<16} max {max:.6} ({:.3}/255) mean {mean:.7}", "merged RGBA", max * 255.0);
-            check("merged, all 7".into(), floats(merged_bytes), MERGED_TOLERANCE, &expected);
+            gpu.queue.submit([encoder.finish()]);
+            let actual = read_back(&gpu, &readback);
+            let floats = |bytes: u64| (bytes / F32_BYTES) as usize;
+            for (slot, &timestep) in TIMESTEPS.iter().enumerate() {
+                let tag = entry["files"][timestep.to_string()].as_str().unwrap();
+                let mut at = floats(slot as u64 * slot_bytes);
+                let mut check = |what: String, length: usize, tolerance: f32, expected: &[f32]| {
+                    let (max, mean) = errors(&actual[at..at + length], expected);
+                    println!("{units:?}, {case} t={timestep} {what:<16} max {max:.6} mean {mean:.7}");
+                    if max > tolerance {
+                        failures.push(format!("{units:?}, {case} t={timestep} {what}: max {max} > {tolerance}"));
+                    }
+                    at += length;
+                };
+                for block in 0..RIFE_BLOCKS {
+                    let expected = read_f32(&directory.join(format!("{tag}_flow_block{block}.f32")));
+                    check(format!("flow block{block}"), floats(flow_bytes), FLOW_TOLERANCE_PX, &expected);
+                }
+                let expected = read_f32(&directory.join(format!("{tag}_mask_logit.f32")));
+                check("mask logit".into(), floats(mask_bytes), mask_tolerance, &expected);
+                let expected = read_f32(&directory.join(format!("{tag}_merged.f32")));
+                let merged_at = floats(slot as u64 * slot_bytes + RIFE_BLOCKS as u64 * flow_bytes + mask_bytes);
+                let merged = &actual[merged_at..merged_at + floats(merged_bytes)];
+                let premultiplied = (RIFE_IMAGE_CHANNELS - 4) as usize * plane as usize;
+                let (max, mean) = errors(&merged[premultiplied..], &expected[premultiplied..]);
+                println!("{units:?}, {case} t={timestep} {:<16} max {max:.6} ({:.3}/255) mean {mean:.7}", "merged RGBA",
+                    max * 255.0);
+                check("merged, all 7".into(), floats(merged_bytes), MERGED_TOLERANCE, &expected);
+            }
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
@@ -229,42 +251,45 @@ fn benchmark() {
         println!("skipped: no GPU adapter");
         return;
     };
-    let model = RifeModel::new(&gpu.device).unwrap();
-    println!("weights on the GPU: {:.1} MiB; GPU timestamps: {}", model.weight_bytes() as f64 / BYTES_PER_MIB, gpu.timestamps);
-    for (width, height) in BENCHMARK_SIZES {
-        let workspace = RifeWorkspace::new(&model, &gpu.device, width, height).unwrap();
-        let input: Vec<f32> = (0..RIFE_INPUT_CHANNELS * width * height)
-            .map(|index| (index as f32 * BENCHMARK_INPUT_STEP).fract()).collect();
-        gpu.queue.write_buffer(workspace.input(), 0, bytemuck::cast_slice(&input));
-        // The encoding, slot 0's blocks one by one and its blend, then slots 1 and 2 whole.
-        let stages: Vec<Vec<&RifeDispatch>> = std::iter::once(workspace.encode().iter().collect())
-            .chain((0..RIFE_BLOCKS).map(|block| workspace.block(0, block).iter().collect()))
-            .chain(std::iter::once(workspace.merge().iter().collect()))
-            .chain((1..RIFE_TIMESTEP_SLOTS).map(|slot| workspace.interpolate(slot).collect()))
-            .collect();
-        let (stage, wall) = time_passes(&gpu, &stages);
-        let encode = stage[0];
-        let one_t: f64 = stage[1..=RIFE_BLOCKS + 1].iter().sum();
-        let pair = encode + one_t + stage[RIFE_BLOCKS + 2..].iter().sum::<f64>();
-        // Each dispatch of one t alone, for the slowest ones.
-        let single: Vec<&RifeDispatch> = workspace.encode().iter().chain(workspace.interpolate(0)).collect();
-        let (single_ms, _) = time_passes(&gpu, &single.iter().map(|&dispatch| vec![dispatch]).collect::<Vec<_>>());
-        let mut slowest: Vec<(f64, &RifeDispatch)> = single_ms.into_iter().zip(single.iter().copied()).collect();
-        slowest.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let macs = |dispatches: &mut dyn Iterator<Item = &RifeDispatch>| {
-            dispatches.map(RifeDispatch::multiply_adds).sum::<u64>() as f64 / 1e9
-        };
-        println!("{width}x{height}: GPU one t {:.3} ms (encode {encode:.3} + t {one_t:.3}), pair of 3 t {pair:.3} ms, \
-            wall pair {wall:.3} ms", encode + one_t);
-        println!("  blocks {:?} ms, merge {:.3} ms", stage[1..=RIFE_BLOCKS].iter().map(|ms| format!("{ms:.3}")).collect::<Vec<_>>(),
-            stage[RIFE_BLOCKS + 1]);
-        println!("  dispatches: encode {}, per t {} ({} per block, merge 1); GMAC encode {:.3}, per t {:.3}; \
-            workspace {:.1} MiB", workspace.encode().len(), workspace.interpolate(0).count(), workspace.block(0, 0).len(),
-            macs(&mut workspace.encode().iter()), macs(&mut workspace.interpolate(0)),
-            workspace.working_bytes() as f64 / BYTES_PER_MIB);
-        for (ms, dispatch) in &slowest[..SLOWEST_DISPATCHES] {
-            println!("    {ms:.3} ms {} {:?} workgroups, {:.1} MMAC", dispatch.name(), dispatch.workgroups(),
-                dispatch.multiply_adds() as f64 / 1e6);
+    for &units in &gpu.units {
+        let model = RifeModel::new(&gpu.device, units).unwrap();
+        println!("convolutions on the {units:?}; weights on the GPU: {:.1} MiB; GPU timestamps: {}",
+            model.weight_bytes() as f64 / BYTES_PER_MIB, gpu.timestamps);
+        for (width, height) in BENCHMARK_SIZES {
+            let workspace = RifeWorkspace::new(&model, &gpu.device, width, height).unwrap();
+            let input: Vec<f32> = (0..RIFE_INPUT_CHANNELS * width * height)
+                .map(|index| (index as f32 * BENCHMARK_INPUT_STEP).fract()).collect();
+            gpu.queue.write_buffer(workspace.input(), 0, bytemuck::cast_slice(&input));
+            // The encoding, slot 0's blocks one by one and its blend, then slots 1 and 2 whole.
+            let stages: Vec<Vec<&RifeDispatch>> = std::iter::once(workspace.encode().iter().collect())
+                .chain((0..RIFE_BLOCKS).map(|block| workspace.block(0, block).iter().collect()))
+                .chain(std::iter::once(workspace.merge().iter().collect()))
+                .chain((1..RIFE_TIMESTEP_SLOTS).map(|slot| workspace.interpolate(slot).collect()))
+                .collect();
+            let (stage, wall) = time_passes(&gpu, &stages);
+            let encode = stage[0];
+            let one_t: f64 = stage[1..=RIFE_BLOCKS + 1].iter().sum();
+            let pair = encode + one_t + stage[RIFE_BLOCKS + 2..].iter().sum::<f64>();
+            // Each dispatch of one t alone, for the slowest ones.
+            let single: Vec<&RifeDispatch> = workspace.encode().iter().chain(workspace.interpolate(0)).collect();
+            let (single_ms, _) = time_passes(&gpu, &single.iter().map(|&dispatch| vec![dispatch]).collect::<Vec<_>>());
+            let mut slowest: Vec<(f64, &RifeDispatch)> = single_ms.into_iter().zip(single.iter().copied()).collect();
+            slowest.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let macs = |dispatches: &mut dyn Iterator<Item = &RifeDispatch>| {
+                dispatches.map(RifeDispatch::multiply_adds).sum::<u64>() as f64 / 1e9
+            };
+            println!("{width}x{height}: GPU one t {:.3} ms (encode {encode:.3} + t {one_t:.3}), pair of 3 t {pair:.3} ms, \
+                wall pair {wall:.3} ms", encode + one_t);
+            println!("  blocks {:?} ms, merge {:.3} ms", stage[1..=RIFE_BLOCKS].iter().map(|ms| format!("{ms:.3}")).collect::<Vec<_>>(),
+                stage[RIFE_BLOCKS + 1]);
+            println!("  dispatches: encode {}, per t {} ({} per block, merge 1); GMAC encode {:.3}, per t {:.3}; \
+                workspace {:.1} MiB", workspace.encode().len(), workspace.interpolate(0).count(), workspace.block(0, 0).len(),
+                macs(&mut workspace.encode().iter()), macs(&mut workspace.interpolate(0)),
+                workspace.working_bytes() as f64 / BYTES_PER_MIB);
+            for (ms, dispatch) in &slowest[..SLOWEST_DISPATCHES] {
+                println!("    {ms:.3} ms {} {:?} workgroups, {:.1} MMAC", dispatch.name(), dispatch.workgroups(),
+                    dispatch.multiply_adds() as f64 / 1e6);
+            }
         }
     }
 }
@@ -292,7 +317,7 @@ fn frame_steps_carry_frames_between_a_texture_and_a_workspace() {
         return;
     };
     let device = &gpu.device;
-    let model = RifeModel::new(device).unwrap();
+    let model = RifeModel::new(device, *gpu.units.last().unwrap()).unwrap();
     let workspace = RifeWorkspace::new(&model, device, SIDE, SIDE).unwrap();
     // Every texel its own; a third of them transparent, a third half covered.
     let texel = |layer: u32, x: u32, y: u32| -> [u8; 4] {

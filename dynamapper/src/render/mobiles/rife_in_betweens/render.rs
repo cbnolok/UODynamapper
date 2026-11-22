@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 use parking_lot::Mutex;
@@ -36,13 +36,14 @@ use uot_gpu_compute::rife::frames::{rife_frame_step_stride, rife_output_bytes_pe
 use uot_gpu_compute::rife::{
     RifeDispatch, RifeModel, RifePipelines, RifeWorkspace, RIFE_BLOCKS, RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS,
 };
-use uot_gpu_compute::SourceRect;
+use uot_gpu_compute::{ConvUnits, SourceRect};
 use super::super::compute_warm_up::{ComputeWarmUp, Warm};
 use super::{InBetweenJob, InBetweenPair, MobileInBetweens};
 
 /// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to uot-gpu-compute's
-/// rife::tests::benchmark on the Radeon 880M (one t: 1.31 ms at 64x64, 0.079 GMAC, 121 dispatches; 14.97 ms at
-/// 576x512, 5.66 GMAC, 97).
+/// rife::tests::benchmark on the Radeon 880M with the convolutions on the shader cores (one t: 1.31 ms at 64x64,
+/// 0.079 GMAC, 121 dispatches; 14.97 ms at 576x512, 5.66 GMAC, 97); on its matrix units one t takes 0.75 to 0.85 of
+/// that, which the timed cost scale learns.
 const DISPATCH_MS: f64 = 0.009;
 const MS_PER_GIGA_MULTIPLY_ADD: f64 = 2.5;
 /// An atlas step's estimated cost per million pixels it runs on, besides the fixed part.
@@ -54,13 +55,14 @@ const MEGA: f64 = 1e6;
 /// A workspace no job used for this long is freed (1.6 MiB at 64x64, 89 MiB at 576x512).
 const WORKSPACE_IDLE_RELEASE: Duration = Duration::from_secs(20);
 
-/// The network on `pipelines` warmed ahead, or on pipelines compiled now.
-fn load_network(device: &wgpu::Device, pipelines: Option<RifePipelines>) -> Result<RifeModel, String> {
+/// The network on `pipelines` warmed ahead, or on pipelines compiled now for `units`.
+fn load_network(device: &wgpu::Device, units: ConvUnits, pipelines: Option<RifePipelines>)
+    -> Result<RifeModel, String> {
     match pipelines {
         Some(pipelines) => RifeModel::with_pipelines(device, pipelines),
         None => {
             let _compile = begin_shader_compile("RIFE in-betweens: flow network");
-            RifeModel::new(device)
+            RifeModel::new(device, units)
         }
     }
 }
@@ -280,6 +282,7 @@ impl Recorded {
 pub fn sys_render_mobile_in_betweens(
     mut state: ResMut<RenderInBetweens>,
     gpu_images: Res<RenderAssets<GpuImage>>,
+    render_adapter: Res<RenderAdapter>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut warm_up: ResMut<ComputeWarmUp>,
@@ -295,8 +298,9 @@ pub fn sys_render_mobile_in_betweens(
             Warm::Unavailable => None,
         };
         let device = device.clone();
+        let units = ConvUnits::of(&render_adapter, &device);
         state.gpu = GpuState::Loading(background_pool().spawn(Priority::Visible, "rife network load",
-            move || load_network(&device, pipelines)));
+            move || load_network(&device, units, pipelines)));
     }
     if let GpuState::Loading(task) = &mut state.gpu {
         state.gpu = match task.poll() {

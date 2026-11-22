@@ -12,7 +12,6 @@ use color_eyre::eyre;
 use eframe::egui;
 use udd_assets::animation::mobile_strides::MobileClip;
 use uot_gpu_compute::in_betweens::InBetweenMaker;
-use uot_gpu_compute::rife::RIFE_COMPILES;
 use uot_gpu_compute::strides::StrideFrame;
 
 /// The frames shown for each of a clip's: its own alone, and with RIFE's in-betweens (Dynamapper's RIFE x2 and x4).
@@ -219,7 +218,7 @@ fn make_sequence(factor: u32, snap_alpha: bool, reader: ClipReader, maker: &Mute
     } else {
         let mut maker = maker.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if maker.is_none() {
-            report(format!("compiling RIFE (0 of {RIFE_COMPILES})"), 0.0);
+            report("compiling RIFE".to_string(), 0.0);
             *maker = Some(InBetweenMaker::new(|compile| if compile.done {
                 report(format!("compiling RIFE ({} of {})", compile.index + 1, compile.total),
                     (compile.index + 1) as f32 / compile.total as f32);

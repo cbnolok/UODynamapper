@@ -1,6 +1,7 @@
 //! The RIFE v4.25 frame interpolation network (Practical-RIFE, Huang et al., ECCV 2022) as wgpu compute shaders: it
-//! makes an in-between of two frames at a time t between them. Weights are fp16 on the GPU and the arithmetic is f32;
-//! every tensor stays on the GPU, so a caller reads nothing back.
+//! makes an in-between of two frames at a time t between them. Weights are fp16 on the GPU and the arithmetic is f32
+//! (on the matrix units, [`ConvUnits::Matrix`], the larger convolutions multiply fp16 activations into f32 sums); every
+//! tensor stays on the GPU, so a caller reads nothing back.
 //!
 //! [`RifeModel`] holds the weights and pipelines, once per device. [`RifeWorkspace`] holds the buffers of one frame
 //! size and the dispatches that run the network on them, as lists a scheduler can spread over several frames: the
@@ -20,6 +21,7 @@ use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
 use crate::network_shader_module;
 use crate::warm_up::CompileReport;
+use crate::{ConvUnits, MATRIX_EXTENSIONS, MATRIX_SIDE};
 use frames::{FramePipelines, FRAME_STEP_COMPILES};
 
 /// Frame sides are padded (zeros, right and bottom) to a multiple of this: block 0 works at 1/16 of the frame and
@@ -63,12 +65,18 @@ const PIXEL_THREADS: u32 = 64;
 const F32_BYTES: u64 = 4;
 const PIXEL_TIMESTEP_BYTE: u64 = 20;
 const CONV_SHADER: &str = include_str!("../shaders/rife/conv.wgsl");
+/// What conv.wgsl and conv_matrix.wgsl share, put between a kernel's constants and its source.
+const CONV_LAYER_SHADER: &str = include_str!("../shaders/rife/conv_layer.wgsl");
+const MATRIX_CONV_SHADER: &str = include_str!("../shaders/rife/conv_matrix.wgsl");
+/// conv_matrix.wgsl's threads per workgroup and rows of the sum staged at a time, SPAN's.
+const MATRIX_THREADS: u32 = 256;
+const MATRIX_TILE_K: u32 = 16;
 const PIXEL_SHADER: &str = include_str!("../shaders/rife/pixel.wgsl");
 /// pixel.wgsl's switch between the blend's nearest warp (its default) and Practical-RIFE's bilinear one.
 const NEAREST_FINAL_WARP_OVERRIDE: &str = "NEAREST_FINAL_WARP";
 
-/// A convolution workgroup's tile: `m` pixels by `n` output channels, `k` rows of the sum staged at a time, each
-/// thread keeping `micro_m` by `micro_n` sums.
+/// A convolution workgroup's tile on the shader cores: `m` pixels by `n` output channels, `k` rows of the sum staged at
+/// a time, each thread keeping `micro_m` by `micro_n` sums.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Tile {
     m: u32,
@@ -87,6 +95,14 @@ const DEEP_TILE: Tile = Tile { m: 16, n: 64, k: 16, micro_m: 2, micro_n: 8 };
 /// The Head's last layer, of 4 channels.
 const TINY_TILE: Tile = Tile { m: 64, n: 4, k: 16, micro_m: 1, micro_n: 4 };
 const TILES: [Tile; 4] = [WIDE_TILE, NARROW_TILE, DEEP_TILE, TINY_TILE];
+
+/// Where a layer's convolution runs, and its workgroup's tile there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ConvTile {
+    ShaderCores(Tile),
+    /// conv_matrix.wgsl, its workgroup making this many matrices of 16 output channels.
+    Matrix { n_matrices: u32 },
+}
 /// A layer whose tiles make fewer workgroups than this has its sum split into ranges (see conv.wgsl) until it makes
 /// about this many, each range keeping at least [`MIN_SPLIT_STEPS`] steps of the tile's `k` rows.
 const TARGET_WORKGROUPS: u32 = 96;
@@ -175,27 +191,75 @@ struct PixelUniform {
     _pad: u32,
 }
 
-/// The compiles [`RifePipelines::new`] reports: a convolution variant and tile each (its tiled pass and its
-/// reduction), the per-pixel steps, then the frame steps ([`frames`]).
-pub const RIFE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + PIXEL_STEPS.len() + FRAME_STEP_COMPILES;
+/// The convolutions on the matrix units ([`ConvUnits::Matrix`]): a variant and its matrices of 16 output channels per
+/// workgroup, those [`RifeModel::tile`] picks for the blocks of RIFE v4.25 (their 192, 128, 96, 64 and 32 channels and
+/// the halves, the 52 of the last convolutions). The Head stays on the shader cores ([`ConvLayer::f32`]).
+const MATRIX_CONVS: [(ConvKind, Epilogue, u32); 8] = [
+    (ConvKind::Stride2, Epilogue::Leaky, 1),
+    (ConvKind::Stride2, Epilogue::Leaky, 2),
+    (ConvKind::Stride2, Epilogue::Leaky, 3),
+    (ConvKind::Stride2, Epilogue::Leaky, 4),
+    (ConvKind::Stride1, Epilogue::Residual, 2),
+    (ConvKind::Stride1, Epilogue::Residual, 3),
+    (ConvKind::Stride1, Epilogue::Residual, 4),
+    (ConvKind::TransposedShuffle, Epilogue::Linear, 4),
+];
+/// A layer of fewer grid pixels than this runs on the shader cores even on the matrix units, with [`DEEP_TILE`]: block
+/// 0 of a 64² or 128² frame, 1 and 4 pixels by 192 channels, takes 0.021 ms a convolution there and 0.028 ms on the
+/// matrix units, whose 64-pixel tile is nearly empty.
+const MATRIX_MIN_GRID_PIXELS: u32 = 8;
+/// The shader cores' convolutions where the matrix units are used: the Head's (its 16 and 4 channels) and the
+/// smallest grids' of the blocks, which also give the matrix units' convolutions their reductions.
+const MATRIX_SHADER_CORE_CONVS: [(ConvKind, Epilogue, Tile); 6] = [
+    (ConvKind::Stride2, Epilogue::Leaky, NARROW_TILE),
+    (ConvKind::Stride1, Epilogue::Leaky, NARROW_TILE),
+    (ConvKind::Transposed, Epilogue::Linear, TINY_TILE),
+    (ConvKind::Stride2, Epilogue::Leaky, DEEP_TILE),
+    (ConvKind::Stride1, Epilogue::Residual, DEEP_TILE),
+    (ConvKind::TransposedShuffle, Epilogue::Linear, DEEP_TILE),
+];
+
+/// The shader cores' convolutions compiled for `units`: every variant and tile, or where the matrix units are used
+/// [`MATRIX_SHADER_CORE_CONVS`].
+fn shader_core_convs(units: ConvUnits) -> Vec<(ConvKind, Epilogue, Tile)> {
+    match units {
+        ConvUnits::ShaderCores => CONV_VARIANTS.iter()
+            .flat_map(|&(kind, epilogue)| TILES.map(|tile| (kind, epilogue, tile))).collect(),
+        ConvUnits::Matrix => MATRIX_SHADER_CORE_CONVS.to_vec(),
+    }
+}
+
+/// The compiles [`RifePipelines::new`] reports for the convolutions on `units`: a convolution variant and tile each on
+/// the shader cores (its tiled pass and its reduction), the matrix units' convolutions, the per-pixel steps, then the
+/// frame steps ([`frames`]).
+pub const fn rife_compiles(units: ConvUnits) -> usize {
+    let convs = match units {
+        ConvUnits::ShaderCores => CONV_VARIANTS.len() * TILES.len(),
+        ConvUnits::Matrix => MATRIX_SHADER_CORE_CONVS.len() + MATRIX_CONVS.len(),
+    };
+    convs + PIXEL_STEPS.len() + FRAME_STEP_COMPILES
+}
 
 /// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
 pub struct RifePipelines {
+    /// The pixels of a workgroup of conv_matrix.wgsl, when the larger convolutions run on the matrix units.
+    matrix_tile_m: Option<u32>,
     conv_layout: wgpu::BindGroupLayout,
     pixel_layout: wgpu::BindGroupLayout,
-    conv_pipelines: Vec<((ConvKind, Epilogue, Tile), [wgpu::ComputePipeline; 2])>,
+    conv_pipelines: Vec<((ConvKind, Epilogue, ConvTile), [wgpu::ComputePipeline; 2])>,
     pixel_pipelines: Vec<(PixelStep, wgpu::ComputePipeline)>,
     frames: FramePipelines,
 }
 
 /// The weights and pipelines, once per device.
 pub struct RifeModel {
+    matrix_tile_m: Option<u32>,
     params: wgpu::Buffer,
     packed: PackedParams,
     conv_layout: wgpu::BindGroupLayout,
     pixel_layout: wgpu::BindGroupLayout,
-    /// The tiled pass and the split sums' reduction of each variant.
-    conv_pipelines: Vec<((ConvKind, Epilogue, Tile), [wgpu::ComputePipeline; 2])>,
+    /// The tiled pass and the split sums' reduction of each variant (on the matrix units, conv.wgsl's reduction).
+    conv_pipelines: Vec<((ConvKind, Epilogue, ConvTile), [wgpu::ComputePipeline; 2])>,
     pixel_pipelines: Vec<(PixelStep, wgpu::ComputePipeline)>,
     frames: FramePipelines,
 }
@@ -216,22 +280,24 @@ fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// Compiles conv.wgsl, pixel.wgsl or frames.wgsl without naga's loop bounding ([`network_shader_module`]).
+/// Compiles conv.wgsl, conv_matrix.wgsl, pixel.wgsl or frames.wgsl without naga's loop bounding
+/// ([`network_shader_module`]).
 fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::ShaderModule {
-    // SAFETY: every loop in conv.wgsl, pixel.wgsl and frames.wgsl ends: each runs to a compile-time constant or to a
-    // uniform's value, counting up by a positive step.
+    // SAFETY: every loop in conv.wgsl, conv_layer.wgsl, conv_matrix.wgsl, pixel.wgsl and frames.wgsl ends: each runs to
+    // a compile-time constant or to a uniform's value, counting up by a positive step.
     unsafe { network_shader_module(device, label, source) }
 }
 
 impl RifePipelines {
-    /// Compiles the pipelines, telling `report` of each of [`RIFE_COMPILES`]. The blend warps the frames to the
-    /// nearest pixel (pixel.wgsl's `NEAREST_FINAL_WARP`).
-    pub fn new(device: &wgpu::Device, report: &mut CompileReport) -> Self {
-        Self::with_pixel_constants(device, &[], report)
+    /// Compiles the pipelines, the convolutions for `units` ([`ConvUnits::of`] the device), telling `report` of each
+    /// of the [`rife_compiles`]. The blend warps the frames to the nearest pixel (pixel.wgsl's `NEAREST_FINAL_WARP`).
+    pub fn new(device: &wgpu::Device, units: ConvUnits, report: &mut CompileReport) -> Self {
+        Self::with_pixel_constants(device, units, &[], report)
     }
 
     /// `constants` sets pixel.wgsl's overridable constants.
-    fn with_pixel_constants(device: &wgpu::Device, constants: &[(&str, f64)], report: &mut CompileReport) -> Self {
+    fn with_pixel_constants(device: &wgpu::Device, units: ConvUnits, constants: &[(&str, f64)],
+        report: &mut CompileReport) -> Self {
         let conv_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rife convolution"),
             entries: &[uniform_entry(), storage_entry(1, true), storage_entry(2, true), storage_entry(3, false),
@@ -247,30 +313,40 @@ impl RifePipelines {
         });
         let conv_pipeline_layout = pipeline_layout(&conv_layout);
         let mut conv_pipelines = Vec::new();
-        for (kind, epilogue) in CONV_VARIANTS {
-            for tile in TILES {
-                let transposed = matches!(kind, ConvKind::Transposed | ConvKind::TransposedShuffle);
-                let constants = format!(
-                    "const THREADS: u32 = {CONV_THREADS}u;\nconst TILE_M: u32 = {}u;\nconst TILE_N: u32 = {}u;\n\
-                     const TILE_K: u32 = {}u;\nconst MICRO_M: u32 = {}u;\nconst MICRO_N: u32 = {}u;\n\
-                     const TRANSPOSED: bool = {transposed};\nconst TAPS: u32 = {}u;\nconst PHASES: u32 = {}u;\n\
-                     const STRIDE: u32 = {}u;\nconst PIXEL_SHUFFLE: bool = {};\nconst EPILOGUE: u32 = {}u;\n",
-                    tile.m, tile.n, tile.k, tile.micro_m, tile.micro_n,
-                    if transposed { TRANSPOSED_TAPS } else { CONV_TAPS },
-                    if transposed { TRANSPOSED_PHASES } else { 1 },
-                    if kind == ConvKind::Stride2 { STRIDE_2 } else { 1 },
-                    kind == ConvKind::TransposedShuffle, epilogue as u32);
-                let name = format!("RIFE conv {kind:?}/{epilogue:?} tile {}x{}", tile.m, tile.n);
-                let pipelines = report.compile(&name, || {
-                    let module = shader_module(device, &name, constants + CONV_SHADER);
-                    let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some(&name), layout: Some(&conv_pipeline_layout), module: &module,
-                        entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
-                    });
-                    [pipeline("main"), pipeline("reduce")]
-                });
-                conv_pipelines.push(((kind, epilogue, tile), pipelines));
-            }
+        let compile = |report: &mut CompileReport, name: &str, source: String, entry_points: &[&str]| {
+            report.compile(name, || {
+                let module = shader_module(device, name, source);
+                entry_points.iter().map(|&entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(name), layout: Some(&conv_pipeline_layout), module: &module,
+                    entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
+                })).collect::<Vec<_>>()
+            })
+        };
+        for (kind, epilogue, tile) in shader_core_convs(units) {
+            let constants = format!(
+                "const THREADS: u32 = {CONV_THREADS}u;\nconst TILE_M: u32 = {}u;\nconst TILE_N: u32 = {}u;\n\
+                 const TILE_K: u32 = {}u;\nconst MICRO_M: u32 = {}u;\nconst MICRO_N: u32 = {}u;\n{}",
+                tile.m, tile.n, tile.k, tile.micro_m, tile.micro_n, layer_constants(kind, epilogue));
+            let name = format!("RIFE conv {kind:?}/{epilogue:?} tile {}x{}", tile.m, tile.n);
+            let [main, reduce] = compile(report, &name, constants + CONV_LAYER_SHADER + CONV_SHADER,
+                &["main", "reduce"]).try_into().expect("two entry points");
+            conv_pipelines.push(((kind, epilogue, ConvTile::ShaderCores(tile)), [main, reduce]));
+        }
+        // A workgroup on the matrix units has a strip of pixels for each subgroup it has with the largest subgroups.
+        let matrix_strips = MATRIX_THREADS / device.adapter_info().subgroup_max_size.max(1);
+        let matrix_tile_m = (units == ConvUnits::Matrix).then_some(MATRIX_SIDE * matrix_strips);
+        for (kind, epilogue, n_matrices) in MATRIX_CONVS.into_iter().filter(|_| matrix_tile_m.is_some()) {
+            let constants = format!(
+                "{MATRIX_EXTENSIONS}const THREADS: u32 = {MATRIX_THREADS}u;\nconst STRIPS: u32 = {matrix_strips}u;\n\
+                 const TILE_K: u32 = {MATRIX_TILE_K}u;\nconst N_MATRICES: u32 = {n_matrices}u;\n{}",
+                layer_constants(kind, epilogue));
+            let name = format!("RIFE matrix conv {kind:?}/{epilogue:?} x{}", n_matrices * MATRIX_SIDE);
+            let [main] = compile(report, &name, constants + CONV_LAYER_SHADER + MATRIX_CONV_SHADER, &["main"])
+                .try_into().expect("one entry point");
+            // A split sum is added up by conv.wgsl's reduction of the variant, whatever its tile.
+            let reduce = conv_pipelines.iter().find(|((k, e, _), _)| (*k, *e) == (kind, epilogue))
+                .expect("every variant has its shader-core pipelines").1[1].clone();
+            conv_pipelines.push(((kind, epilogue, ConvTile::Matrix { n_matrices }), [main, reduce]));
         }
         let pixel_pipeline_layout = pipeline_layout(&pixel_layout);
         let pixel_module = shader_module(device, "RIFE pixel steps", PIXEL_SHADER.to_string());
@@ -284,15 +360,24 @@ impl RifePipelines {
             })))
         }).collect();
         let frames = FramePipelines::new(device, report);
-        Self { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames }
+        Self { matrix_tile_m, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames }
     }
 }
 
+/// The constants of conv_layer.wgsl for a convolution variant.
+fn layer_constants(kind: ConvKind, epilogue: Epilogue) -> String {
+    let transposed = matches!(kind, ConvKind::Transposed | ConvKind::TransposedShuffle);
+    format!("const TRANSPOSED: bool = {transposed};\nconst TAPS: u32 = {}u;\nconst PHASES: u32 = {}u;\n\
+             const STRIDE: u32 = {}u;\nconst PIXEL_SHUFFLE: bool = {};\nconst EPILOGUE: u32 = {}u;\n",
+        if transposed { TRANSPOSED_TAPS } else { CONV_TAPS }, if transposed { TRANSPOSED_PHASES } else { 1 },
+        if kind == ConvKind::Stride2 { STRIDE_2 } else { 1 }, kind == ConvKind::TransposedShuffle, epilogue as u32)
+}
+
 impl RifeModel {
-    /// Uploads the bundled weights and compiles the pipelines. The blend warps the frames to the nearest pixel
-    /// (pixel.wgsl's `NEAREST_FINAL_WARP`).
-    pub fn new(device: &wgpu::Device) -> Result<Self, String> {
-        Self::with_pipelines(device, RifePipelines::new(device, &mut CompileReport::silent(RIFE_COMPILES)))
+    /// Uploads the bundled weights and compiles the pipelines, the convolutions for `units`. The blend warps the frames
+    /// to the nearest pixel (pixel.wgsl's `NEAREST_FINAL_WARP`).
+    pub fn new(device: &wgpu::Device, units: ConvUnits) -> Result<Self, String> {
+        Self::with_pipelines(device, RifePipelines::new(device, units, &mut CompileReport::silent(rife_compiles(units))))
     }
 
     /// Uploads the bundled weights for pipelines compiled already ([`crate::warm_up`]).
@@ -302,15 +387,16 @@ impl RifeModel {
             label: Some("rife weights"), contents: bytemuck::cast_slice(&packed.halves),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let RifePipelines { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames } = pipelines;
-        Ok(Self { params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames })
+        let RifePipelines { matrix_tile_m, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames } =
+            pipelines;
+        Ok(Self { matrix_tile_m, params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames })
     }
 
     /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it and the stride
-    /// measurement picks the feet by ([`crate::strides`]).
-    pub fn with_bilinear_final_warp(device: &wgpu::Device) -> Result<Self, String> {
-        Self::with_pipelines(device, RifePipelines::with_pixel_constants(device, &[(NEAREST_FINAL_WARP_OVERRIDE, 0.0)],
-            &mut CompileReport::silent(RIFE_COMPILES)))
+    /// measurement picks the feet by ([`crate::strides`]), the convolutions for `units`.
+    pub fn with_bilinear_final_warp(device: &wgpu::Device, units: ConvUnits) -> Result<Self, String> {
+        Self::with_pipelines(device, RifePipelines::with_pixel_constants(device, units,
+            &[(NEAREST_FINAL_WARP_OVERRIDE, 0.0)], &mut CompileReport::silent(rife_compiles(units))))
     }
 
     /// Bytes of the weights on the GPU.
@@ -318,8 +404,37 @@ impl RifeModel {
         self.params.size()
     }
 
-    fn conv_pipelines(&self, kind: ConvKind, epilogue: Epilogue, tile: Tile) -> &[wgpu::ComputePipeline; 2] {
+    fn conv_pipelines(&self, kind: ConvKind, epilogue: Epilogue, tile: ConvTile) -> &[wgpu::ComputePipeline; 2] {
         &self.conv_pipelines.iter().find(|(key, _)| *key == (kind, epilogue, tile)).unwrap().1
+    }
+
+    /// The tile of a layer. On the matrix units, but for a layer kept in `f32` ([`ConvLayer::f32`]), those of its
+    /// variant with the fewest output channels computed past the layer's (the most matrices when several fit as well),
+    /// or the shader cores' [`DEEP_TILE`] for the smallest grids (see [`MATRIX_SHADER_CORE_CONVS`]); otherwise the
+    /// shader cores' tile for its channels and pixels.
+    fn tile(&self, kind: ConvKind, epilogue: Epilogue, out_channels: u32, grid_pixels: u32, f32: bool) -> ConvTile {
+        if self.matrix_tile_m.is_some() && !f32 {
+            let matrix = MATRIX_CONVS.iter()
+                .filter(|(k, e, _)| (*k, *e) == (kind, epilogue))
+                .map(|&(_, _, n_matrices)| n_matrices)
+                .min_by_key(|&n_matrices| {
+                    let width = n_matrices * MATRIX_SIDE;
+                    (out_channels.div_ceil(width) * width, std::cmp::Reverse(n_matrices))
+                });
+            return match matrix {
+                Some(n_matrices) if grid_pixels >= MATRIX_MIN_GRID_PIXELS => ConvTile::Matrix { n_matrices },
+                _ => ConvTile::ShaderCores(DEEP_TILE),
+            };
+        }
+        ConvTile::ShaderCores(if out_channels <= TINY_TILE.n {
+            TINY_TILE
+        } else if out_channels <= NARROW_TILE.n {
+            NARROW_TILE
+        } else if grid_pixels < WIDE_TILE.m {
+            DEEP_TILE
+        } else {
+            WIDE_TILE
+        })
     }
 
     fn pixel_pipeline(&self, step: PixelStep) -> &wgpu::ComputePipeline {
@@ -381,6 +496,9 @@ struct ConvLayer {
     name: String,
     /// A ResConv's beta.
     beta: Option<String>,
+    /// Computed in f32 on the shader cores on every device: the Head, whose features every block reads (in fp16 on
+    /// the matrix units, it takes the merged frame past the reference test's 2/255 alone, and runs no faster there).
+    f32: bool,
     kind: ConvKind,
     epilogue: Epilogue,
     input: (Buf, u32),
@@ -429,17 +547,14 @@ impl Planner<'_> {
         } else {
             (out_width, out_width * out_height, 1, CONV_TAPS)
         };
-        let tile = if layer.out_channels <= TINY_TILE.n {
-            TINY_TILE
-        } else if layer.out_channels <= NARROW_TILE.n {
-            NARROW_TILE
-        } else if grid_pixels < WIDE_TILE.m {
-            DEEP_TILE
-        } else {
-            WIDE_TILE
+        let tile = self.model.tile(layer.kind, layer.epilogue, layer.out_channels, grid_pixels, layer.f32);
+        let (tile_m, tile_n, tile_k) = match tile {
+            ConvTile::ShaderCores(tile) => (tile.m, tile.n, tile.k),
+            ConvTile::Matrix { n_matrices } =>
+                (self.model.matrix_tile_m.expect("on the matrix units"), n_matrices * MATRIX_SIDE, MATRIX_TILE_K),
         };
-        let workgroups = [grid_pixels.div_ceil(tile.m), layer.out_channels.div_ceil(tile.n), phases];
-        let steps = (layer.in_channels * taps).div_ceil(tile.k);
+        let workgroups = [grid_pixels.div_ceil(tile_m), layer.out_channels.div_ceil(tile_n), phases];
+        let steps = (layer.in_channels * taps).div_ceil(tile_k);
         let tiles = workgroups.iter().product::<u32>();
         let wanted = if tiles >= TARGET_WORKGROUPS { 1 } else { TARGET_WORKGROUPS.div_ceil(tiles) };
         let split_steps = steps.div_ceil(wanted.min(steps / MIN_SPLIT_STEPS).max(1));
@@ -524,7 +639,7 @@ impl RifeWorkspace {
         let mut encode = Vec::new();
         for image in 0..2 {
             planner.conv(&mut encode, ConvLayer {
-                name: "encode.cnn0".into(), beta: None, kind: ConvKind::Stride2, epilogue: Epilogue::Leaky,
+                name: "encode.cnn0".into(), beta: None, f32: true, kind: ConvKind::Stride2, epilogue: Epilogue::Leaky,
                 input: (Buf::Images, image * RIFE_IMAGE_CHANNELS * plane), in_size: (width, height),
                 in_channels: HEAD_INPUT_CHANNELS, output: (Buf::ScratchA, 0), out_channels: HEAD_CHANNELS,
             })?;
@@ -532,14 +647,14 @@ impl RifeWorkspace {
             for index in 1..HEAD_CONVS {
                 let target = other_scratch(source);
                 planner.conv(&mut encode, ConvLayer {
-                    name: format!("encode.cnn{index}"), beta: None, kind: ConvKind::Stride1, epilogue: Epilogue::Leaky,
+                    name: format!("encode.cnn{index}"), beta: None, f32: true, kind: ConvKind::Stride1, epilogue: Epilogue::Leaky,
                     input: (source, 0), in_size: half_size, in_channels: HEAD_CHANNELS,
                     output: (target, 0), out_channels: HEAD_CHANNELS,
                 })?;
                 source = target;
             }
             planner.conv(&mut encode, ConvLayer {
-                name: format!("encode.cnn{HEAD_CONVS}"), beta: None, kind: ConvKind::Transposed,
+                name: format!("encode.cnn{HEAD_CONVS}"), beta: None, f32: true, kind: ConvKind::Transposed,
                 epilogue: Epilogue::Linear, input: (source, 0), in_size: half_size, in_channels: HEAD_CHANNELS,
                 output: (Buf::Features, image * FEATURE_CHANNELS * plane), out_channels: FEATURE_CHANNELS,
             })?;
@@ -568,14 +683,14 @@ impl RifeWorkspace {
             let channels = BLOCK_WIDTHS[block];
             let mut layers = Vec::new();
             planner.conv(&mut layers, ConvLayer {
-                name: format!("block{block}.conv0.0.0"), beta: None, kind: ConvKind::Stride2, epilogue: Epilogue::Leaky,
+                name: format!("block{block}.conv0.0.0"), beta: None, f32: false, kind: ConvKind::Stride2, epilogue: Epilogue::Leaky,
                 input: (Buf::Block, 0), in_size: block_size,
                 in_channels: if block == 0 { FIRST_BLOCK_INPUT_CHANNELS } else { BLOCK_INPUT_CHANNELS },
                 output: (Buf::ScratchA, 0), out_channels: channels / 2,
             })?;
             let half = (block_size.0 / STRIDE_2, block_size.1 / STRIDE_2);
             planner.conv(&mut layers, ConvLayer {
-                name: format!("block{block}.conv0.1.0"), beta: None, kind: ConvKind::Stride2, epilogue: Epilogue::Leaky,
+                name: format!("block{block}.conv0.1.0"), beta: None, f32: false, kind: ConvKind::Stride2, epilogue: Epilogue::Leaky,
                 input: (Buf::ScratchA, 0), in_size: half, in_channels: channels / 2,
                 output: (Buf::ScratchB, 0), out_channels: channels,
             })?;
@@ -585,14 +700,14 @@ impl RifeWorkspace {
                 let target = other_scratch(source);
                 planner.conv(&mut layers, ConvLayer {
                     name: format!("block{block}.convblock.{index}.conv"),
-                    beta: Some(format!("block{block}.convblock.{index}.beta")),
+                    beta: Some(format!("block{block}.convblock.{index}.beta")), f32: false,
                     kind: ConvKind::Stride1, epilogue: Epilogue::Residual, input: (source, 0), in_size: quarter,
                     in_channels: channels, output: (target, 0), out_channels: channels,
                 })?;
                 source = target;
             }
             planner.conv(&mut layers, ConvLayer {
-                name: format!("block{block}.lastconv.0"), beta: None, kind: ConvKind::TransposedShuffle,
+                name: format!("block{block}.lastconv.0"), beta: None, f32: false, kind: ConvKind::TransposedShuffle,
                 epilogue: Epilogue::Linear, input: (source, 0), in_size: quarter, in_channels: channels,
                 output: (Buf::Block, 0), out_channels: BLOCK_OUTPUT_CHANNELS,
             })?;

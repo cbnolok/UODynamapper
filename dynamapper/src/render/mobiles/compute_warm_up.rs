@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
 use bevy::render::Extract;
 use uot_gpu_compute::block_encode::{MobileBlockEncoder, BLOCK_ENCODER_COMPILES};
-use uot_gpu_compute::rife::{RifePipelines, RIFE_COMPILES};
+use uot_gpu_compute::rife::{rife_compiles, RifePipelines};
 use uot_gpu_compute::upscale::{upscale_compiles, UpscalePipelines};
 use uot_gpu_compute::warm_up::CompileReport;
 use uot_gpu_compute::{ConvUnits, PipelineCompile};
@@ -164,10 +164,12 @@ pub fn sys_start_compute_warm_up(
     let device = render_device.wgpu_device();
     if let Compile::NotStarted = warm_up.rife {
         let device = device.clone();
+        let units = ConvUnits::of(&render_adapter, &device);
         warm_up.rife.start(RIFE_THREAD_NAME, move || {
             let started = std::time::Instant::now();
-            let pipelines = RifePipelines::new(&device, &mut CompileReport::new(RIFE_COMPILES, compile_reporter()));
-            info!("The RIFE pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
+            let pipelines = RifePipelines::new(&device, units,
+                &mut CompileReport::new(rife_compiles(units), compile_reporter()));
+            info!("The RIFE pipelines are compiled for the {units:?}, in {:.1} s.", started.elapsed().as_secs_f32());
             Some(pipelines)
         });
     }

@@ -12,23 +12,24 @@
 //! time: enough for a progress display.
 
 use std::time::{Duration, Instant};
-use crate::rife::{RifePipelines, RIFE_COMPILES};
+use crate::rife::{rife_compiles, RifePipelines};
 use crate::upscale::{upscale_compiles, UpscalePipelines};
 use crate::ConvUnits;
 
 /// The compiles [`warm_up`] reports for the convolutions on `units`.
 pub const fn warm_up_compiles(units: ConvUnits) -> usize {
-    RIFE_COMPILES + upscale_compiles(units)
+    rife_compiles(units) + upscale_compiles(units)
 }
 
 /// A compile starting or ending.
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineCompile<'a> {
-    /// What compiles, as the pipeline's label: `"RIFE conv Stride1/Leaky tile 64x32"`, `"RIFE pixel step: merge"`,
+    /// What compiles, as the pipeline's label: `"RIFE conv Stride1/Leaky tile 64x32"` (on the matrix units also
+    /// `"RIFE matrix conv Stride1/Residual x64"`), `"RIFE pixel step: merge"`,
     /// `"upscale conv 3x3/Silu tile 64x48"` (on the matrix units `"upscale matrix conv 3x3/Silu"`),
     /// `"upscale prepare"`, `"BC7 encoder (UltraFast)"` (the block
-    /// encoder's others: [`crate::block_encode::MobileBlockFormat::compile_name`]). A RIFE conv compiles two
-    /// pipelines of one shader (`main` and `reduce`).
+    /// encoder's others: [`crate::block_encode::MobileBlockFormat::compile_name`]). A RIFE conv on the shader cores
+    /// compiles two pipelines of one shader (`main` and `reduce`).
     pub name: &'a str,
     /// Its place among the compiles of the run (0-based), and how many there are.
     pub index: usize,
@@ -79,7 +80,7 @@ pub struct WarmPipelines {
 /// `callback` of each of the [`warm_up_compiles`] as it starts and ends.
 pub fn warm_up(device: &wgpu::Device, units: ConvUnits, callback: impl FnMut(PipelineCompile)) -> WarmPipelines {
     let mut report = CompileReport::new(warm_up_compiles(units), callback);
-    let rife = RifePipelines::new(device, &mut report);
+    let rife = RifePipelines::new(device, units, &mut report);
     let upscale = UpscalePipelines::new(device, units, &mut report);
     WarmPipelines { rife, upscale }
 }

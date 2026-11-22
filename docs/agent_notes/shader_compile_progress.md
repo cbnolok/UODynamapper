@@ -68,6 +68,22 @@ logged, and the world's land/art pipelines ready (`main.wesl`, `ground.wesl`; th
 The world waits for Bevy's own pipelines, not for these: with the machine quiet the BC7 compile costs the world about
 a second, and with RGBA8888 packages nothing of block_compression compiles at all.
 
+**RIFE on the matrix units (2026-11-22)** compiles less: 14 convolution compiles instead of 20: 8 matrix kernels and 6
+on the shader cores (the Head's 3, and 3 for grids under 8 pixels, whose split-K reductions the matrix kernels
+share), the pixel and frame steps unchanged. `warm_up::time_the_warm_up`
+(dev test build, a new `MESA_SHADER_CACHE_DIR` for cold and the same again for warm, two runs alternated with dev
+5c1b85d7's build):
+
+| | dev 5c1b85d7 | RIFE on the matrix units |
+|---|---:|---:|
+| RIFE pipelines, cold | 831 / 856 ms | 469 / 473 ms |
+| SPAN pipelines, cold | 115–118 ms | 114 ms |
+| whole warm-up (RIFE and SPAN), cold | 1010 / 1034 ms | 637 / 641 ms |
+| whole warm-up, warm | 81 / 86 ms | 56 / 58 ms |
+
+A matrix kernel compiles in 23 to 34 ms, a shader-core one in 29 to 47 ms. In the app the warm-up's line reads "The
+RIFE pipelines are compiled for the Matrix, in X s".
+
 ## Cold start: the world waits for the window's pipelines
 
 With Mesa's cache empty (RADV, Radeon 880M, 2026-11-21) the startup pipelines take about 35 s (up to 48 s with the

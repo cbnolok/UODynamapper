@@ -6,7 +6,8 @@
 // walk the whole sum, so its sum can be split: each workgroup then adds up one range of rows into `partial`, and
 // `reduce` adds the ranges and finishes the output.
 //
-// rife.rs puts these constants in front of this source, one set per pipeline:
+// rife.rs puts these constants in front of this source, then conv_layer.wgsl (the parameters, buffers, taps and
+// epilogue this kernel shares with conv_matrix.wgsl), one set per pipeline:
 //   THREADS                      threads per workgroup
 //   TILE_M, TILE_N, TILE_K       the workgroup's tile
 //   MICRO_M, MICRO_N             one thread's sums, for consecutive pixels and channels; MICRO_N is a multiple of 4
@@ -18,14 +19,6 @@
 //   PIXEL_SHUFFLE                the transposed output goes through PixelShuffle(2)
 //   EPILOGUE                     EPILOGUE_LEAKY, EPILOGUE_LINEAR or EPILOGUE_RESIDUAL
 
-const EPILOGUE_LEAKY: u32 = 0u;
-const EPILOGUE_LINEAR: u32 = 1u;
-// leaky(conv(x) * beta + x), the ResConv of IFNet_HDv3.py.
-const EPILOGUE_RESIDUAL: u32 = 2u;
-const LEAKY_SLOPE: f32 = 0.2;
-const KERNEL_SIDE: u32 = 3u;
-const PHASE_SIDE: u32 = 2u;
-const SHUFFLE_SIDE: u32 = 2u;
 const A_LOADS: u32 = TILE_K * TILE_M / THREADS;
 const A_K_STEP: u32 = THREADS / TILE_M;
 const B_PAIRS: u32 = TILE_K * TILE_N / 2u;
@@ -33,97 +26,9 @@ const B_LOADS: u32 = (B_PAIRS + THREADS - 1u) / THREADS;
 const THREADS_M: u32 = TILE_M / MICRO_M;
 const VECTOR: u32 = 4u;
 
-struct Conv {
-    in_width: u32,
-    in_height: u32,
-    in_channels: u32,
-    // First element of the input's first channel.
-    in_base: u32,
-    out_width: u32,
-    out_height: u32,
-    out_channels: u32,
-    out_base: u32,
-    // The pixels the matrix rows walk: the output for a 3x3 convolution, the input for a transposed phase.
-    grid_width: u32,
-    grid_pixels: u32,
-    // Offsets in halves into the packed parameters.
-    weights: u32,
-    bias: u32,
-    beta: u32,
-    // Ranges the sum is split into (workgroup z is range * PHASES + phase), and TILE_K steps per range.
-    splits: u32,
-    split_steps: u32,
-    _pad: u32,
-}
-
-@group(0) @binding(0) var<uniform> conv: Conv;
-// fp16 parameters, two to a word; weights as [phase][input channel * TAPS + tap][output channel].
-@group(0) @binding(1) var<storage, read> params: array<u32>;
-@group(0) @binding(2) var<storage, read> src: array<f32>;
-@group(0) @binding(3) var<storage, read_write> dst: array<f32>;
-// The split sums, as [range][phase][output channel][grid pixel].
-@group(0) @binding(4) var<storage, read_write> partial: array<f32>;
-
 // The staged patches as [row][pixel] and weights as [row][channel], read four at a time.
 var<workgroup> a_tile: array<vec4<f32>, TILE_K * TILE_M / VECTOR>;
 var<workgroup> b_tile: array<vec4<f32>, TILE_K * TILE_N / VECTOR>;
-
-fn param(index: u32) -> f32 {
-    let pair = unpack2x16float(params[index >> 1u]);
-    return select(pair.x, pair.y, (index & 1u) == 1u);
-}
-
-fn leaky(value: f32) -> f32 {
-    return select(value * LEAKY_SLOPE, value, value >= 0.0);
-}
-
-// The input row and column a tap reads for a grid pixel.
-fn tap_y(grid_y: i32, phase_y: i32, tap: u32) -> i32 {
-    if (TRANSPOSED) {
-        return grid_y + phase_y - i32(tap / PHASE_SIDE);
-    }
-    return grid_y * i32(STRIDE) + i32(tap / KERNEL_SIDE) - 1;
-}
-
-fn tap_x(grid_x: i32, phase_x: i32, tap: u32) -> i32 {
-    if (TRANSPOSED) {
-        return grid_x + phase_x - i32(tap % PHASE_SIDE);
-    }
-    return grid_x * i32(STRIDE) + i32(tap % KERNEL_SIDE) - 1;
-}
-
-fn partial_index(split: u32, phase: u32, channel: u32, pixel: u32) -> u32 {
-    return ((split * PHASES + phase) * conv.out_channels + channel) * conv.grid_pixels + pixel;
-}
-
-// Adds the bias, applies the epilogue and stores one output.
-fn finish(sum: f32, phase: u32, channel: u32, pixel: u32) {
-    var value = sum + param(conv.bias + channel);
-    if (EPILOGUE == EPILOGUE_LEAKY) {
-        value = leaky(value);
-    } else if (EPILOGUE == EPILOGUE_RESIDUAL) {
-        let residual = src[conv.in_base + channel * conv.in_width * conv.in_height + pixel];
-        value = leaky(value * param(conv.beta + channel) + residual);
-    }
-    let out_plane = conv.out_width * conv.out_height;
-    var index: u32;
-    if (TRANSPOSED) {
-        let y = (pixel / conv.grid_width) * PHASE_SIDE + phase / PHASE_SIDE;
-        let x = (pixel % conv.grid_width) * PHASE_SIDE + phase % PHASE_SIDE;
-        if (PIXEL_SHUFFLE) {
-            let group_size = SHUFFLE_SIDE * SHUFFLE_SIDE;
-            let sub = channel % group_size;
-            let shuffled_y = y * SHUFFLE_SIDE + sub / SHUFFLE_SIDE;
-            let shuffled_x = x * SHUFFLE_SIDE + sub % SHUFFLE_SIDE;
-            index = (channel / group_size) * out_plane + shuffled_y * conv.out_width + shuffled_x;
-        } else {
-            index = channel * out_plane + y * conv.out_width + x;
-        }
-    } else {
-        index = channel * out_plane + pixel;
-    }
-    dst[conv.out_base + index] = value;
-}
 
 @compute @workgroup_size(THREADS)
 fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
@@ -145,14 +50,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     let load_pixel = m0 + load_m;
     let load_y = i32(load_pixel / conv.grid_width);
     let load_x = i32(load_pixel % conv.grid_width);
-    var inside_taps = 0u;
-    for (var tap = 0u; tap < TAPS; tap++) {
-        let y = tap_y(load_y, phase_y, tap);
-        let x = tap_x(load_x, phase_x, tap);
-        let inside = load_pixel < conv.grid_pixels && y >= 0 && x >= 0 && y < i32(conv.in_height)
-            && x < i32(conv.in_width);
-        inside_taps |= select(0u, 1u << tap, inside);
-    }
+    let inside = inside_taps(load_pixel, phase_y, phase_x);
 
     let thread_m = thread % THREADS_M;
     let thread_n = thread / THREADS_M;
@@ -183,7 +81,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
                 let channel = k / TAPS;
                 let tap = k % TAPS;
                 var value = 0.0;
-                if (k < k_end && (inside_taps & (1u << tap)) != 0u) {
+                if (k < k_end && (inside & (1u << tap)) != 0u) {
                     let y = u32(tap_y(load_y, phase_y, tap));
                     let x = u32(tap_x(load_x, phase_x, tap));
                     value = src[conv.in_base + channel * in_plane + y * conv.in_width + x];
@@ -244,11 +142,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
             if (channel >= conv.out_channels) {
                 continue;
             }
-            if (conv.splits > 1u) {
-                partial[partial_index(split, phase, channel, pixel)] = sums[i][j];
-            } else {
-                finish(sums[i][j], phase, channel, pixel);
-            }
+            store_sum(sums[i][j], split, phase, channel, pixel);
         }
     }
 }

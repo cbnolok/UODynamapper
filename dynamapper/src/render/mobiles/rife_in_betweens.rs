@@ -176,6 +176,7 @@ impl MobileInBetweens {
             if let InBetweenState::Generating { job: Some(job), .. } = &entry.state && finished.contains(job) {
                 let InBetweenState::Generating { sequence, .. } =
                     std::mem::replace(&mut entry.state, InBetweenState::Missing) else { unreachable!() };
+                debug!("Mobile in-betweens: {:?} in {:.2} s.", entry.source, now - entry.first_drawn);
                 entry.state = InBetweenState::Ready(sequence);
             }
         }

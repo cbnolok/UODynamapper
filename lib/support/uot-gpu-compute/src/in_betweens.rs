@@ -9,11 +9,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use color_eyre::eyre::{self, WrapErr};
-use crate::rife::{RifeModel, RifePipelines, RifeWorkspace, RIFE_ALPHA_CHANNEL, RIFE_COMPILES, RIFE_IMAGE_CHANNELS,
+use crate::rife::{rife_compiles, RifeModel, RifePipelines, RifeWorkspace, RIFE_ALPHA_CHANNEL, RIFE_IMAGE_CHANNELS,
     RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS};
 use crate::strides::StrideFrame;
 use crate::warm_up::{CompileReport, PipelineCompile};
-use crate::{own_device, Gpu};
+use crate::{own_device_and_units, Gpu};
 
 /// The most frames shown for each of a clip's: its own and one in-between per timestep slot.
 pub const MAX_FACTOR: u32 = RIFE_TIMESTEP_SLOTS as u32 + 1;
@@ -132,11 +132,11 @@ pub struct InBetweenMaker {
 }
 
 impl InBetweenMaker {
-    /// Starts a device of its own and compiles RIFE on it, telling `compile` of each of the [`RIFE_COMPILES`] as it
+    /// Starts a device of its own and compiles RIFE on it, telling `compile` of each of the [`rife_compiles`] as it
     /// starts and ends.
     pub fn new(compile: impl FnMut(PipelineCompile)) -> eyre::Result<Self> {
-        let (gpu, adapter) = own_device()?;
-        let pipelines = RifePipelines::new(&gpu.device, &mut CompileReport::new(RIFE_COMPILES, compile));
+        let (gpu, adapter, units) = own_device_and_units()?;
+        let pipelines = RifePipelines::new(&gpu.device, units, &mut CompileReport::new(rife_compiles(units), compile));
         let model = RifeModel::with_pipelines(&gpu.device, pipelines).map_err(|error| eyre::eyre!("RIFE: {error}"))?;
         Ok(Self { gpu, adapter, model, workspaces: Vec::new() })
     }

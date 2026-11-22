@@ -759,7 +759,7 @@ fn evaluate_block_formats() {
     }
 
     // The in-betweens: for each size, the first clip whose two first frames fill more than half of the canvas.
-    let model = RifeModel::new(&gpu.device).unwrap();
+    let model = RifeModel::new(&gpu.device, crate::ConvUnits::ShaderCores).unwrap();
     for side in IN_BETWEEN_SIZES {
         let Some((name, classic, canvases)) = clips.iter()
             .find_map(|(name, classic, clip)| canvas_pair(clip, side).map(|canvases| (name, *classic, canvases))) else {

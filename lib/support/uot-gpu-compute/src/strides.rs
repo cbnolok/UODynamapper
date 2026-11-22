@@ -25,7 +25,7 @@ pub mod planted_foot;
 
 use std::time::Duration;
 use color_eyre::eyre::{self, WrapErr};
-use crate::{own_device, Gpu};
+use crate::{own_device, ConvUnits, Gpu};
 use crate::rife::{RifeModel, RifeWorkspace, RIFE_FLOW_CHANNELS, RIFE_IMAGE_CHANNELS, RIFE_SIZE_MULTIPLE};
 
 /// Facings that must measure for a stride.
@@ -118,7 +118,9 @@ impl StrideMeasurer {
     /// 1.935 tiles instead of 1.919).
     pub fn new() -> eyre::Result<Self> {
         let (gpu, adapter) = own_device()?;
-        let model = RifeModel::with_bilinear_final_warp(&gpu.device).map_err(|error| eyre::eyre!("RIFE: {error}"))?;
+        // On the shader cores in f32, as PyTorch computes the flow, so a stride does not depend on the device.
+        let model = RifeModel::with_bilinear_final_warp(&gpu.device, ConvUnits::ShaderCores)
+            .map_err(|error| eyre::eyre!("RIFE: {error}"))?;
         Ok(Self { gpu, adapter, model, workspaces: Vec::new() })
     }
 
