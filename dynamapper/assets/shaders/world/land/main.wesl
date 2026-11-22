@@ -118,6 +118,10 @@ const CAVE_MOUTH_TUNNEL_Z_SPAN: f32 = 12.0;
 // A land cut at or above this z, over any UO z (an i8), is no cut (LAND_NO_Z_LIMIT).
 const CAVE_MOUTH_UNCUT_Z: f32 = 128.0;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
+// compose_land's passes: the lead (taken whole) and the second, before the EC coverage layers above the lead's.
+const LAND_LEAD_PASS: u32 = 0u;
+const LAND_SECOND_PASS: u32 = 1u;
+const LAND_FIXED_PASS_COUNT: u32 = 2u;
 // The neighbours blend_ec_terrain_transitions blends in, in its order: the four edge neighbours (west, east, north,
 // south), then the four diagonal ones (northwest, northeast, southwest, southeast).
 const EC_TERRAIN_TRANSITION_NEIGHBOR_COUNT: u32 = 8u;
@@ -846,9 +850,8 @@ fn finish_land(hdr_rgb: vec3<f32>) -> vec4<f32> {
   return vec4<f32>(final_rgb, 1.0); // tile textures assumed opaque for terrain
 }
 
-// Each call supplies a literal selector: the cached call has no live fallback
-// arrays; the uncached call reads the original reconstruction. Keep their layer
-// ordering, bank selection and shading call sites in one routine.
+// Each call of compose_land supplies a literal selector: the cached call has no live fallback arrays; the uncached
+// call reads the original reconstruction. Keep their layer ordering, bank selection and shading in one routine.
 fn ec_composition_layer(cache: EcTerrainCache, stack: ptr<function, EcTerrainStack>, cached: bool, index: u32) -> EcTerrainLayer {
   if (cached) { return ec_cache_layer(cache, index); }
   return EcTerrainLayer((*stack).layers[index], (*stack).alpha[index]);
@@ -859,65 +862,110 @@ fn ec_composition_grime_mask(cache: EcTerrainCache, material: vec4<u32>, cached:
   return 256u;
 }
 
-fn compose_ec_terrain(in: LandVertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32,
-    cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool) -> vec3<f32> {
+// The land's colour at the fragment: the passes of `shade_land` over it, in order, each laid over the ones before it.
+// The lead pass is taken whole; a second one, when its alpha is above 0, mixes over it; then the EC coverage layers
+// above the lead's, each by its coverage. `composed` says whether the EC coverage stack (`cache`, or `fallback` when
+// not `cached`) covers the fragment. Without it the lead is the fragment's own tile and the second its liquid's dry
+// bank, while neighbour smoothing is off.
+// shade_land has this one call site, in a loop over the passes, and compose_land its two calls (cached and
+// uncached): the driver's compiler inlines a function at every call site, and with ten copies of shade_land the land
+// pipeline took RADV about 32 s to compile cold. One call with `cached` a runtime value would halve the compile again
+// but made frames 1 to 21 % slower (docs/agent_notes/shader_compile_progress.md).
+fn compose_land(in: LandVertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32,
+    cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool, composed: bool, ec_transitions: bool) -> vec3<f32> {
   var stack = fallback;
-  let count = select(stack.count, cache.count, cached);
-  let cell = vec2<i32>(floor(in.world_position.xz));
-  var hdr_rgb: vec3<f32>;
-  // Opaque later passes cover all earlier shading. This keeps homogeneous
-  // terrain at one material sample while retaining the complete layer order.
+  let count = select(0u, select(stack.count, cache.count, cached), composed);
+  var lead_tile = tile;
+  var lead_ordered_coverage = false;
+  var lead_grime_mask = 256u;
+  var second_tile = tile;
+  var second_grime_mask = 256u;
+  var second_alpha = 0.0;
   var first = 0u;
-  for (var index = 1u; index < count; index++) {
-    if (ec_composition_layer(cache, &stack, cached, index).alpha == 1.0) { first = index; }
-  }
   var liquid_material = 0xffffffffu;
-  var liquid_coverage = 1.0;
-  for (var index = first; index < count; index++) {
-    let layer = ec_composition_layer(cache, &stack, cached, index);
-    if ((index == first || layer.alpha > 0.0) && ((layer.material.w >> 16u) & 7u) == 2u) {
-      liquid_material = layer.material.x;
-      liquid_coverage = layer.alpha;
-    }
-  }
   var bank_weight = 0.0;
-  var bank_cell = cell;
-  if (liquid_material != 0xffffffffu) {
-    let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material, liquid_coverage);
-    bank_weight = bank.weight;
-    bank_cell = bank.cell;
-  }
-  if (bank_weight > 0.0) {
-    // Reveal the existing solid pass stack, including its authored blends.
-    // A single neighboring texture would introduce hard material patches.
-    first = 0u;
+  if (composed) {
+    let cell = vec2<i32>(floor(in.world_position.xz));
+    // Opaque later passes cover all earlier shading. This keeps homogeneous
+    // terrain at one material sample while retaining the complete layer order.
     for (var index = 1u; index < count; index++) {
+      if (ec_composition_layer(cache, &stack, cached, index).alpha == 1.0) { first = index; }
+    }
+    var liquid_coverage = 1.0;
+    for (var index = first; index < count; index++) {
       let layer = ec_composition_layer(cache, &stack, cached, index);
-      let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
-      if (alpha == 1.0) { first = index; }
+      if ((index == first || layer.alpha > 0.0) && ((layer.material.w >> 16u) & 7u) == 2u) {
+        liquid_material = layer.material.x;
+        liquid_coverage = layer.alpha;
+      }
     }
-  }
-  if (first == 0u && bank_weight > 0.0 && ec_composition_layer(cache, &stack, cached, 0u).material.x == liquid_material) {
-    // An all-liquid chunk can meet a bank across its edge without having
-    // a local solid base pass. Only that case needs the neighboring material.
-    hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true, world_gradients, surface_normal, client_shade, 256u);
-    if (bank_weight < 1.0) {
+    var bank_cell = cell;
+    if (liquid_material != 0xffffffffu) {
+      let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material, liquid_coverage);
+      bank_weight = bank.weight;
+      bank_cell = bank.cell;
+    }
+    if (bank_weight > 0.0) {
+      // Reveal the existing solid pass stack, including its authored blends.
+      // A single neighboring texture would introduce hard material patches.
+      first = 0u;
+      for (var index = 1u; index < count; index++) {
+        let layer = ec_composition_layer(cache, &stack, cached, index);
+        let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
+        if (alpha == 1.0) { first = index; }
+      }
+    }
+    lead_ordered_coverage = true;
+    if (first == 0u && bank_weight > 0.0 && ec_composition_layer(cache, &stack, cached, 0u).material.x == liquid_material) {
+      // An all-liquid chunk can meet a bank across its edge without having
+      // a local solid base pass. Only that case needs the neighboring material.
+      lead_tile = atlas_read_meta(bank_cell.x, bank_cell.y);
       let layer = ec_composition_layer(cache, &stack, cached, 0u);
-      hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal, client_shade,
-        ec_composition_grime_mask(cache, layer.material, cached)), 1.0 - bank_weight);
+      second_tile = ec_layer_tile(layer.material, tile.tile_height);
+      second_grime_mask = ec_composition_grime_mask(cache, layer.material, cached);
+      // Above 0 exactly while the bank weighs less than 1.
+      second_alpha = 1.0 - bank_weight;
+    } else {
+      let layer = ec_composition_layer(cache, &stack, cached, first);
+      lead_tile = ec_layer_tile(layer.material, tile.tile_height);
+      lead_grime_mask = ec_composition_grime_mask(cache, layer.material, cached);
     }
-  } else {
-    let layer = ec_composition_layer(cache, &stack, cached, first);
-    hdr_rgb = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal, client_shade,
-      ec_composition_grime_mask(cache, layer.material, cached));
+  } else if (!ec_transitions && tile.texture_size == 2u && (tile.is_wet == 1u || (tile.terrain_flags & 4u) != 0u)) {
+    // Disabling neighbor smoothing must not put level lava back onto raised
+    // mountain quads. Keep the height/shore guard, using one dry bank material.
+    let bank = ec_liquid_bank(in.world_position.xyz, tile, ec_coverage_params(tile.texture_payload).x, 1.0);
+    if (bank.weight > 0.0) {
+      second_tile = atlas_read_meta(bank.cell.x, bank.cell.y);
+      second_alpha = bank.weight;
+    }
   }
-  for (var index = first + 1u; index < count; index++) {
-    let layer = ec_composition_layer(cache, &stack, cached, index);
-    let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
-    if (alpha > 0.0) {
-      let layer_color = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal, client_shade,
-        ec_composition_grime_mask(cache, layer.material, cached));
-      hdr_rgb = mix(hdr_rgb, layer_color, alpha);
+  // The passes: the lead, the second, then the layers first + 1 to count - 1.
+  let pass_count = LAND_FIXED_PASS_COUNT + select(0u, count - first - 1u, count > first + 1u);
+  var hdr_rgb: vec3<f32>;
+  for (var pass_index = LAND_LEAD_PASS; pass_index < pass_count; pass_index++) {
+    var pass_tile = lead_tile;
+    var ordered_coverage = lead_ordered_coverage;
+    var grime_mask = lead_grime_mask;
+    var alpha = 1.0;
+    if (pass_index == LAND_SECOND_PASS) {
+      if (!(second_alpha > 0.0)) { continue; }
+      pass_tile = second_tile;
+      ordered_coverage = true;
+      grime_mask = second_grime_mask;
+      alpha = second_alpha;
+    } else if (pass_index > LAND_SECOND_PASS) {
+      let layer = ec_composition_layer(cache, &stack, cached, first + pass_index - 1u);
+      alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
+      if (!(alpha > 0.0)) { continue; }
+      pass_tile = ec_layer_tile(layer.material, tile.tile_height);
+      ordered_coverage = true;
+      grime_mask = ec_composition_grime_mask(cache, layer.material, cached);
+    }
+    let pass_color = shade_land(in, pass_tile, ordered_coverage, world_gradients, surface_normal, client_shade, grime_mask);
+    if (pass_index == LAND_LEAD_PASS) {
+      hdr_rgb = pass_color;
+    } else {
+      hdr_rgb = mix(hdr_rgb, pass_color, alpha);
     }
   }
   return hdr_rgb;
@@ -1053,35 +1101,26 @@ fn land_color(in: LandVertexOutput) -> vec4<f32> {
     discard;
   }
   var hdr_rgb: vec3<f32>;
+  var cache = EcTerrainCache();
   var composed = false;
+  var uncached = false;
   let ec_transitions = (effects.terrain_transition_flags & 2u) == 0u;
   // A cell that never blends draws alone, no neighbour's coverage over it (coverage.wesl leaves it out of theirs).
   if (ec_transitions && tile.texture_size == 2u && !terrain_never_blends(tile)
       && ec_coverage_params(tile.texture_payload).w != 0u) {
-    let cache = ec_terrain_cache(in.world_position.xz);
-    if (cache.count > 0u) {
-      hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, client_shade, cache, EcTerrainStack(), true);
-      composed = true;
-    } else {
+    cache = ec_terrain_cache(in.world_position.xz);
+    composed = cache.count > 0u;
+    if (!composed) {
       let stack = ec_terrain_stack_uncached(in.world_position.xz);
       if (stack.count > 0u) {
-        hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, client_shade, cache, stack, false);
-        composed = true;
+        hdr_rgb = compose_land(in, tile, world_gradients, surface_normal, client_shade, cache, stack, false, true, ec_transitions);
+        uncached = true;
       }
     }
   }
-  if (!composed) {
-    hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal, client_shade, 256u);
-    if (!ec_transitions && tile.texture_size == 2u && (tile.is_wet == 1u || (tile.terrain_flags & 4u) != 0u)) {
-      // Disabling neighbor smoothing must not put level lava back onto raised
-      // mountain quads. Keep the height/shore guard, using one dry bank material.
-      let bank = ec_liquid_bank(in.world_position.xyz, tile, ec_coverage_params(tile.texture_payload).x, 1.0);
-      if (bank.weight > 0.0) {
-        let bank_tile = atlas_read_meta(bank.cell.x, bank.cell.y);
-        let bank_color = shade_land(in, bank_tile, true, world_gradients, surface_normal, client_shade, 256u);
-        hdr_rgb = mix(hdr_rgb, bank_color, bank.weight);
-      }
-    }
+  if (!uncached) {
+    hdr_rgb = compose_land(in, tile, world_gradients, surface_normal, client_shade, cache, EcTerrainStack(), true, composed,
+      ec_transitions);
   }
   // Outside the player's cave, which all land is but its mouth's, darkened and partly desaturated as the statics
   // outside it are (caves.rs CaveSurroundings::Dimmed, art/depth.wesl cave_outside_tone).

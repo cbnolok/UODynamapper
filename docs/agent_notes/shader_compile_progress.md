@@ -164,12 +164,12 @@ neighbour offsets, in the old order (west, east, north, south, then the diagonal
 its sums are the same: one inlined material sample, not eight. The probe's compile goes from 32.5 to 25.9 s (260,612
 instructions, 7,208 spilled SGPRs) and the app's cold start by about 6 to 10 s (below), with no frame cost.
 
-**Measured, not committed: one `shade_land` call site for the passes.** The rest is the ten copies. `compose_land`
+**Committed after the neighbour loop: one `shade_land` call site for the passes.** The rest is the ten copies. `compose_land`
 replaces `compose_ec_terrain` and the two `shade_land` calls of `land_color`: it works out the passes first (the lead,
 taken whole; an optional second one, mixed by its alpha: the all-liquid chunk's own layer under the bank, or without
 EC transitions the dry bank; then the coverage layers above the lead) and runs them through one `shade_land` call in a
 loop, in the old order. `land_color` calls it twice, with a literal `cached` (the cache hit, or no EC coverage at all;
-and the uncached reconstruction): two copies. It is held because it costs Enhanced a little frame time (below). The
+and the uncached reconstruction): two copies. It costs Enhanced a little frame time (below), taken for the cold start. The
 variants, Enhanced cold start in the probe:
 
 | land fragment shader | instructions | code | branches | spilled SGPRs / VGPRs | probe compile |
