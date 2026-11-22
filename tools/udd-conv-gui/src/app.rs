@@ -13,6 +13,7 @@ pub struct UddConvApp {
     pub is_converting: Arc<Mutex<bool>>,
     pub cancel_conversion: Arc<AtomicBool>,
     pub current_tab: Tab,
+    pub quick_convert_overwrite: Option<(bool, bool)>,
 
     // Tool state
     pub tool_file_1: Option<PathBuf>,
@@ -37,7 +38,7 @@ impl UddConvApp {
         {
             let mut logs_guard = logs.lock().expect("initialize GUI logs");
             logs_guard.push(LogMessage {
-                text: "Application started. Please configure your source directories.".to_string(),
+                text: "Application started.".to_string(),
                 level: LogLevel::Info,
             });
             for warning in settings_warning {
@@ -54,7 +55,8 @@ impl UddConvApp {
             asset_progress,
             cancel_conversion,
             is_converting: Arc::new(Mutex::new(false)),
-            current_tab: Tab::Sources,
+            current_tab: Tab::QuickConvert,
+            quick_convert_overwrite: None,
             tool_file_1: None,
             tool_file_2: None,
             tool_hash_value: String::new(),

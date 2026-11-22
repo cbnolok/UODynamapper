@@ -45,9 +45,23 @@ pub fn keep_matching_strides<P: MobileAnimClips + Sync>(path: &Path, load: impl 
     if previous.is_empty() {
         return Ok(0);
     }
-    let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get());
     let package = load(path).wrap_err_with(|| format!("load {} to keep its strides", path.display()))?;
-    let kept = strides_still_matching(&package, previous, threads);
+    keep_loaded_strides(path, Box::new(package), previous)
+}
+
+/// Carries matching strides from the destination package into a staged replacement before it is installed.
+pub fn keep_staged_strides(staged: &Path, destination: &Path) -> eyre::Result<usize> {
+    let previous = strides_before_repack(destination);
+    if previous.is_empty() {
+        return Ok(0);
+    }
+    keep_loaded_strides(staged, load_mobile_anim_clips(staged)?, &previous)
+}
+
+fn keep_loaded_strides<P: MobileAnimClips + Sync + ?Sized>(path: &Path, package: Box<P>,
+    previous: &[MobileStrideRecord]) -> eyre::Result<usize> {
+    let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get());
+    let kept = strides_still_matching(&*package, previous, threads);
     let own = package.stride_records().to_vec();
     drop(package);
     let mut records: BTreeMap<(u32, u16), MobileStrideRecord> = own.iter()

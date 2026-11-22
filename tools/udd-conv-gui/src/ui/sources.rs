@@ -186,7 +186,7 @@ impl UddConvApp {
     }
 }
 
-fn pick_folder(title: &str, current: Option<&Path>) -> Option<PathBuf> {
+pub(super) fn pick_folder(title: &str, current: Option<&Path>) -> Option<PathBuf> {
     match pick_folder_with_kdialog(title, current) {
         KdialogFolderResult::Selected(path) => return Some(path),
         KdialogFolderResult::Cancelled => return None,

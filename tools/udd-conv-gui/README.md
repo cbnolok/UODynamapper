@@ -5,6 +5,16 @@ packages. It wraps the `udd-conv-cli` packing logic (`udd-cli pack` commands) in
 egui/eframe interface and lets users configure and run conversion jobs without
 using the command line.
 
+## Quick Convert
+
+On the first screen, choose a Classic or Enhanced Client folder and an output folder. **Convert Classic** and **Convert Enhanced** become available when their source folders are set. **Convert both** builds the full set in one run.
+
+The batch uses BC7 and BC1 where supported and Zstd by default. The packer can choose faster-decoding LZ4 HC for atlas pages that stay within its size threshold. Native formats remain in use for packages such as the Classic texmaps and paperdoll frames. Quick Convert disables upscaling, upscale profiles, and optional filters. The other tabs keep their manual job settings.
+
+A Classic run builds art, land, animations, gumps, tile metadata, world lights, hues, and the available facet and statics packages. For radar images, use the World tab. An Enhanced run builds Enhanced art, land, animations, gumps, effects, paperdolls, and hues. With a Classic folder configured, it also builds merged tile metadata and auxiliary textures. The Enhanced packages can use the bundled Kingdom Reborn delta or the optional Kingdom Reborn folder chosen in Sources.
+
+The log names the current job and reports failures. Stop requests cancellation, and packages that were already completed stay in the output folder. The converter asks before replacing existing outputs.
+
 ## Features
 
 - Configure source client paths (Classic Client or Enhanced Client installation

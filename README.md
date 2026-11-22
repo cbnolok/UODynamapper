@@ -11,7 +11,7 @@ Dynamapper streams converted **UDDP packages** built from Classic and Enhanced C
 ## Quick start
 
 1. Open a successful **Build Release** run, download the app and tools artifacts for your platform, and unpack them. Keep `assets/` beside `dynamapper`. [Build downloads](https://github.com/cbnolok/UODynamapper/actions/workflows/release.yml)
-2. If you need packages, open `udd-conv-gui` and select your Classic Client folder. Set both input and output package folders to `uddp/` in the app directory. Pack Tile Metadata, Hues, World Lights, Classic Art, and Classic Texmaps, then click **World → Map 0 → ALL**. Add a mobile animation package for animated bodies. For Enhanced or KR terrain, also select your Enhanced Client folder before packing and add Enhanced Art, Enhanced Land, and Enhanced Auxiliary Textures. [Converter guide](tools/udd-conv-gui/README.md)
+2. If you need packages, open `udd-conv-gui`. On **Quick Convert**, choose your Classic Client folder and set the output to `uddp/` in the app directory. Choose **Convert Classic**, or also add your Enhanced Client folder and choose **Convert both** for Enhanced and Kingdom Reborn terrain. [Converter guide](tools/udd-conv-gui/README.md#quick-convert)
 3. Launch `dynamapper` from its directory. Press **F2 → Graphics** to choose the art and land sources you packed and **F3** to choose a render style. Use **WASD** to move and the mouse wheel to zoom. [Default controls](docs/keybindings.md)
 
 Already have compatible UDDP packages? Put them in the app's `uddp/` folder or set `udd_path` in `assets/settings/runtime_assets.toml`. For features newer than the available downloads, see [building from source](docs/DEVELOPER_SETUP.md).

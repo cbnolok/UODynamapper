@@ -61,6 +61,7 @@ impl eframe::App for UddConvApp {
 
                 // Tab navigation
                 ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.current_tab, Tab::QuickConvert, "Quick Convert");
                     ui.selectable_value(&mut self.current_tab, Tab::Sources, "📁 Sources");
                     ui.selectable_value(&mut self.current_tab, Tab::Assets, "🎨 Assets");
                     ui.selectable_value(&mut self.current_tab, Tab::World, "🌍 World");
@@ -89,6 +90,7 @@ impl eframe::App for UddConvApp {
                         egui::ScrollArea::vertical()
                             .id_salt("main_scroll")
                             .show(ui, |ui| match self.current_tab {
+                                Tab::QuickConvert => self.ui_quick_convert(ui),
                                 Tab::Sources => self.ui_sources(ui),
                                 Tab::Assets => self.ui_assets(ui),
                                 Tab::World => self.ui_world(ui),

@@ -811,6 +811,415 @@ fn plural_packages(count: usize) -> String {
     if count == 1 { "1 package".to_string() } else { format!("{count} packages") }
 }
 
+fn pack_tex_art_cc(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+
+    let compression = texture_compression(settings.opt_tex_art_cc, settings.zstd_tex_art_cc);
+    let upscale_profile = load_upscale_profile(settings)?;
+    let extract_label = if upscale_filter_active(settings.upscale_tex_art_cc)
+        || upscale_profile_active(settings)
+    {
+        "Extracting and upscaling"
+    } else {
+        "Extracting"
+    };
+
+    let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
+        &sources, output,
+        &TexArtCcAtlasOptions {
+            atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+            atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+            gutter: DEFAULT_ATLAS_GUTTER,
+            compression,
+            upscale: settings.upscale_tex_art_cc,
+            upscale_passes: Vec::new(),
+            upscale_profile,
+            pixel_format: match settings.opt_tex_art_cc {
+                TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                _ => PagePixelFormat::Rgba8888,
+            },
+            bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_tex_art_cc),
+            bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+            source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
+        },
+        &classic_patch_options(settings),
+        |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+        |build_progress| progress.build_progress(build_progress),
+    )?;
+    Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
+}
+
+fn pack_tex_land_cc(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    if matches!(settings.opt_tex_land_cc, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd) {
+        eyre::bail!("{CLASSIC_LAND_LOSSY_REFUSAL}");
+    }
+    let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+
+    let compression = texture_compression(settings.opt_tex_land_cc, settings.zstd_tex_land_cc);
+    let upscale_profile = load_upscale_profile(settings)?;
+    let extract_label = if upscale_config_active(settings.upscale_tex_land_cc_64)
+        || upscale_config_active(settings.upscale_tex_land_cc_128)
+        || upscale_profile_active(settings)
+    {
+        "Extracting and upscaling"
+    } else {
+        "Extracting"
+    };
+
+    let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
+        &sources[0], output,
+        &TexLandCcAtlasOptions {
+            atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+            atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+            gutter: DEFAULT_ATLAS_GUTTER,
+            compression,
+            upscale_64: settings.upscale_tex_land_cc_64,
+            upscale_128: settings.upscale_tex_land_cc_128,
+            upscale_64_passes: Vec::new(),
+            upscale_128_passes: Vec::new(),
+            upscale_profile,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
+            bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+        },
+        &classic_patch_options(settings),
+        |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+        |build_progress| progress.build_progress(build_progress),
+    )?;
+    Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
+}
+
+fn pack_tex_art_ec(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+
+    let compression = texture_compression(settings.opt_tex_art_ec, settings.zstd_tex_art_ec);
+    let upscale_profile = load_upscale_profile(settings)?;
+    let extract_label = if upscale_filter_active(settings.upscale_tex_art_ec)
+        || upscale_profile_active(settings)
+    {
+        "Extracting and upscaling"
+    } else {
+        "Extracting"
+    };
+
+    // Before the Enhanced pass, so a missing or foreign Kingdom Reborn source fails the task at once.
+    let kr_work = KrSectionWork::prepare(&kr_source(settings), &sources[0], output)?;
+    let ec = kr_work.load_ec_sources(&sources)?;
+    let art_options = TexArtEcAtlasOptions {
+        atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+        atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+        gutter: DEFAULT_ATLAS_GUTTER,
+        compression,
+        upscale: settings.upscale_tex_art_ec,
+        upscale_passes: Vec::new(),
+        upscale_profile,
+        pixel_format: match settings.opt_tex_art_ec {
+            TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+            _ => PagePixelFormat::Rgba8888,
+        },
+        bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_tex_art_ec),
+        bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+    };
+    let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
+        &ec, output, &art_options,
+        |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+        |build_progress| progress.build_progress(build_progress),
+    )?;
+    progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+    let kr = add_kr_art_and_tilemeta_sections(&kr_work, &ec, Some((output, &art_options)), None)?;
+    Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn item art ({} slots, {} items left to the \
+        Enhanced art)", summary.page_count, output.display(), kr.art.populated_slot_count,
+        kr.world_art.equivalents.len()))
+}
+
+fn pack_tex_land_ec(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+    let terrain_overrides_kdl = conversion_table(settings, EC_TERRAIN_OVERRIDES_KDL)?;
+    let transcode_kdl = conversion_table(settings, TERRAIN_TRANSCODE_KDL)?;
+
+    let compression = texture_compression(settings.opt_tex_land_ec, settings.zstd_tex_land_ec);
+    let upscale_profile = load_upscale_profile(settings)?;
+    let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
+        || upscale_config_active(settings.upscale_tex_land_ec_128)
+        || upscale_config_active(settings.upscale_tex_land_ec_256)
+        || upscale_config_active(settings.upscale_tex_land_ec_512)
+        || upscale_profile_active(settings)
+    {
+        "Extracting and upscaling"
+    } else {
+        "Extracting"
+    };
+
+    let land_options = TexLandEcAtlasOptions {
+        atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+        atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+        gutter: DEFAULT_ATLAS_GUTTER,
+        compression,
+        upscale_64: settings.upscale_tex_land_ec_64,
+        upscale_128: settings.upscale_tex_land_ec_128,
+        upscale_256: settings.upscale_tex_land_ec_256,
+        upscale_512: settings.upscale_tex_land_ec_512,
+        upscale_64_passes: Vec::new(),
+        upscale_128_passes: Vec::new(),
+        upscale_256_passes: Vec::new(),
+        upscale_512_passes: Vec::new(),
+        upscale_profile,
+        pixel_format: match settings.opt_tex_land_ec {
+            TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+            _ => PagePixelFormat::Rgba8888,
+        },
+        // The lossy Enhanced land is BC7 without RDO.
+        bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+        transcode_kdl_path: Some(transcode_kdl),
+        terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
+    };
+    let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
+        &sources, output,
+        &land_options,
+        |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+        |build_progress| progress.build_progress(build_progress),
+    )?;
+    progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+    let kr_work = KrSectionWork::prepare(&kr_source(settings), &sources[0], output)?;
+    let kr = add_kr_land_section(&kr_work, &sources[0], output,
+        &TexLandKrPackOptions { atlas: land_options, report: settings.tex_land_kr_report.clone() },
+        |_| {}, |_| {})?;
+    Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn land ({kr})", summary.page_count,
+        output.display()))
+}
+
+fn pack_tilemeta(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    ensure_output_parent(output)?;
+    match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
+        (Some(cc_dir), Some(ec_dir)) => {
+            let kr_work = KrSectionWork::prepare(&kr_source(settings), ec_dir, output)?;
+            let ec = kr_work.load_ec_sources(std::slice::from_ref(ec_dir))?;
+            let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec)?;
+            build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources_with_progress(
+                cc_dir,
+                &ec,
+                &ec_crop_adjustments,
+                output,
+                &TileMetaBuildOptions {
+                    use_ec_radarcol: false,
+                    classic_patches: classic_patch_options(settings),
+                    package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
+                },
+                |build_progress| progress.build_progress(build_progress),
+            )?;
+            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+            add_kr_art_and_tilemeta_sections(&kr_work, &ec, None, Some((cc_dir.as_path(), output)))?;
+        }
+        _ => {
+            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
+            build_tilemeta_uddp_from_sources_with_progress(
+                &sources,
+                output,
+                &TileMetaBuildOptions {
+                    use_ec_radarcol: false,
+                    classic_patches: classic_patch_options(settings),
+                    package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
+                },
+                |build_progress| progress.build_progress(build_progress),
+            )?;
+        }
+    }
+    Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
+}
+
+fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+
+    let compression = texture_compression(
+        settings.opt_mobile_anim_cc,
+        settings.zstd_mobile_anim_cc,
+    );
+    let upscale_profile = load_upscale_profile(settings)?;
+    let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc)
+        || upscale_profile_active(settings)
+    {
+        "Extracting and upscaling"
+    } else {
+        "Extracting"
+    };
+
+    let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
+        &sources,
+        output,
+        &MobileAnimCcAtlasOptions {
+            atlas_width: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+            atlas_height: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+            gutter: CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+            compression,
+            pixel_format: match settings.opt_mobile_anim_cc {
+                TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                _ => PagePixelFormat::Rgba8888,
+            },
+            bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_mobile_anim_cc),
+            bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+            upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
+            upscale_profile,
+        },
+        |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+        |build_progress| progress.build_progress(build_progress),
+    )?;
+    let strides = measure_strides_after_packing(output, settings.measure_strides_mobile_anim_cc, progress)?;
+    Ok(format!(
+        "Wrote {} pages for {} packed frames out of {} total frames to {}{strides}",
+        summary.page_count,
+        summary.packed_frame_count,
+        summary.frame_count,
+        output.display()
+    ))
+}
+
+fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+    // Without the table the packer writes empty item metadata, when the settings allow it.
+    let metadata_path = match conversion_table(settings, EC_MOBILE_ANIMATIONS_KDL) {
+        Ok(path) => Some(path),
+        Err(_) if settings.ec_mobile_anim_allow_missing_kdl => None,
+        Err(error) => return Err(error),
+    };
+
+    let compression = texture_compression(
+        settings.opt_mobile_anim_ec,
+        settings.zstd_mobile_anim_ec,
+    );
+    let upscale_profile = load_upscale_profile(settings)?;
+    let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec)
+        || upscale_profile_active(settings)
+    {
+        "Extracting and upscaling"
+    } else {
+        "Extracting"
+    };
+
+    let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progress(
+        &sources,
+        output,
+        &MobileAnimEcAtlasOptions {
+            atlas_width: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+            atlas_height: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+            gutter: EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+            compression,
+            pixel_format: match settings.opt_mobile_anim_ec {
+                TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                _ => PagePixelFormat::Rgba8888,
+            },
+            bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_mobile_anim_ec),
+            bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+            upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
+            upscale_profile,
+            metadata_path,
+            allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
+        },
+        |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+        |build_progress| progress.build_progress(build_progress),
+    )?;
+    let strides = measure_strides_after_packing(output, settings.measure_strides_mobile_anim_ec, progress)?;
+    Ok(format!(
+        "Wrote {} pages for {} packed frames out of {} total frames and {} animation records for {} bodies ({} without a sequence) to {}{strides}",
+        summary.page_count,
+        summary.packed_frame_count,
+        summary.frame_count,
+        summary.animation_count,
+        summary.body_count,
+        summary.layout.no_sequence_body_count,
+        output.display()
+    ))
+}
+
+fn pack_tex_aux_ec_job(settings: &AppSettings, output: &Path, tilemeta_path: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No EC source dir configured"); }
+    let Some(cc_dir) = settings.cc_dir.clone() else {
+        eyre::bail!("No Classic source dir (tiledata.mul, for the Kingdom Reborn material textures)")
+    };
+    if !tilemeta_path.exists() {
+        eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
+    }
+    ensure_output_parent(output)?;
+    let compression = texture_compression(
+        settings.opt_tex_aux_ec,
+        settings.zstd_tex_aux_ec,
+    );
+    progress.set(AssetPackProgressState::Running, 0.1, "Packing auxiliary EC textures");
+    let summary = pack_tex_aux_ec(
+        &sources,
+        tilemeta_path,
+        output,
+        &TexAuxEcPackOptions {
+            compression,
+            pixel_format: match settings.opt_tex_aux_ec {
+                TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                _ => PagePixelFormat::Rgba8888,
+            },
+            bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_tex_aux_ec),
+            bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+            upscale: settings.upscale_tex_aux_ec,
+            upscale_passes: Vec::new(),
+        },
+    )?;
+    progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+    let kr_work = KrSectionWork::prepare(&kr_source(settings), &sources[0], output)?;
+    let kr = add_kr_aux_section(&kr_work, &sources[0], &cc_dir, tilemeta_path, output)?;
+    Ok(format!(
+        "Packed {} auxiliary textures ({} refs considered) to {}, with the Kingdom Reborn material textures ({}, \
+        {} left to the Enhanced ones)",
+        summary.included,
+        summary.refs_considered,
+        output.display(),
+        kr.kept.len(),
+        kr.equivalents.len()
+    ))
+}
+
+fn pack_map(settings: &AppSettings, output: &Path, map_id: u32) -> eyre::Result<String> {
+    let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+    let summary = convert_map_mul_to_uddp_from_sources_with_patches(
+        &sources,
+        output,
+        map_id,
+        settings.map_preferences[map_id as usize],
+        &classic_patch_options(settings),
+        ChunkCompression::default(),
+    )?;
+    Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
+}
+
+fn pack_statics(settings: &AppSettings, output: &Path, map_id: u32) -> eyre::Result<String> {
+    let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    ensure_output_parent(output)?;
+    let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
+        &sources,
+        output,
+        map_id,
+        &classic_patch_options(settings),
+        ChunkCompression::default(),
+    )?;
+    Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
+}
+
+mod quick_convert;
+
 impl UddConvApp {
     pub fn spawn_task<F>(&self, name: String, task: F)
     where
@@ -917,7 +1326,7 @@ impl UddConvApp {
             cancel: self.cancel_conversion.clone(),
         };
         let reporter_for_task = reporter.clone();
-        let validate = self.settings.validate_after_packing.then_some(packages);
+        let validate = (self.settings.validate_after_packing && !packages.is_empty()).then_some(packages);
         let logs = self.logs.clone();
         reporter.start();
         self.spawn_task(name, move || {
@@ -950,46 +1359,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_cc.uddp");
         self.spawn_asset_task(AssetPackTask::TexArtCc, "CC Art Packing".to_string(), vec![output.clone()], move |progress| {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-
-            let compression = texture_compression(
-                settings.opt_tex_art_cc,
-                settings.zstd_tex_art_cc,
-            );
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_filter_active(settings.upscale_tex_art_cc)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
-                &sources, &output,
-                &TexArtCcAtlasOptions {
-                    atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                    atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                    gutter: DEFAULT_ATLAS_GUTTER,
-                    compression,
-                    upscale: settings.upscale_tex_art_cc,
-                    upscale_passes: Vec::new(),
-                    upscale_profile,
-                    pixel_format: match settings.opt_tex_art_cc {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_art_cc),
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                    source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
-                },
-                &classic_patch_options(&settings),
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
+            pack_tex_art_cc(&settings, &output, &progress)
         });
     }
 
@@ -997,48 +1367,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_cc.uddp");
         self.spawn_asset_task(AssetPackTask::TexLandCc, "CC Texmaps Packing".to_string(), vec![output.clone()], move |progress| {
-            if matches!(settings.opt_tex_land_cc, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd) {
-                eyre::bail!("{CLASSIC_LAND_LOSSY_REFUSAL}");
-            }
-            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-
-            let compression = texture_compression(
-                settings.opt_tex_land_cc,
-                settings.zstd_tex_land_cc,
-            );
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_config_active(settings.upscale_tex_land_cc_64)
-                || upscale_config_active(settings.upscale_tex_land_cc_128)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
-                &sources[0], &output,
-                &TexLandCcAtlasOptions {
-                    atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                    atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                    gutter: DEFAULT_ATLAS_GUTTER,
-                    compression,
-                    upscale_64: settings.upscale_tex_land_cc_64,
-                    upscale_128: settings.upscale_tex_land_cc_128,
-                    upscale_64_passes: Vec::new(),
-                    upscale_128_passes: Vec::new(),
-                    upscale_profile,
-                    pixel_format: PagePixelFormat::Rgba8888,
-                    bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                },
-                &classic_patch_options(&settings),
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
+            pack_tex_land_cc(&settings, &output, &progress)
         });
     }
 
@@ -1046,51 +1375,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_ec.uddp");
         self.spawn_asset_task(AssetPackTask::TexArtEc, "EC Art Packing".to_string(), vec![output.clone()], move |progress| {
-            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-
-            let compression = texture_compression(
-                settings.opt_tex_art_ec,
-                settings.zstd_tex_art_ec,
-            );
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_filter_active(settings.upscale_tex_art_ec)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            // Before the Enhanced pass, so a missing or foreign Kingdom Reborn source fails the task at once.
-            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
-            let ec = kr_work.load_ec_sources(&sources)?;
-            let art_options = TexArtEcAtlasOptions {
-                atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                gutter: DEFAULT_ATLAS_GUTTER,
-                compression,
-                upscale: settings.upscale_tex_art_ec,
-                upscale_passes: Vec::new(),
-                upscale_profile,
-                pixel_format: match settings.opt_tex_art_ec {
-                    TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                    _ => PagePixelFormat::Rgba8888,
-                },
-                bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_art_ec),
-                bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-            };
-            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
-                &ec, &output, &art_options,
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-            let kr = add_kr_art_and_tilemeta_sections(&kr_work, &ec, Some((&output, &art_options)), None)?;
-            Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn item art ({} slots, {} items left to the \
-                Enhanced art)", summary.page_count, output.display(), kr.art.populated_slot_count,
-                kr.world_art.equivalents.len()))
+            pack_tex_art_ec(&settings, &output, &progress)
         });
     }
 
@@ -1098,65 +1383,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_ec.uddp");
         self.spawn_asset_task(AssetPackTask::TexLandEc, "EC Land Packing".to_string(), vec![output.clone()], move |progress| {
-            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-            let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
-            let transcode_kdl = conversion_table(&settings, TERRAIN_TRANSCODE_KDL)?;
-
-            let compression = texture_compression(
-                settings.opt_tex_land_ec,
-                settings.zstd_tex_land_ec,
-            );
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
-                || upscale_config_active(settings.upscale_tex_land_ec_128)
-                || upscale_config_active(settings.upscale_tex_land_ec_256)
-                || upscale_config_active(settings.upscale_tex_land_ec_512)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            let land_options = TexLandEcAtlasOptions {
-                atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                gutter: DEFAULT_ATLAS_GUTTER,
-                compression,
-                upscale_64: settings.upscale_tex_land_ec_64,
-                upscale_128: settings.upscale_tex_land_ec_128,
-                upscale_256: settings.upscale_tex_land_ec_256,
-                upscale_512: settings.upscale_tex_land_ec_512,
-                upscale_64_passes: Vec::new(),
-                upscale_128_passes: Vec::new(),
-                upscale_256_passes: Vec::new(),
-                upscale_512_passes: Vec::new(),
-                upscale_profile,
-                pixel_format: match settings.opt_tex_land_ec {
-                    TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                    _ => PagePixelFormat::Rgba8888,
-                },
-                // The lossy Enhanced land is BC7 without RDO.
-                bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
-                bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                transcode_kdl_path: Some(transcode_kdl),
-                terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
-            };
-            let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
-                &sources, &output,
-                &land_options,
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
-            let kr = add_kr_land_section(&kr_work, &sources[0], &output,
-                &TexLandKrPackOptions { atlas: land_options, report: settings.tex_land_kr_report.clone() },
-                |_| {}, |_| {})?;
-            Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn land ({kr})", summary.page_count,
-                output.display()))
+            pack_tex_land_ec(&settings, &output, &progress)
         });
     }
 
@@ -1164,43 +1391,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tilemeta.uddp");
         self.spawn_asset_task(AssetPackTask::TileMeta, "Tilemeta Packing".to_string(), vec![output.clone()], move |progress| {
-            ensure_output_parent(&output)?;
-            match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
-                (Some(cc_dir), Some(ec_dir)) => {
-                    let kr_work = KrSectionWork::prepare(&kr_source(&settings), ec_dir, &output)?;
-                    let ec = kr_work.load_ec_sources(std::slice::from_ref(ec_dir))?;
-                    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec)?;
-                    build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources_with_progress(
-                        cc_dir,
-                        &ec,
-                        &ec_crop_adjustments,
-                        &output,
-                        &TileMetaBuildOptions {
-                            use_ec_radarcol: false,
-                            classic_patches: classic_patch_options(&settings),
-                            package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
-                        },
-                        |build_progress| progress.build_progress(build_progress),
-                    )?;
-                    progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-                    add_kr_art_and_tilemeta_sections(&kr_work, &ec, None, Some((cc_dir.as_path(), output.as_path())))?;
-                }
-                _ => {
-                    let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
-                    if sources.is_empty() { eyre::bail!("No source dirs"); }
-                    build_tilemeta_uddp_from_sources_with_progress(
-                        &sources,
-                        &output,
-                        &TileMetaBuildOptions {
-                            use_ec_radarcol: false,
-                            classic_patches: classic_patch_options(&settings),
-                            package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
-                        },
-                        |build_progress| progress.build_progress(build_progress),
-                    )?;
-                }
-            }
-            Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
+            pack_tilemeta(&settings, &output, &progress)
         });
     }
 
@@ -1208,51 +1399,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("mobile_anim_cc.uddp");
         self.spawn_asset_task(AssetPackTask::MobileAnimCc, "CC Mobile Animation Packing".to_string(), vec![output.clone()], move |progress| {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-
-            let compression = texture_compression(
-                settings.opt_mobile_anim_cc,
-                settings.zstd_mobile_anim_cc,
-            );
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
-                &sources,
-                &output,
-                &MobileAnimCcAtlasOptions {
-                    atlas_width: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
-                    atlas_height: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
-                    gutter: CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
-                    compression,
-                    pixel_format: match settings.opt_mobile_anim_cc {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_mobile_anim_cc),
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                    upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
-                    upscale_profile,
-                },
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            let strides = measure_strides_after_packing(&output, settings.measure_strides_mobile_anim_cc, &progress)?;
-            Ok(format!(
-                "Wrote {} pages for {} packed frames out of {} total frames to {}{strides}",
-                summary.page_count,
-                summary.packed_frame_count,
-                summary.frame_count,
-                output.display()
-            ))
+            pack_mobile_anim_cc(&settings, &output, &progress)
         });
     }
 
@@ -1260,62 +1407,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("mobile_anim_ec.uddp");
         self.spawn_asset_task(AssetPackTask::MobileAnimEc, "EC Mobile Animation Packing".to_string(), vec![output.clone()], move |progress| {
-            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-            // Without the table the packer writes empty item metadata, when the settings allow it.
-            let metadata_path = match conversion_table(&settings, EC_MOBILE_ANIMATIONS_KDL) {
-                Ok(path) => Some(path),
-                Err(_) if settings.ec_mobile_anim_allow_missing_kdl => None,
-                Err(error) => return Err(error),
-            };
-
-            let compression = texture_compression(
-                settings.opt_mobile_anim_ec,
-                settings.zstd_mobile_anim_ec,
-            );
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progress(
-                &sources,
-                &output,
-                &MobileAnimEcAtlasOptions {
-                    atlas_width: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
-                    atlas_height: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
-                    gutter: EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
-                    compression,
-                    pixel_format: match settings.opt_mobile_anim_ec {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_mobile_anim_ec),
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                    upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
-                    upscale_profile,
-                    metadata_path,
-                    allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
-                },
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            let strides = measure_strides_after_packing(&output, settings.measure_strides_mobile_anim_ec, &progress)?;
-            Ok(format!(
-                "Wrote {} pages for {} packed frames out of {} total frames and {} animation records for {} bodies ({} without a sequence) to {}{strides}",
-                summary.page_count,
-                summary.packed_frame_count,
-                summary.frame_count,
-                summary.animation_count,
-                summary.body_count,
-                summary.layout.no_sequence_body_count,
-                output.display()
-            ))
+            pack_mobile_anim_ec(&settings, &output, &progress)
         });
     }
 
@@ -1324,48 +1416,7 @@ impl UddConvApp {
         let tilemeta_path = self.get_input_uddp_path("tilemeta.uddp");
         let output = self.get_output_path("tex_aux_ec.uddp");
         self.spawn_asset_task(AssetPackTask::TexAuxEc, "EC Auxiliary Textures Packing".to_string(), vec![output.clone()], move |progress| {
-            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No EC source dir configured"); }
-            let Some(cc_dir) = settings.cc_dir.clone() else {
-                eyre::bail!("No Classic source dir (tiledata.mul, for the Kingdom Reborn material textures)")
-            };
-            if !tilemeta_path.exists() {
-                eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
-            }
-            ensure_output_parent(&output)?;
-            let compression = texture_compression(
-                settings.opt_tex_aux_ec,
-                settings.zstd_tex_aux_ec,
-            );
-            progress.set(AssetPackProgressState::Running, 0.1, "Packing auxiliary EC textures");
-            let summary = pack_tex_aux_ec(
-                &sources,
-                &tilemeta_path,
-                &output,
-                &TexAuxEcPackOptions {
-                    compression,
-                    pixel_format: match settings.opt_tex_aux_ec {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_aux_ec),
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                    upscale: settings.upscale_tex_aux_ec,
-                    upscale_passes: Vec::new(),
-                },
-            )?;
-            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
-            let kr = add_kr_aux_section(&kr_work, &sources[0], &cc_dir, &tilemeta_path, &output)?;
-            Ok(format!(
-                "Packed {} auxiliary textures ({} refs considered) to {}, with the Kingdom Reborn material textures ({}, \
-                {} left to the Enhanced ones)",
-                summary.included,
-                summary.refs_considered,
-                output.display(),
-                kr.kept.len(),
-                kr.equivalents.len()
-            ))
+            pack_tex_aux_ec_job(&settings, &output, &tilemeta_path, &progress)
         });
     }
 
@@ -1469,18 +1520,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("map{}.uddp", map_id));
         self.spawn_packing_task(format!("Map {} Packing", map_id), vec![output.clone()], move || {
-            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-            let summary = convert_map_mul_to_uddp_from_sources_with_patches(
-                &sources,
-                &output,
-                map_id,
-                settings.map_preferences[map_id as usize],
-                &classic_patch_options(&settings),
-                ChunkCompression::default(),
-            )?;
-            Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
+            pack_map(&settings, &output, map_id)
         });
     }
 
@@ -1488,17 +1528,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("statics{}.uddp", map_id));
         self.spawn_packing_task(format!("Statics {} Packing", map_id), vec![output.clone()], move || {
-            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            ensure_output_parent(&output)?;
-            let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
-                &sources,
-                &output,
-                map_id,
-                &classic_patch_options(&settings),
-                ChunkCompression::default(),
-            )?;
-            Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
+            pack_statics(&settings, &output, map_id)
         });
     }
 

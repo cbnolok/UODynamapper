@@ -277,6 +277,7 @@ pub struct LogMessage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AssetPackTask {
+    QuickConvert,
     TexArtCc,
     TexLandCc,
     TexArtEc,
@@ -354,6 +355,7 @@ pub struct UpscalePreviewState {
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum Tab {
+    QuickConvert,
     Sources,
     Assets,
     World,
