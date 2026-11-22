@@ -62,32 +62,119 @@ pub fn measure_planted_foot<const FACINGS: usize>(clips: &[Option<StrideClip>; F
 /// The side stride of one facing's clip; none when it travels straight up or down the screen, or when too few pairs
 /// find a planted foot.
 pub fn clip_side_tiles(clip: &StrideClip) -> Option<f32> {
-    if clip.facing >= FACING_COUNT || clip.frames.len() < 2 {
+    let facing = FacingClip::of(clip)?;
+    let count = facing.canvas.frames.len();
+    let travels: Vec<f32> = (0..count).filter_map(|from| facing.pair_travel(from, None)).collect();
+    facing.side_tiles(&travels)
+}
+
+/// The side stride of a clip of `frames` frames from the travels (in screen px) of the pairs taken: their median times
+/// the frames, over `side_tile_x`, the screen x of a side tile along the facing ([`ClipInspection::side_tile_x`]);
+/// none without a travel. The measurement takes every pair that found one; a stride counted on the pairs seen to
+/// follow the planted foot takes those alone.
+pub fn side_tiles_of_pairs(travels: &[f32], frames: usize, side_tile_x: f32) -> Option<f32> {
+    if travels.is_empty() {
         return None;
     }
-    let (mut travel_x, travel_y, _) = travel_direction(clip.facing);
-    if clip.mirrored {
-        travel_x = -travel_x;
+    let mut travels = travels.to_vec();
+    Some(percentile(&mut travels, PERCENT / 2.0) * frames as f32 / side_tile_x)
+}
+
+/// What the measurement sees of one facing's clip, pair by pair (`udd-cli tool strides inspect`): to check by eye
+/// which pairs follow a planted foot and which a wing, a tail or a robe, and to count a stride on the pairs that do
+/// ([`side_tiles_of_pairs`]).
+pub struct ClipInspection {
+    /// The canvas the frames sit on, each on its anchor.
+    pub width: i32,
+    pub height: i32,
+    /// Each frame's straight-alpha RGBA rows on the canvas.
+    pub frames: Vec<Vec<u8>>,
+    /// Whether each canvas pixel lies in the ground band.
+    pub band: Vec<bool>,
+    /// The screen x of a side tile along the facing.
+    pub side_tile_x: f32,
+    /// Each pair of frames, the last with the first too.
+    pub pairs: Vec<PairInspection>,
+    /// The facing's side stride, as [`clip_side_tiles`] gives it.
+    pub stride: Option<f32>,
+}
+
+/// A pair of frames as the measurement sees it.
+pub struct PairInspection {
+    pub from: usize,
+    pub to: usize,
+    /// The planted foot's backward travel in screen px; none when too few pixels vote.
+    pub travel_px: Option<f32>,
+    /// The opaque ground band pixels of the first frame.
+    pub band_pixels: usize,
+    /// The canvas pixels of the first frame whose votes refined the travel (the most voted shift and its neighbours
+    /// within [`REFINE_RADIUS_PX`]): what the measurement followed.
+    pub voters: Vec<usize>,
+}
+
+/// [`ClipInspection`] of a facing's clip; none where [`clip_side_tiles`] cannot measure it.
+pub fn inspect_clip(clip: &StrideClip) -> Option<ClipInspection> {
+    let facing = FacingClip::of(clip)?;
+    let count = facing.canvas.frames.len();
+    let pairs: Vec<PairInspection> = (0..count).map(|from| {
+        let mut voters = Vec::new();
+        let travel_px = facing.pair_travel(from, Some(&mut voters));
+        let frame = &facing.canvas.frames[from];
+        let band_pixels = (0..facing.band.len()).filter(|&at| facing.band[at] && Canvas::opaque(frame, at)).count();
+        PairInspection { from, to: (from + 1) % count, travel_px, band_pixels, voters }
+    }).collect();
+    let travels: Vec<f32> = pairs.iter().filter_map(|pair| pair.travel_px).collect();
+    let stride = facing.side_tiles(&travels);
+    let FacingClip { canvas, band, side_tile_x, .. } = facing;
+    Some(ClipInspection { width: canvas.width, height: canvas.height, frames: canvas.frames, band, side_tile_x,
+        pairs, stride })
+}
+
+/// A facing's clip on its canvas, set up for the pairs' search.
+struct FacingClip {
+    canvas: Canvas,
+    band: Vec<bool>,
+    shifts: Vec<(i32, i32)>,
+    backward_x: i32,
+    side_tile_x: f32,
+}
+
+impl FacingClip {
+    fn of(clip: &StrideClip) -> Option<Self> {
+        if clip.facing >= FACING_COUNT || clip.frames.len() < 2 {
+            return None;
+        }
+        let (mut travel_x, travel_y, _) = travel_direction(clip.facing);
+        if clip.mirrored {
+            travel_x = -travel_x;
+        }
+        if travel_x.abs() < f32::EPSILON {
+            return None;
+        }
+        let canvas = Canvas::of(clip)?;
+        let geometry = Geometry::new(travel_x, travel_y);
+        let band = canvas.ground_band(&geometry);
+        // The screen x of a side tile along the travel: the side facing's 44 px, a diagonal's 22 px times the square
+        // root of two.
+        let side_tile_x = 2.0 * HALF_TILE_PX * travel_x.abs();
+        Some(Self { canvas, band, shifts: geometry.shifts(), backward_x: geometry.backward_x, side_tile_x })
     }
-    if travel_x.abs() < f32::EPSILON {
-        return None;
+
+    /// The travel from frame `from` to the next (the last to the first), the pixels whose votes refined it put in
+    /// `voters` when given.
+    fn pair_travel(&self, from: usize, voters: Option<&mut Vec<usize>>) -> Option<f32> {
+        let to = (from + 1) % self.canvas.frames.len();
+        self.canvas.pair_travel(from, to, &self.band, &self.shifts, self.backward_x, voters)
     }
-    let canvas = Canvas::of(clip)?;
-    let geometry = Geometry::new(travel_x, travel_y);
-    let band = canvas.ground_band(&geometry);
-    let shifts = geometry.shifts();
-    let count = canvas.frames.len();
-    let mut travels: Vec<f32> = (0..count)
-        .filter_map(|index| canvas.pair_travel(index, (index + 1) % count, &band, &shifts, geometry.backward_x))
-        .collect();
-    if (travels.len() as f32) < MIN_PAIR_FRACTION * count as f32 || travels.is_empty() {
-        return None;
+
+    /// The side stride from the travels of the pairs that found one: none when they are too few.
+    fn side_tiles(&self, travels: &[f32]) -> Option<f32> {
+        let count = self.canvas.frames.len();
+        if (travels.len() as f32) < MIN_PAIR_FRACTION * count as f32 {
+            return None;
+        }
+        side_tiles_of_pairs(travels, count, self.side_tile_x)
     }
-    let median = percentile(&mut travels, PERCENT / 2.0);
-    // The screen x of a side tile along the travel: the side facing's 44 px, a diagonal's 22 px times the square
-    // root of two.
-    let side_tile_x = 2.0 * HALF_TILE_PX * travel_x.abs();
-    Some(median * count as f32 / side_tile_x)
 }
 
 /// A facing's directions in the stored frames.
@@ -215,9 +302,10 @@ impl Canvas {
     }
 
     /// The backward shift most ground pixels of frame `from` vote for into frame `to`, in pixels, refined by its
-    /// neighbours' votes.
-    fn pair_travel(&self, from: usize, to: usize, band: &[bool], shifts: &[(i32, i32)], backward_x: i32)
-        -> Option<f32> {
+    /// neighbours' votes; the pixels whose votes refined it put in `voters` when given.
+    fn pair_travel(&self, from: usize, to: usize, band: &[bool], shifts: &[(i32, i32)], backward_x: i32,
+        mut voters: Option<&mut Vec<usize>>) -> Option<f32> {
+        let mut votes_of = voters.as_ref().map(|_| Vec::new());
         let (first, second) = (&self.frames[from], &self.frames[to]);
         let mut votes = vec![0usize; (MAX_SHIFT_PX + 1) as usize];
         for at in (0..band.len()).filter(|&at| band[at] && Self::opaque(first, at)) {
@@ -233,6 +321,9 @@ impl Canvas {
             }
             if let Some((_, back)) = best.filter(|&(_, back)| back >= MIN_VOTE_SHIFT_PX) {
                 votes[back as usize] += 1;
+                if let Some(votes_of) = votes_of.as_mut() {
+                    votes_of.push((at, back as usize));
+                }
             }
         }
         // The most voted shift; the shorter of a tie.
@@ -241,9 +332,12 @@ impl Canvas {
             return None;
         }
         let near = back.saturating_sub(REFINE_RADIUS_PX)..=(back + REFINE_RADIUS_PX).min(votes.len() - 1);
-        let (sum, weight) = near.fold((0usize, 0usize), |(sum, weight), shift| {
+        let (sum, weight) = near.clone().fold((0usize, 0usize), |(sum, weight), shift| {
             (sum + shift * votes[shift], weight + votes[shift])
         });
+        if let (Some(voters), Some(votes_of)) = (voters.as_deref_mut(), votes_of) {
+            voters.extend(votes_of.into_iter().filter(|(_, shift)| near.contains(shift)).map(|(at, _)| at));
+        }
         Some(sum as f32 / weight as f32)
     }
 }
@@ -342,5 +436,30 @@ mod tests {
         let stride = measurement.stride.expect("a stride");
         // The side's 60 / 44 and the south's 60 / 31.1: the median of two is their mean.
         assert!((stride - (60.0 / 44.0 + 60.0 / (22.0 * 2f32.sqrt())) / 2.0).abs() < 0.03, "{stride}");
+    }
+
+    /// The inspection sees what the measurement does: the same stride, the planted pairs' 6 px followed on the foot
+    /// (the voters lie in its rows, under the body), and a stride counted on the planted pairs alone.
+    #[test]
+    fn the_inspection_follows_the_planted_foot_as_the_measurement_does() {
+        const PLANTED: usize = 8;
+        let frames = walk(10, PLANTED, (6, 0));
+        let side = clip(&frames, 5);
+        let inspection = inspect_clip(&side).expect("an inspection");
+        assert_eq!(inspection.stride, clip_side_tiles(&side));
+        assert_eq!(inspection.pairs.len(), frames.len());
+        let planted = &inspection.pairs[..PLANTED - 1];
+        for pair in planted {
+            let travel = pair.travel_px.expect("a planted pair");
+            assert!((travel - 6.0).abs() < 0.5, "pair {}: {travel}", pair.from);
+            assert!(!pair.voters.is_empty() && pair.voters.len() <= pair.band_pixels, "pair {}", pair.from);
+            // The frames sit the canvas margin down (their anchors all alike).
+            let frame_row = |at: usize| at as i32 / inspection.width - (MAX_SHIFT_PX + PATCH_RADIUS + 1);
+            assert!(pair.voters.iter().all(|&at| frame_row(at) >= BODY_ROWS.end), "pair {}", pair.from);
+        }
+        let travels: Vec<f32> = planted.iter().filter_map(|pair| pair.travel_px).collect();
+        let tiles = side_tiles_of_pairs(&travels, frames.len(), inspection.side_tile_x).expect("a stride");
+        assert!((tiles - 60.0 / 44.0).abs() < 0.02, "{tiles}");
+        assert_eq!(side_tiles_of_pairs(&[], frames.len(), inspection.side_tile_x), None);
     }
 }

@@ -12,10 +12,11 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use udd_assets::animation::mobile_strides::{
     format_stride_table, load_mobile_anim_clips, parse_stride_table, plan_strides, stride_clip_hashes,
-    stride_table_fields, write_package_strides, MobileStrideRecord,
+    stride_table_fields, write_package_strides, MobileStrideRecord, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
 use udd_conv::animation::mobile_strides::{
-    hash_threads, measure_package_strides, MeasureOptions, StrideMethod, StrideProgress,
+    hash_threads, inspect_side_clips, measure_package_strides, side_tiles_of_pairs, ClipInspection, MeasureOptions,
+    StrideMethod, StrideProgress,
 };
 
 /// Which clips `strides measure` measures.
@@ -94,6 +95,29 @@ pub enum StridesCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Show what the planted foot follows on a clip's side facings (south, south-west, west), pair by pair: each
+    /// pair's backward travel in screen px, its ground band pixels and the pixels that voted for the travel, and the
+    /// facing's stride. With `--pair`, also the stride counted on those pairs alone (their median travel times the
+    /// frames, over a side tile's screen x), the count for a clip whose other pairs follow a wing, a tail or a robe.
+    /// Any action of the body, measured or not.
+    Inspect {
+        file: PathBuf,
+        #[arg(long)]
+        body: u32,
+        #[arg(long)]
+        action: u16,
+        /// Only this side facing, 4, 5 or 6 (repeatable); by default all three.
+        #[arg(long = "facing")]
+        facings: Vec<u8>,
+        /// Count a stride on the pairs starting at these frames (repeatable) of each facing shown.
+        #[arg(long = "pair")]
+        pairs: Vec<usize>,
+        /// Write each facing's frames side by side into this folder as `strip_<cc|ec>_<body>_<action>_<facing>.png`:
+        /// the ground band tinted blue, the pixels that voted for the pair's travel red, and under each frame a bar
+        /// the pair's travel long (grey without one).
+        #[arg(long)]
+        strip: Option<PathBuf>,
+    },
     /// Hash every clip a stride is measured for and say which strides are stale: unchanged, changed (other frames
     /// now), new (no stride yet), removed (the clip is gone), and the clips to measure.
     Status {
@@ -113,8 +137,145 @@ pub fn run(command: StridesCommand) -> eyre::Result<()> {
         StridesCommand::Import { file, table, trust_unhashed, output } => {
             import(&file, &table, trust_unhashed, output.as_deref().unwrap_or(&file))
         }
+        StridesCommand::Inspect { file, body, action, facings, pairs, strip } => {
+            inspect(&file, body, action, &facings, &pairs, strip.as_deref())
+        }
         StridesCommand::Status { file, list } => status(&file, list),
     }
+}
+
+/// The side facings' names, in the order of `STRIDE_FACINGS`.
+const FACING_NAMES: [&str; STRIDE_FACING_COUNT] = ["south", "south-west", "west"];
+/// `inspect --strip`: each canvas pixel drawn this many times over, and in canvas px the room kept around the
+/// silhouettes, the travel bar's height under each frame and the gap between frames.
+const STRIP_SCALE: u32 = 2;
+const STRIP_PAD_PX: i32 = 4;
+const STRIP_BAR_PX: u32 = 3;
+const STRIP_GAP_PX: u32 = 2;
+/// The strip's colours: behind the frames, behind them in the ground band, the voting pixels (blended over the frame
+/// at [`STRIP_VOTER_OPACITY`]), a pair's travel bar, and the bar of a pair without a travel.
+const STRIP_BACKDROP: [u8; 3] = [48, 48, 48];
+const STRIP_BAND: [u8; 3] = [36, 60, 120];
+const STRIP_VOTER: [u8; 3] = [255, 32, 32];
+const STRIP_VOTER_OPACITY: f32 = 0.75;
+const STRIP_TRAVEL: [u8; 3] = [64, 220, 96];
+const STRIP_NO_TRAVEL: [u8; 3] = [128, 128, 128];
+/// A frame pixel counts toward the silhouette's bounds above this alpha.
+const STRIP_OPAQUE_ALPHA: u8 = 127;
+const MAX_ALPHA: f32 = 255.0;
+const RGBA_BYTES: usize = 4;
+const RGB_BYTES: usize = 3;
+
+fn tiles_text(tiles: Option<f32>) -> String {
+    tiles.map_or("none".to_string(), |tiles| format!("{tiles:.3} tiles"))
+}
+
+fn inspect(file: &Path, body: u32, action: u16, facings: &[u8], pairs: &[usize], strip: Option<&Path>)
+    -> eyre::Result<()> {
+    if let Some(facing) = facings.iter().find(|facing| !STRIDE_FACINGS.contains(facing)) {
+        eyre::bail!("facing {facing} is not a side facing ({STRIDE_FACINGS:?})");
+    }
+    let package = load_mobile_anim_clips(file)?;
+    let source = package.stride_source().token();
+    let clips = package.side_clips(body, action).wrap_err_with(|| format!("body {body} action {action}"))?;
+    drop(package);
+    if let Some(folder) = strip {
+        std::fs::create_dir_all(folder).wrap_err_with(|| format!("create {}", folder.display()))?;
+    }
+    for ((facing, name), inspection) in STRIDE_FACINGS.iter().zip(FACING_NAMES).zip(inspect_side_clips(&clips)) {
+        if !facings.is_empty() && !facings.contains(facing) {
+            continue;
+        }
+        let clip = format!("{source} body {body} action {action} facing {facing} ({name})");
+        let Some(inspection) = inspection else {
+            println!("{clip}: nothing to measure (no frames, fewer than two, or no travel across the screen)");
+            continue;
+        };
+        let frames = inspection.frames.len();
+        println!("{clip}: {frames} frames, a side tile {:.1} px across; stride {}", inspection.side_tile_x,
+            tiles_text(inspection.stride));
+        println!("pair\ttravel_px\tvoters\tband_px");
+        for pair in &inspection.pairs {
+            let travel = pair.travel_px.map_or("-".to_string(), |travel| format!("{travel:.2}"));
+            println!("{}-{}\t{travel}\t{}\t{}", pair.from, pair.to, pair.voters.len(), pair.band_pixels);
+        }
+        if !pairs.is_empty() {
+            if let Some(pair) = pairs.iter().find(|&&pair| pair >= frames) {
+                eyre::bail!("{clip} has no pair {pair}: its pairs start at 0 to {}", frames - 1);
+            }
+            let travels: Vec<f32> = inspection.pairs.iter().filter(|pair| pairs.contains(&pair.from))
+                .filter_map(|pair| pair.travel_px).collect();
+            println!("pairs {pairs:?}: {} of {} with a travel; stride {}", travels.len(), pairs.len(),
+                tiles_text(side_tiles_of_pairs(&travels, frames, inspection.side_tile_x)));
+        }
+        if let Some(folder) = strip {
+            let path = folder.join(format!("strip_{source}_{body}_{action}_{facing}.png"));
+            write_strip(&inspection, &path)?;
+            info!("Wrote {}.", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// The frames of `inspection` side by side, cropped to the silhouettes: the ground band tinted, the pixels that
+/// voted for each pair's travel marked on its first frame, and under each frame a bar its pair's travel long.
+fn write_strip(inspection: &ClipInspection, path: &Path) -> eyre::Result<()> {
+    let width = inspection.width;
+    let opaque = |frame: &[u8], at: usize| frame[at * RGBA_BYTES + 3] > STRIP_OPAQUE_ALPHA;
+    let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for frame in &inspection.frames {
+        for at in (0..frame.len() / RGBA_BYTES).filter(|&at| opaque(frame, at)) {
+            let (x, y) = (at as i32 % width, at as i32 / width);
+            (left, top, right, bottom) = (left.min(x), top.min(y), right.max(x), bottom.max(y));
+        }
+    }
+    eyre::ensure!(left <= right, "the clip has no opaque pixel");
+    let (left, top) = ((left - STRIP_PAD_PX).max(0), (top - STRIP_PAD_PX).max(0));
+    let (right, bottom) = ((right + STRIP_PAD_PX).min(width - 1), (bottom + STRIP_PAD_PX).min(inspection.height - 1));
+    let (panel_w, panel_h) = ((right - left + 1) as u32, (bottom - top + 1) as u32);
+    let panel_stride = panel_w + STRIP_GAP_PX;
+    let (strip_w, strip_h) =
+        (panel_stride * inspection.frames.len() as u32 * STRIP_SCALE, (panel_h + STRIP_BAR_PX) * STRIP_SCALE);
+    let mut rgb = vec![0u8; (strip_w * strip_h) as usize * RGB_BYTES];
+    let mut put = |x: u32, y: u32, colour: [u8; RGB_BYTES]| {
+        for dy in 0..STRIP_SCALE {
+            for dx in 0..STRIP_SCALE {
+                let at = ((y * STRIP_SCALE + dy) * strip_w + x * STRIP_SCALE + dx) as usize * RGB_BYTES;
+                rgb[at..at + RGB_BYTES].copy_from_slice(&colour);
+            }
+        }
+    };
+    let blend = |under: [u8; RGB_BYTES], over: [u8; RGB_BYTES], opacity: f32| -> [u8; RGB_BYTES] {
+        std::array::from_fn(|channel| (f32::from(under[channel]) * (1.0 - opacity)
+            + f32::from(over[channel]) * opacity).round() as u8)
+    };
+    for (index, (frame, pair)) in inspection.frames.iter().zip(&inspection.pairs).enumerate() {
+        let panel_x = index as u32 * panel_stride;
+        let voters: BTreeSet<usize> = pair.voters.iter().copied().collect();
+        for y in top..=bottom {
+            for x in left..=right {
+                let at = (y * width + x) as usize;
+                let pixel = &frame[at * RGBA_BYTES..(at + 1) * RGBA_BYTES];
+                let behind = if inspection.band[at] { STRIP_BAND } else { STRIP_BACKDROP };
+                let mut colour = blend(behind, [pixel[0], pixel[1], pixel[2]], f32::from(pixel[3]) / MAX_ALPHA);
+                if voters.contains(&at) {
+                    colour = blend(colour, STRIP_VOTER, STRIP_VOTER_OPACITY);
+                }
+                put(panel_x + (x - left) as u32, (y - top) as u32, colour);
+            }
+        }
+        let (length, colour) = match pair.travel_px {
+            Some(travel) => ((travel.round() as u32).min(panel_w), STRIP_TRAVEL),
+            None => (panel_w, STRIP_NO_TRAVEL),
+        };
+        for y in panel_h..panel_h + STRIP_BAR_PX {
+            for x in 0..length {
+                put(panel_x + x, y, colour);
+            }
+        }
+    }
+    image::save_buffer_with_format(path, &rgb, strip_w, strip_h, image::ColorType::Rgb8, image::ImageFormat::Png)
+        .wrap_err_with(|| format!("write {}", path.display()))
 }
 
 fn measure(mode: MeasureMode, method: MeasureMethod, files: &[PathBuf], bodies: Vec<u32>, output: Option<&Path>,

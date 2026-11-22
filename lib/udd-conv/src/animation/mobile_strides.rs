@@ -25,7 +25,8 @@ use udd_assets::animation::mobile_strides::{
     stride_clip_hashes, strides_still_matching, write_package_strides, MobileAnimClips, MobileClip,
     MobileStrideRecord, StridePlan, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
-use uot_gpu_compute::strides::planted_foot::measure_planted_foot;
+use uot_gpu_compute::strides::planted_foot::{inspect_clip, measure_planted_foot};
+pub use uot_gpu_compute::strides::planted_foot::{side_tiles_of_pairs, ClipInspection, PairInspection};
 use uot_gpu_compute::strides::{Measurement, StrideClip, StrideFrame, StrideMeasurer};
 
 /// The strides of the package at `path` (none without one, or when it does not read, which is logged): read before a
@@ -315,6 +316,13 @@ pub fn measure_side_clips(measurer: &mut StrideMeasurer, clips: &[Option<MobileC
 /// Measures a clip's side facings, as [`MobileAnimClips::side_clips`] gives them, by the planted foot.
 pub fn measure_side_clips_planted(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> SideMeasurement {
     measure_planted_foot(&stride_clips(clips))
+}
+
+/// What the planted foot sees of each of a clip's side facings, pair by pair ([`inspect_clip`]), to check which pairs
+/// follow the foot and count a stride on those (`udd-cli tool strides inspect`).
+pub fn inspect_side_clips(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT])
+    -> [Option<ClipInspection>; STRIDE_FACING_COUNT] {
+    stride_clips(clips).map(|clip| clip.as_ref().and_then(inspect_clip))
 }
 
 fn stride_clips(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> [Option<StrideClip<'_>>; STRIDE_FACING_COUNT] {
