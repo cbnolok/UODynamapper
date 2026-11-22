@@ -33,8 +33,9 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
+use crate::atlas::bc7_rdo_device::on_bc7_rdo_device;
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_and_stage_progress, Bc7ProgressStage,
+    encode_for_vram_with_bc7_rdo_options_and_stage_progress, Bc7RdoOptions, Bc7ProgressStage,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::{
@@ -549,13 +550,12 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
                 let encoded =
-                    encode_for_vram_with_bc7_rdo_and_stage_progress(
+                    encode_for_vram_with_bc7_rdo_options_and_stage_progress(
                         &page.pixels,
                         extent,
                         RawImageFormat::Rgba8888,
                         encoding,
-                        options.bc7_rdo_lambda,
-                        options.bc7_rdo_lookback_blocks,
+                        &on_bc7_rdo_device(Bc7RdoOptions::new(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks)),
                         report_bc7_progress,
                     )
                         .map_err(|e| {

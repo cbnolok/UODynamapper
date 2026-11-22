@@ -97,6 +97,7 @@ use udd_conv::{
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
     CompressionFlag, PagePixelFormat,
 };
+use udd_conv::atlas::bc7_rdo_device::{set_bc7_rdo_device, Bc7RdoDevice};
 use udd_conv::bc7::NO_BC7_RDO_LAMBDA;
 
 /// The level of a bare `--zstd` where it adds a pass over another encoding (BC7, raw texture pages).
@@ -127,6 +128,31 @@ Nothing is written into --ccdir or --ecdir unless an output path points there.";
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[arg(long, global = true, value_enum, default_value_t = CliBc7RdoDevice::Auto, help = BC7_RDO_DEVICE_HELP)]
+    bc7_rdo_device: CliBc7RdoDevice,
+}
+
+const BC7_RDO_DEVICE_HELP: &str = "Where --bc7-rdo runs: auto (the GPU when a wgpu adapter is there, else the CPU), \
+cpu, or gpu (failing without one). The GPU RDO has the CPU's price model and comes to about its size and error, with \
+blocks of its own.";
+
+/// `--bc7-rdo-device`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CliBc7RdoDevice {
+    #[default]
+    Auto,
+    Cpu,
+    Gpu,
+}
+
+impl From<CliBc7RdoDevice> for Bc7RdoDevice {
+    fn from(device: CliBc7RdoDevice) -> Self {
+        match device {
+            CliBc7RdoDevice::Auto => Bc7RdoDevice::Auto,
+            CliBc7RdoDevice::Cpu => Bc7RdoDevice::Cpu,
+            CliBc7RdoDevice::Gpu => Bc7RdoDevice::Gpu,
+        }
+    }
 }
 
 #[derive(Args, Clone)]
@@ -1524,7 +1550,9 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    match Cli::parse_from(args).command {
+    let cli = Cli::parse_from(args);
+    set_bc7_rdo_device(cli.bc7_rdo_device.into());
+    match cli.command {
         Commands::PackArt {
             source_dirs: source_dir_args,
             classic_patches,
@@ -2708,6 +2736,19 @@ mod tests {
         .expect_err("cc-only roots must not satisfy EC source loading");
 
         assert!(error.to_string().contains("--ecdir is required"));
+    }
+
+    #[test]
+    fn cli_parses_the_bc7_rdo_device_after_the_command() {
+        let default = Cli::try_parse_from(["uddpack", "pack-mobile-anims", "--ccdir", "/cc", "--bc7-rdo"])
+            .expect("parse cli args");
+        assert_eq!(default.bc7_rdo_device, CliBc7RdoDevice::Auto);
+        for (value, device) in [("cpu", CliBc7RdoDevice::Cpu), ("gpu", CliBc7RdoDevice::Gpu)] {
+            let cli = Cli::try_parse_from(["uddpack", "pack-art", "--ccdir", "/cc", "--bc7-rdo",
+                "--bc7-rdo-device", value]).expect("parse cli args");
+            assert_eq!(cli.bc7_rdo_device, device);
+        }
+        assert!(Cli::try_parse_from(["uddpack", "pack-art", "--ccdir", "/cc", "--bc7-rdo-device", "npu"]).is_err());
     }
 
     #[test]

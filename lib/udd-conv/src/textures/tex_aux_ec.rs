@@ -52,8 +52,9 @@ use udd_container::{
 };
 use uocf::enhanced::textures::Textures;
 
+use crate::atlas::bc7_rdo_device::on_bc7_rdo_device;
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_and_stage_progress, preferred_bc7_encoder_backend,
+    encode_for_vram_with_bc7_rdo_options_and_stage_progress, Bc7RdoOptions, preferred_bc7_encoder_backend,
     ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::package_progress::build_and_write_package_with_progress;
@@ -668,13 +669,12 @@ fn encode_image(
         return Some((width, height, PagePixelFormat::Rgba8888, rgba));
     }
     let extent = ImageExtent::new(width, height).ok()?;
-    let vram = encode_for_vram_with_bc7_rdo_and_stage_progress(
+    let vram = encode_for_vram_with_bc7_rdo_options_and_stage_progress(
         &rgba,
         extent,
         RawImageFormat::Rgba8888,
         VramTextureEncoding::Bc7(preferred_bc7_encoder_backend()),
-        options.bc7_rdo_lambda,
-        options.bc7_rdo_lookback_blocks,
+        &on_bc7_rdo_device(Bc7RdoOptions::new(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks)),
         |_, _| {},
     )
     .ok()?;
