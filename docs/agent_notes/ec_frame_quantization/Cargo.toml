@@ -1,0 +1,17 @@
+# Reproduces the measurements in ../ec_frame_quantization.md. Standalone: build it outside the workspace's target, e.g.
+#   CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- survey <Enhanced client dir> 0 <tsv>
+[package]
+name = "ec-frame-quantization-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+uocf = { path = "../../../lib/uocf" }
+udd-assets = { path = "../../../lib/udd-assets" }
+uot-gpu-compute = { path = "../../../lib/support/uot-gpu-compute" }
+uot-texture-codecs = { path = "../../../lib/support/uot-texture-codecs", features = ["bc7-encode"] }
+zstd = "0.13"
+rayon = "1"
+
+[workspace]
