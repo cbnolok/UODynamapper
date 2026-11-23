@@ -1282,6 +1282,279 @@ a server body drawn as a rabbit a few texels tall, so it was dropped.)
   - In-betweens identical to lossless need the lossless frames: the RGBA8 Classic package, or in-betweens baked at pack
     time.
 
+### BC1 for the Classic creatures
+
+This section asks whether BC1 should store the Classic animation frames: for the large creatures (dragons, daemons,
+the great dragons), or for every body. A third variant keeps the package BC7 and makes only the frames the game
+generates BC1 (2026-11-23, `--bin classic_big`, Radeon 880M). The frames come from the RGBA8888 `mobile_anim_cc.uddp`
+(1210 pages, 868.1 MiB stored; the BC7 UltraFast package holds the same pages in 816.7 MiB). Each page is encoded
+whole, as a packer does, then cut into frames.
+
+The encoders:
+
+- BC1 on the CPU: the `dds` crate at High, and at Unreasonable, which gives the same blocks within 0.01 dB.
+- BC1 on the GPU: uot-gpu-compute's kernel, the one the renderer would run (`MobileBlockFormat::Bc1`).
+- BC7: the packages' UltraFast.
+
+Measures are as in the sections above: RGB PSNR over the texels the reference has opaque, the premultiplied 2x2 edge
+taps, flips at alpha one half, and ghosts. SPAN 2x and RIFE x2 run as the renderer runs them. The game's runtime encode
+is BC7 UltraFast. With `CLASSIC_BIG_RUNTIME=bc1-gpu` it is the GPU BC1 instead.
+
+**Which bodies are large.** The bodies are sorted by their median frame side (the larger of width and height):
+
+| Median side from | Bodies | Frames | Padded texels | Lossless on disk | BC7 on disk | Texels in clips the game upscales |
+|---|---|---|---|---|---|---|
+| any | 739 | 100 % | 100 % (2517 M) | 868.1 MiB | 816.7 MiB | 74.1 % |
+| 64 px | 209 | 14.4 % | 79.6 % | 673.0 MiB | 626.9 MiB | 67.5 % |
+| 96 px | 111 | 7.6 % | 66.7 % | 558.6 MiB | 524.4 MiB | 61.2 % |
+| 128 px | 62 | 4.4 % | 55.0 % | 455.7 MiB | 430.8 MiB | 53.1 % |
+| 160 px | 36 | 2.7 % | 45.2 % | 373.6 MiB | 353.9 MiB | 43.6 % |
+| 192 px | 19 | 1.5 % | 33.8 % | 272.0 MiB | 258.6 MiB | 27.0 % |
+| 256 px | 5 | 0.6 % | 21.0 % | 166.9 MiB | 157.6 MiB | 3.5 % |
+
+Disk is each page's stored size, parted over its frames by their block-padded texels. A few bodies hold most of the
+package: the 62 with a median side of 128 px or more are 4 % of the frames but half the bytes.
+
+The bodies, identified from a contact sheet:
+
+- The 256 px class: the UOP-era great dragons 197 (red) and 198 (shadow), the winged serpent 826, the dark winged
+  creature 1248 and the dragon turtle 1288 (median 250 to 363 px, frames up to 640 px).
+- Below them, with median sides of 178 to 236 px:
+  - the dragons 12 and 59 and the drakes 61;
+  - the daemons 9 and 10 and the blue fiend 11;
+  - the wyverns 62 and 63;
+  - the giant beetle 735;
+  - the crab-shelled 1404 and the raptor 1400.
+
+**The game upscales few of them.** A clip upscales only when its largest frame, with the border, fits
+`UPSCALE_MAX_CANVAS_PIXELS` (260 x 260). Otherwise it plays at 1x (upscales.rs `canvas_of`). The share of each body's
+texels in clips the game upscales:
+
+- the five great bodies: 1 to 5 % (1288: 53 %);
+- the dragons 12 and 59: 54 to 64 %;
+- the daemons: 82 to 85 %;
+- 1400 and 1404: all;
+- the whole package: 74 %.
+
+The SPAN figures below include frames up to 512 px, as quality proxies. For the great bodies they are mostly frames the
+game never upscales.
+
+**Size.** On disk, at Zstd 19, as a share of the lossless pages:
+
+| Pages | Lossless | BC7 UltraFast | BC1 (CPU High) | BC1 (GPU) |
+|---|---|---|---|---|
+| 40 pages sampled over the package (29,350 frames) | 29.73 MiB | 90 % | 52 % | 52 % |
+| The 460 pages of the 16 large bodies above (15,890 frames) | 289.20 MiB | 93 % | 51 % | 51 % |
+
+BC1 is 58 % of BC7 over the package, and 55 % on the large bodies. Applied to the shares above, BC1 for the whole
+package saves about 340 MiB (816.7 to about 475 MiB). By median side, the saving of BC1 for the bodies from that side
+up:
+
+| Bodies from | Saving |
+|---|---|
+| 64 px | about 270 MiB |
+| 128 px | about 195 MiB |
+| 192 px | about 115 MiB |
+| 256 px | about 70 MiB |
+
+**VRAM.** Frames do not stay resident in the package's form. The renderer copies the frames it draws into the frame
+atlas (frame_atlas.rs), a texture array of fixed size per pixel format: `MOBILE_ATLAS_PAGES` (8) pages of 1024² for the
+clips and their in-betweens, plus `MOBILE_ATLAS_UPSCALED_PAGES` (16) for the SPAN sequences while upscales are on. In
+BC7 that is 8 + 16 MiB; in BC1 it would be 4 + 8 MiB. The textures are created at that size, so a per-process
+measurement would only confirm the constants.
+
+The texels a page holds do not depend on the format, so BC1 saves bytes, not room. A BC1 atlas would therefore save at
+most 12 MiB of a 4 GB card (0.3 %). Alternatively, it holds twice the pages in the same bytes. That matters for the 2x
+sequences:
+
+- A dragon's walk, one direction, is 0.89 M padded texels. At 2x it is about 3.6 M, 3.4 of the 16 upscaled pages, and
+  twice that with RIFE x2.
+- So the BC7 pool keeps about two such dragon sequences with RIFE. A BC1 pool of the same 16 MiB (32 pages) would keep
+  four.
+- At 1x the 8 base pages hold a few big clips: the largest clip, 197's, takes 3.0 M texels, three pages.
+
+A BC1 atlas that sits beside the BC7 one adds its own bytes, unless the BC7 one shrinks.
+
+**Quality at 1x.**
+
+| Frames | BC7 UltraFast | BC1 (CPU High) | BC1 (GPU) |
+|---|---|---|---|
+| Package sample: opaque PSNR (edge taps) | 32.34 dB (33.21) | 29.49 dB (31.04) | 29.01 dB (30.74) |
+| Package sample: per frame, median, p10, worst | 35.5, 27.4, 21.6 | 29.8, 24.8, 19.8 | 29.2, 24.4, 17.8 |
+| Large bodies: opaque PSNR (edge taps) | 34.37 dB (35.04) | 30.28 dB (30.51) | 29.73 dB (30.38) |
+| Large bodies: per frame, median, p10, worst | 35.0, 31.4, 26.5 | 30.5, 28.1, 20.3 | 29.9, 27.6, 19.6 |
+
+- Neither format flips a texel's alpha.
+- BC1 has no ghosts. BC7 has 151 on the sample and 27 on the large bodies.
+- Per large body, BC1 (CPU) loses 2.4 to 6.5 dB against BC7. The least is on the dragons 59 and 61 (33.1 and 32.0 dB);
+  the most is on 198 (28.9 against 35.4 dB) and 1400. The worst bodies are 11 (26.9 dB) and 1404 (27.9 dB).
+- The GPU BC1 is 0.5 dB under the CPU's, at the same size.
+
+**The chains, against the lossless chain.** The table gives each package and runtime format through its chain, against
+SPAN 2x of the lossless frame (raw) and against the RIFE in-between from the lossless frames (raw). The first number is
+for the large bodies, the second for the sample: 96 and 57 SPAN frames, 119 in-betweens of 32 animations and 179 of 60.
+
+| Package → runtime encode | 1x | SPAN 2x, encoded | RIFE in-between, encoded | RIFE, encoded, then SPAN 2x, encoded |
+|---|---|---|---|---|
+| lossless → BC7 | lossless | 36.90 / 36.38 dB | 34.12 / 34.02 dB | 32.18 / 31.70 dB |
+| BC7 → BC7 (today) | 34.15 / 33.38 dB | 31.97 / 31.59 dB | 27.44 / 26.56 dB | 26.97 / 26.26 dB |
+| BC1 CPU → BC7 | 30.28 / 29.96 dB | 29.49 / 29.32 dB | 24.47 / 23.21 dB | 24.42 / 23.28 dB |
+| BC1 GPU → BC7 | 29.74 / 29.44 dB | 29.08 / 28.94 dB | 24.01 / 22.93 dB | 23.97 / 23.03 dB |
+| BC7 → BC1 | 34.15 / 33.38 dB | 30.28 / 30.05 dB | 26.07 / 24.93 dB | 25.62 / 24.39 dB |
+| lossless → BC1 | lossless | 33.00 / 32.82 dB | 29.62 / 28.45 dB | 28.25 / 26.99 dB |
+
+More detail on the chains:
+
+- Edge taps follow the opaque PSNR, 1 to 3 dB lower after SPAN. No encode adds a flip.
+- The RIFE in-betweens flip as many texels from any input that is not lossless: 9790 from BC7, 17,187 from BC1 on the
+  large bodies. These come from the flow, not the encode. SPAN multiplies them by its four texels.
+- The per in-between spread on the large bodies, as median, p10 and worst: 28.2, 24.0, 17.1 dB from BC7; 25.4, 21.5,
+  15.7 from BC1; 26.6, 23.0, 17.1 with the BC1 runtime.
+
+What the chains show:
+
+- **SPAN carries BC1's error through.** SPAN 2x of a BC1 frame keeps 1.06 to 1.10 times its 1x MSE (BC7: 1.27 to
+  1.39). The runtime BC7 encode then adds little to it. Packaged BC1 costs about 2.3 to 2.5 dB on the game's 2x frames
+  against today (29.5 against 32.0 dB). That is less than its 4 dB at 1x, because both chains end in the same BC7 encode.
+- **RIFE amplifies it.** RIFE's flow moves with any change to its input (see the section above). From BC1 frames the
+  in-betweens lose another 3 to 3.4 dB against those from BC7: 24.5 against 27.4 dB, and 23.2 against 26.6 dB on the
+  sample.
+- **The game chains RIFE into SPAN, never the reverse.** In a RIFE mode the upscales upscale the clip's RIFE sequence,
+  and only once it is made (upscales.rs). They read the in-betweens from the atlas, after their runtime encode. The
+  in-betweens are never made from upscaled frames. So an in-between's error goes through SPAN and a second encode.
+  This barely costs more than the in-between itself (BC7 → BC7: 27.0 against 27.4 dB), because SPAN smooths what the
+  first encode added.
+- **The BC1 runtime encode costs 1.5 to 1.7 dB on the 2x frames against BC7 at runtime** (30.3 against 32.0 dB from the
+  BC7 package; 33.0 against 36.9 dB from lossless). It costs 1.4 to 1.6 dB on the in-betweens (26.1 against 27.4 dB).
+  That is less than packaged BC1 costs: BC7 → BC1 beats BC1 → BC7 by 0.7 to 0.8 dB on SPAN and 1.6 to 1.7 dB on the
+  in-betweens, and keeps the 1x frames at BC7's quality.
+
+**Runtime encode time.** Kernel time by timestamp queries, best of 5 after a warm-up, every frame recorded in one
+compute pass as the renderer batches them:
+
+| SPAN 2x canvases | BC7 UltraFast | BC1 |
+|---|---|---|
+| 200 of the large bodies, 21.8 M texels | 69.2 ms, 0.35 ms a frame (315 M texels/s) | 1.9 ms, 0.009 ms a frame |
+| 400 sampled over the package, 5.0 M texels | 85.5 ms, 0.21 ms a frame (59 M texels/s) | 1.9 ms, 0.005 ms a frame |
+
+BC1 is 35 to 45 times faster. But the encode is a small part of an upscale: SPAN takes about 30 ms on a 260² canvas
+(`UPSCALE_MAX_CANVAS_PIXELS`), and BC7 encodes its 2x output in under 1 ms. BC1 would save under 3 % of the upscales'
+compute budget, and about as little of RIFE's. The generated frames would not arrive noticeably sooner.
+
+**Hues.** The renderer draws every mobile with `hue_id` 0 (draw.rs `mobile_instance`), so no Classic mobile takes a
+hue today. When they do, the decisions of uddp_anim_format_requirements.md apply:
+
+- Classic equipment and wearers stay lossless.
+- No partial-hue tile reaches a creature body.
+- A server's 0x8000 bit on a block-coded creature gets an approximate grey test.
+
+On the large bodies, over their opaque texels, with hues 0x21, 0x35, 0x480, 0x455, 0x497 and 0x4F2 from hues.uddp:
+
+| Measure | BC7 UltraFast | BC1 (CPU) | BC1 (GPU) |
+|---|---|---|---|
+| Grey texels (5-bit channels equal) | 4.56 % | 4.56 % | 4.56 % |
+| Grey texels failing the 5-bit test | 27.5 % | 42.8 % | 45.7 % |
+| Other texels passing it | 2.7 % | 2.9 % | 2.8 % |
+| 8-bit tolerance 8: grey lost / other gained | 7.5 / 12.3 % | 14.2 / 11.2 % | 15.1 / 11.3 % |
+| 8-bit tolerance 16: grey lost / other gained | 1.3 / 26.2 % | 2.2 / 25.0 % | 2.3 / 25.1 % |
+| Red key changed (5 bits), mean steps | 25.8 % (1.21) | 49.5 % (1.39) | 52.6 % (1.43) |
+| Unhued PSNR | 34.37 dB | 30.28 dB | 29.73 dB |
+| Full hue, keyed by red as the client keys it | 38.04 dB | 34.05 dB | 33.54 dB |
+| Partial hue | 23.26 dB | 22.43 dB | 22.37 dB |
+| Full hue, keyed by luma (the renderer's static path) | 42.81 dB | 36.75 dB | 36.09 dB |
+
+The sample has 13.8 % grey texels and the same picture. BC1 at 5 bits loses 40.8 % of them, against 20.9 % for BC7.
+
+What the hue table shows:
+
+- **Full hue holds up.** The hue table quantises the key to 32 steps, so a full hue is 4 dB better than the unhued
+  frame. BC1's 565 endpoints and four colours change the red key on twice as many texels as BC7 does, by one step on
+  average. The hued BC1 frame keeps BC1's 4 dB deficit to BC7 and nothing more. The luma key the renderer's static path
+  uses is gentler still.
+- **Partial hue breaks on both formats.** The grey test decides which texels take the hue at all. A texel that switches
+  goes from its colour to the hue's, which is why partial hue scores 22 to 23 dB on both.
+  - BC1 loses more grey texels than BC7 (43 against 28 %).
+  - Both make about 2.8 % of the coloured texels grey. On these bodies that is over half as many texels as the real
+    grey ones.
+  - No 8-bit tolerance separates the two: 8 still loses 7 to 15 % and already gains 11 to 12 %; 16 gains a quarter.
+- So BC1 changes the result of a partial hue only in degree. Block-coded creatures take no partial hue either way, and
+  the approximate test the 0x8000 bit would need has no good tolerance for BC7 or BC1.
+
+**Visuals** (in `uodynamapper-scratch/bc1-big/visuals/`):
+
+- Subjects, each the walk facing direction 2: the dragon 12, the daemon 9, the great dragon 197 (which the game plays
+  at 1x), the crab-shelled 1404, the orc 17 (80 px) and the horse 200 (90 px).
+- Four states: lossless; BC7 (the package today); BC1 (CPU High); and `bc7+bc1rt`, the BC7 package with the BC1
+  runtime encode (its 1x frames are BC7's).
+- `<subject>-sheet.png`: per state, the middle frame at 1x, a 128-texel crop at 3x nearest, and the SPAN 2x crop at 2x,
+  each with its |difference| from lossless x8.
+- `<subject>-flicker.mp4`: lossless and each state in turn, 0.7 s each.
+- `<subject>-motion.mp4`: the clip looping at 0.08 s a frame, the four states side by side at 2x nearest. It plays as
+  the package frames, then with the RIFE x2 in-betweens (0.04 s each, after the runtime encode), then the SPAN 2x frames.
+- `crab-flicker-stills.png`: the flicker's lossless, BC1 and `bc7+bc1rt` states stacked.
+- `crab-span-crop-4x.png`: the four SPAN frames of the crab's shell at 4x (8x the art).
+- `large-bodies.png`: the contact sheet of the bodies named above.
+
+By eye:
+
+- **At 1x no state is told from another**, on the large bodies or the small ones, still or in motion.
+- **At 3x nearest, BC1 packaged shows.** On textured surfaces (the crab's shell, the dragon's wing membrane) the fine
+  texture turns slightly blotchy: a few colours per 4x4 block where lossless and BC7 have gradients. Its SPAN 2x frame
+  is smoother, with less of the shell's grain. In the flicker it is the state that visibly changes. BC7 shows only as
+  a faint shimmer.
+- **The BC1 runtime encode does not show at the game's sizes.** Its SPAN frames show at 1.5x magnification and up, so
+  one 2x texel is under one screen pixel at the threshold. In the flicker they are hard to tell from BC7's. Only the 8x
+  crop shows its 4x4 blocks of a few colours on the red shell. BC7's blocks there are as visible, a little finer.
+- **In motion the in-betweens hide either way.** Each shows for 40 ms. From BC1 frames they differ from lossless's as
+  BC7's do, a little more. The BC1 runtime encode of them is not visible at 2x.
+- The A/B in game was not run: the renderer reads no BC1 frames (below), so it needs the production change first.
+
+**Feasibility.**
+
+- **Package.** The page manifest of `mobile_anim_cc.uddp` (metadata/pages.bin) has one `pixel_format` byte for the
+  package. Each `MobileAnimCcPageRecord` copies it, and the entry path takes its extension
+  (`pages/{index}.{rgba8888|bc7}`).
+  - `PagePixelFormat` (tex_art_cc.rs) has only Rgba8888 and Bc7, and the art, land and EC animations share it.
+  - BC1 pages next to BC7 ones need `PagePixelFormat::Bc1` and a format byte per page. That is a UDDP format change, so
+    it needs the user's confirmation; the gumps already carry a format per gump.
+  - The converter would take an option such as `--bc1-from-side <px>`. It would put the bodies whose median frame side
+    reaches it on pages of their own (a page has one format) and encode those pages BC1.
+- **Loader and atlas.**
+  - `AnimPackages::format` gives a clip its package's format, which would become its pages'.
+  - The frame atlas is one texture array per format, and the material binds two: the BC7 one as `atlas_enhanced`, with
+    `ART_LAYER_ENHANCED_ATLAS_BIT`. BC1 frames need a third array, a third binding and a layer bit, and the mobile and
+    pick shaders read it.
+  - BC1 blocks upload as they are. Their decode is the hardware's.
+- **Generated frames.**
+  - A SPAN sequence goes into its source's atlas, in the upscaled pool, which is more layers of the same texture. So the
+    upscales of BC1 frames would be BC1 (`MobileBlockFormat::Bc1` exists in the encoder). Keeping them BC7 needs the
+    upscaled pool as a texture of its own, or entries across atlases.
+  - A RIFE sequence copies its clip's frames block for block next to its in-betweens, in one atlas. The in-betweens of
+    BC1 frames must therefore be BC1, or the crossfade must read two textures.
+  - The runtime-only variant (BC7 package, BC1 generated frames) needs no format change. It needs the upscaled pool as
+    a BC1 texture array of its own, with its binding. In-betweens next to BC7 first frames cannot be BC1 without the
+    same split. In practice that variant is BC1 upscales only.
+
+**Verdict.**
+
+- **BC1 packaged frames for every body: no.** It saves about 340 MiB on disk and at most 12 MiB of VRAM. It costs 3 to
+  4 dB at 1x, 2.5 dB on the 2x frames and 3 dB on the in-betweens, and BC1 shows on textured bodies at 3x. It also
+  needs the format change, a third atlas and BC1 generated frames for those clips.
+- **BC1 only for the large bodies: not either, though it is the better of the two.** From a median side of 192 px it
+  saves about 115 MiB on disk; from 128 px, 195 MiB. These bodies are the ones drawn largest and magnified most, where
+  BC1 shows first (3x nearest). Their frames are mostly too large to upscale, so BC1 buys no SPAN room on them either.
+  The per-page split costs the same format change and third atlas as BC1 everywhere. Take it only if disk becomes the
+  constraint. In that case, threshold the great bodies (256 px: about 70 MiB, 5 bodies, 3.5 % of them upscaled).
+- **BC1 for the generated frames only: the cheapest, not worth it now.** It is invisible at the game's sizes and costs
+  1.6 dB on the 2x frames. It needs no format change. The cost is the upscaled pool's own BC1 texture and binding. Its
+  gains are small:
+  - 8 MiB of VRAM, or twice the upscaled sequences in the same 16 MiB;
+  - an encode 35 to 45 times faster, but that is under 3 % of an upscale.
+  Reconsider it if the upscaled pool turns out to evict in big-creature scenes. That is where twice the room per byte
+  would show.
+- Whatever the format, the generated frames stay best fed with lossless frames: the lossless rows above lead every
+  column.
+
 ## Atmosphere maps and light textures
 
 `tex_aux_ec.uddp` stores the textures under its reserved keys lossless, RGBA8888 at their own size, whatever the other
@@ -1461,3 +1734,18 @@ VeryFast and BC1, and SPAN 2x of the lossless and the UltraFast frame, as raw RG
 `python3 -I -B classic_span_sheets.py <out dir> <sheets dir>` draws their sheets and the flicker pictures. For the
 "don't care" kernel, `git apply docs/agent_notes/atlas_page_compression/dont_care.patch` and rebuild the bench (it
 takes uot-gpu-compute by path); `git apply -R` restores the production kernel.
+
+`--bin classic_big` gives "BC1 for the Classic creatures". Its selection is a list of bodies or `sample:<pages>`, and its
+inputs are a list starting from `lossless` (`bc7`, `bc1-high`, `bc1-best`, `bc1-gpu`):
+
+- `survey <lossless dir> <BC7 dir> <tsv>`: the shares by median side.
+- `quality <dir> <selection> <SPAN frames per body> <inputs> <tsv>`: size, 1x, SPAN chain and hues.
+- `rife <dir> <selection> <animations> <pairs> <inputs>`: the in-betweens, and SPAN of them.
+- `dump <dir> <out dir> <inputs> <name>=<body>:<action>:<direction> ...`: clips for `python3 -I -B
+  classic_big_sheets.py <dump dir> <out dir> <inputs> <name>[:<frame>][:<x>,<y>] ...`.
+- `runtime-time <dir> <selection> <frames>`: the runtime encode's kernel time.
+
+`CLASSIC_BIG_RUNTIME=bc1-gpu` makes the runtime encode BC1. The large bodies were
+`9,10,11,12,59,61,62,63,197,198,826,1248,1288,735,1404,1400`, with 6 SPAN frames each and RIFE `2 4`. The sample was
+`sample:40` with 1 SPAN frame per body and RIFE `sample:0 60 3`. For the BC1 runtime state of the sheets, dump with the
+variable set and rename that dump's `bc7` folder.
