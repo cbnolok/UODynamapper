@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::egui;
-use crate::models::{AppSettings, AssetPackProgress, AssetPackTask, LogMessage, LogLevel, Tab};
+use crate::models::{AppSettings, AssetPackProgress, AssetPackTask, LogMessage, LogLevel, QuickConvertMode, Tab};
 use crate::logic::settings::{load_settings_report, save_settings};
 
 pub struct UddConvApp {
@@ -13,7 +13,7 @@ pub struct UddConvApp {
     pub is_converting: Arc<Mutex<bool>>,
     pub cancel_conversion: Arc<AtomicBool>,
     pub current_tab: Tab,
-    pub quick_convert_overwrite: Option<(bool, bool)>,
+    pub(crate) quick_convert_overwrite: Option<QuickConvertMode>,
 
     // Tool state
     pub tool_file_1: Option<PathBuf>,

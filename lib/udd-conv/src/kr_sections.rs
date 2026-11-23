@@ -155,6 +155,12 @@ pub fn add_kr_aux_section(work: &KrSectionWork, ec_dir: &Path, cc_dir: &Path, ti
     Ok(summary)
 }
 
+/// Checks whether the package contains a nested Kingdom Reborn section.
+pub fn has_kr_section(package: &Path) -> eyre::Result<bool> {
+    let reader = UddpReader::load(package).wrap_err_with(|| format!("read {}", package.display()))?;
+    Ok(reader.find_by_path_hash(xxh64_virtual_path(KR_SECTION_ENTRY_PATH)).is_some())
+}
+
 /// Writes the Kingdom Reborn package nested in `package` to `out`; `false` when `package` holds none.
 pub fn extract_kr_section(package: &Path, out: &Path) -> eyre::Result<bool> {
     let reader = UddpReader::load(package).wrap_err_with(|| format!("read {}", package.display()))?;

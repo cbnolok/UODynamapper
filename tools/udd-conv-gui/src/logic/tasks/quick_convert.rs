@@ -1,8 +1,12 @@
 use std::fs;
 use udd_conv::classic_sources::resolve_classic_map_source;
 use udd_conv::animation::mobile_strides::keep_staged_strides;
+use udd_conv::kr_sections::has_kr_section;
 use uocf::classic::facet_sources::CLASSIC_FACET_NAMES;
 use uocf::utils::output_file::write_through_temp;
+
+use crate::logic::settings::enhanced_client_has_world_textures;
+use crate::models::QuickConvertMode;
 
 use super::*;
 
@@ -95,12 +99,13 @@ impl PackageJob {
     }
 }
 
-fn quick_settings(configured: &AppSettings, classic: bool, enhanced: bool) -> AppSettings {
+fn quick_settings(configured: &AppSettings, mode: QuickConvertMode) -> AppSettings {
+    let use_enhanced = mode != QuickConvertMode::ClassicTextures;
     AppSettings {
         // Enhanced's complete tile metadata and KR auxiliary textures also need the Classic source.
         cc_dir: configured.cc_dir.as_ref().filter(|path| path.is_dir()).cloned(),
-        ec_dir: configured.ec_dir.as_ref().filter(|path| enhanced && path.is_dir()).cloned(),
-        kr_dir: configured.kr_dir.as_ref().filter(|_| enhanced).cloned(),
+        ec_dir: configured.ec_dir.as_ref().filter(|path| use_enhanced && path.is_dir()).cloned(),
+        kr_dir: configured.kr_dir.as_ref().filter(|_| use_enhanced).cloned(),
         input_uddp_dir: configured.output_uddp_dir.clone(),
         output_uddp_dir: configured.output_uddp_dir.clone(),
         opt_tex_art_cc: TextureOptimization::Bc7Zstd,
@@ -118,24 +123,36 @@ fn quick_settings(configured: &AppSettings, classic: bool, enhanced: bool) -> Ap
         upscale_tex_land_ec_512: UpscaleConfig::default(),
         gumps_cc_bc1: true,
         gumps_ec_bc7: true,
-        gumps_ec_sharing: if classic { GumpsEcSharing::ShareWithGumpsCc } else { GumpsEcSharing::Standalone },
+        gumps_ec_sharing: if mode == QuickConvertMode::Everything { GumpsEcSharing::ShareWithGumpsCc } else { GumpsEcSharing::Standalone },
         effects_ec_bc7: true,
         ..AppSettings::default()
     }
 }
 
-fn quick_jobs(settings: &AppSettings, classic: bool, enhanced: bool) -> Vec<PackageJob> {
+fn quick_jobs(settings: &AppSettings, mode: QuickConvertMode) -> Vec<PackageJob> {
     use PackageJob::*;
+    use QuickConvertMode::*;
+
+    let classic_ready = settings.cc_dir.is_some();
+    let enhanced_ready = settings.ec_dir.is_some();
+    if !mode.is_available(classic_ready, enhanced_ready) {
+        return Vec::new();
+    }
+    let metadata = matches!(mode, Metadata | Everything);
+    let classic = matches!(mode, ClassicTextures | Everything);
+    let enhanced = matches!(mode, EnhancedTextures | Everything);
     let mut jobs = Vec::new();
-    if (classic && settings.cc_dir.is_none()) || (enhanced && settings.ec_dir.is_none()) || !(classic || enhanced) {
-        return jobs;
+
+    if metadata {
+        if classic_ready {
+            jobs.push(TileMeta);
+        }
+        jobs.push(Hues);
     }
-    if settings.cc_dir.is_some() {
-        jobs.push(TileMeta);
-    }
-    jobs.push(Hues);
     if classic {
         jobs.extend([WorldLights, ArtCc, LandCc, GumpsCc]);
+    }
+    if metadata && classic_ready {
         let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
         let patches = classic_patch_options(settings);
         for (id, preference) in (0..CLASSIC_FACET_NAMES.len() as u32).zip(settings.map_preferences) {
@@ -166,18 +183,18 @@ fn quick_jobs(settings: &AppSettings, classic: bool, enhanced: bool) -> Vec<Pack
 }
 
 impl UddConvApp {
-    pub fn quick_convert_outputs(&self, classic: bool, enhanced: bool) -> Vec<PathBuf> {
-        let settings = quick_settings(&self.settings, classic, enhanced);
-        quick_jobs(&settings, classic, enhanced).into_iter()
+    pub(crate) fn quick_convert_outputs(&self, mode: QuickConvertMode) -> Vec<PathBuf> {
+        let settings = quick_settings(&self.settings, mode);
+        quick_jobs(&settings, mode).into_iter()
             .map(|job| settings.output_uddp_dir.join(job.file_name()))
             .collect()
     }
 
-    pub fn quick_convert(&self, classic: bool, enhanced: bool) {
-        let settings = quick_settings(&self.settings, classic, enhanced);
-        let jobs = quick_jobs(&settings, classic, enhanced);
+    pub(crate) fn quick_convert(&self, mode: QuickConvertMode) {
+        let settings = quick_settings(&self.settings, mode);
+        let jobs = quick_jobs(&settings, mode);
         if jobs.is_empty() {
-            self.push_log("Select at least one client with a source folder before converting.", LogLevel::Error);
+            self.push_log("Set the client source folders required by this action.", LogLevel::Error);
             return;
         }
         if settings.output_uddp_dir.as_os_str().is_empty() {
@@ -185,10 +202,30 @@ impl UddConvApp {
             return;
         }
         self.spawn_asset_task(AssetPackTask::QuickConvert, "Quick Convert".to_string(), Vec::new(), move |progress| {
-            fs::create_dir_all(&settings.output_uddp_dir)?;
-            if enhanced && settings.cc_dir.is_none() {
-                log::warn!("Skipping tilemeta.uddp and tex_aux_ec.uddp: these need a Classic Client source folder.");
+            if let Some(ec_dir) = settings.ec_dir.as_deref()
+                && (mode != QuickConvertMode::Metadata || settings.cc_dir.is_some())
+            {
+                eyre::ensure!(
+                    enhanced_client_has_world_textures(ec_dir),
+                    "Texture.uop is missing from {}. Choose the Enhanced Client installation folder that contains Texture.uop.",
+                    ec_dir.display()
+                );
             }
+            if mode == QuickConvertMode::EnhancedTextures {
+                if settings.cc_dir.is_none() {
+                    log::warn!("Skipping tex_aux_ec.uddp: it needs a Classic Client source folder.");
+                } else {
+                    let tilemeta = settings.input_uddp_dir.join(PackageJob::TileMeta.file_name());
+                    let rebuild = "Run Create metadata with both clients configured before converting Enhanced textures.";
+                    eyre::ensure!(tilemeta.is_file(), "Missing {}. {rebuild}", tilemeta.display());
+                    eyre::ensure!(
+                        has_kr_section(&tilemeta).wrap_err(rebuild)?,
+                        "{} has no Kingdom Reborn tile data. {rebuild}",
+                        tilemeta.display()
+                    );
+                }
+            }
+            fs::create_dir_all(&settings.output_uddp_dir)?;
             // Pack callbacks check the shared cancel flag. Their per-file percentages are independent of the batch counter.
             let package_progress = AssetProgressReporter {
                 task: AssetPackTask::QuickConvert,
@@ -228,7 +265,7 @@ mod tests {
             bc7_rdo_device: ComputeDevice::Gpu,
             ..AppSettings::default()
         };
-        let quick = quick_settings(&manual, true, true);
+        let quick = quick_settings(&manual, QuickConvertMode::Everything);
         assert_eq!(quick.opt_tex_art_cc, TextureOptimization::Bc7Zstd);
         assert_eq!(quick.opt_tex_land_cc, TextureOptimization::None);
         assert_eq!(quick.opt_tex_land_ec, TextureOptimization::Bc7Zstd);
@@ -249,14 +286,27 @@ mod tests {
     }
 
     #[test]
-    fn enhanced_plan_includes_shared_dependencies_only_when_classic_is_available() {
+    fn quick_modes_partition_the_full_plan_and_order_dependencies() {
         use PackageJob::*;
+        use QuickConvertMode::*;
+
         let mut quick = AppSettings { ec_dir: Some(PathBuf::from("ec")), ..AppSettings::default() };
-        assert_eq!(quick_jobs(&quick, false, true), [Hues, ArtEc, LandEc, GumpsEc, EffectsEc, PaperdollEc, MobileEc]);
+        assert_eq!(quick_jobs(&quick, EnhancedTextures), [ArtEc, LandEc, GumpsEc, EffectsEc, PaperdollEc, MobileEc]);
+        assert_eq!(quick_jobs(&quick, Metadata), [Hues]);
+        assert!(quick_jobs(&quick, ClassicTextures).is_empty());
+        assert!(quick_jobs(&quick, Everything).is_empty());
+
         quick.cc_dir = Some(PathBuf::from("cc"));
-        assert_eq!(quick_jobs(&quick, false, true), [TileMeta, Hues, ArtEc, LandEc, AuxEc, GumpsEc, EffectsEc, PaperdollEc, MobileEc]);
-        assert!(!quick_jobs(&quick, true, false).contains(&ArtEc));
-        let both = quick_jobs(&quick, true, true);
+        assert_eq!(quick_jobs(&quick, ClassicTextures), [WorldLights, ArtCc, LandCc, GumpsCc, MobileCc]);
+        assert_eq!(quick_jobs(&quick, EnhancedTextures), [ArtEc, LandEc, AuxEc, GumpsEc, EffectsEc, PaperdollEc, MobileEc]);
+        assert_eq!(quick_jobs(&quick, Metadata), [TileMeta, Hues]);
+        let both = quick_jobs(&quick, Everything);
+        let separate: Vec<_> = [ClassicTextures, EnhancedTextures, Metadata].into_iter()
+            .flat_map(|mode| quick_jobs(&quick, mode))
+            .collect();
+        assert_eq!(both.len(), separate.len());
+        assert!(separate.iter().all(|job| both.iter().filter(|candidate| *candidate == job).count() == 1));
         assert!(both.iter().position(|&job| job == GumpsCc).unwrap() < both.iter().position(|&job| job == GumpsEc).unwrap());
+        assert!(both.iter().position(|&job| job == TileMeta).unwrap() < both.iter().position(|&job| job == AuxEc).unwrap());
     }
 }

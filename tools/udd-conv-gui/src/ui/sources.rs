@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::app::UddConvApp;
+use crate::logic::settings::enhanced_client_dir;
 use crate::ui::layout::page_heading;
 use std::path::{Path, PathBuf};
 
@@ -45,7 +46,7 @@ impl UddConvApp {
                                 "Select Enhanced Client (EC) Directory",
                                 self.settings.ec_dir.as_deref(),
                             ) {
-                                self.settings.ec_dir = Some(path);
+                                self.settings.ec_dir = Some(enhanced_client_dir(path));
                                 self.persist_settings();
                             }
                         }

@@ -37,6 +37,7 @@ use uocf::uop_container::file::CompressionFlag as UopCompressionFlag;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::uop_container::encode_payload;
 use uocf::utils::bundled_files::BundledFile;
+use uocf::utils::path::find_file_ignoring_case;
 
 use crate::kr_items::{TextureUse, WorldArtTextureUses};
 use crate::package_progress::build_and_write_package;
@@ -115,6 +116,11 @@ fn encode(content: &[u8], payload: &UopPayload) -> eyre::Result<Vec<u8>> {
     Ok(encode_payload(content, uop_compression(payload)?.as_uop_compression())?)
 }
 
+fn load_enhanced_archive(dir: &Path, name: &str) -> eyre::Result<UopPackage> {
+    let path = find_file_ignoring_case(dir, name).unwrap_or_else(|| dir.join(name));
+    UopPackage::load_with_mode(&path, LoadMode::Lazy).wrap_err_with(|| format!("load {}", path.display()))
+}
+
 /// What a texture entry became in the delta, for the summary.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct KrDeltaFileSummary {
@@ -147,10 +153,7 @@ pub fn make_kr_delta(kr_dir: &Path, ec_dir: &Path) -> eyre::Result<(KrDeltaConte
         let path = kr_dir.join(name);
         let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
         let enhanced = match kind {
-            KrDeltaFileKind::Textures => {
-                let ec_path = ec_dir.join(name);
-                Some(UopPackage::load_with_mode(&ec_path, LoadMode::Lazy).wrap_err_with(|| format!("load {}", ec_path.display()))?)
-            }
+            KrDeltaFileKind::Textures => Some(load_enhanced_archive(ec_dir, name)?),
             KrDeltaFileKind::Data => None,
         };
         let uses = (name == WORLD_ART_TEXTURE_FILE).then_some(&world_art_uses);
@@ -314,10 +317,7 @@ pub fn rebuild_kr_client(contents: &KrDeltaContents, ec_dir: &Path, out_dir: &Pa
     let mut replaced = Vec::new();
     for file in &contents.files {
         let enhanced = match file.file.kind() {
-            KrDeltaFileKind::Textures => {
-                let ec_path = ec_dir.join(&file.file.name);
-                Some(UopPackage::load_with_mode(&ec_path, LoadMode::Lazy).wrap_err_with(|| format!("load {}", ec_path.display()))?)
-            }
+            KrDeltaFileKind::Textures => Some(load_enhanced_archive(ec_dir, &file.file.name)?),
             KrDeltaFileKind::Data => None,
         };
         let out_file = out_dir.join(&file.file.name);
@@ -573,7 +573,7 @@ pub fn verify_rebuilt_client(contents: &KrDeltaContents, kr_dir: &Path, ec_dir: 
             continue;
         }
         let (kr, rebuilt) = (UopPackage::load_with_mode(&kr_path, LoadMode::Lazy)?, UopPackage::load_with_mode(&rebuilt_path, LoadMode::Lazy)?);
-        let enhanced = UopPackage::load_with_mode(ec_dir.join(name), LoadMode::Lazy)?;
+        let enhanced = load_enhanced_archive(ec_dir, name)?;
         eyre::ensure!(kr.file_count() == rebuilt.file_count(), "rebuilt {name} has {} entries, Kingdom Reborn's {}",
             rebuilt.file_count(), kr.file_count());
         let hashes: Vec<u64> = kr.iter_files().filter(|entry| !entry.is_empty_slot()).map(|entry| entry.filename_hash()).collect();
@@ -718,7 +718,8 @@ mod tests {
         let dir = temp_dir("other_ec");
         let (kr, ec) = write_clients(&dir, &enhanced_textures());
         let (contents, _) = make_kr_delta(&kr, &ec).unwrap();
-        write_uop(&ec.join(TEXTURES), &[(SAME, tga(OTHER_GREY)), (REDRAWN, tga(OTHER_GREY))]);
+        fs::remove_file(ec.join(TEXTURES)).unwrap();
+        write_uop(&ec.join(TEXTURES.to_ascii_lowercase()), &[(SAME, tga(OTHER_GREY)), (REDRAWN, tga(OTHER_GREY))]);
         let rebuilt = dir.join("rebuilt");
         let replaced = rebuild_kr_client(&contents, &ec, &rebuilt).unwrap();
         let reasons: Vec<(u64, ReplacedReason)> = replaced.iter().map(|entry| (entry.name_hash, entry.reason)).collect();

@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use crate::app::UddConvApp;
-use crate::models::{AssetPackProgressState, AssetPackTask};
+use crate::logic::settings::enhanced_client_dir;
+use crate::models::{AssetPackProgressState, AssetPackTask, QuickConvertMode};
 use crate::ui::{layout::page_heading, sources::pick_folder};
 
 impl UddConvApp {
@@ -23,7 +24,7 @@ impl UddConvApp {
                     }
                 }
                 if let Some(path) = folder_row(ui, "Enhanced Client", self.settings.ec_dir.as_deref()) {
-                    self.settings.ec_dir = Some(path);
+                    self.settings.ec_dir = Some(enhanced_client_dir(path));
                 }
                 if let Some(path) = folder_row(ui, "Output UDDP folder", Some(&self.settings.output_uddp_dir)) {
                     if self.settings.link_uddp_dirs {
@@ -35,21 +36,23 @@ impl UddConvApp {
 
             let classic_ready = self.settings.cc_dir.as_deref().is_some_and(Path::is_dir);
             let enhanced_ready = self.settings.ec_dir.as_deref().is_some_and(Path::is_dir);
-            if !classic_ready && enhanced_ready {
-                ui.label("Add a Classic Client folder to build the world and complete the shared Enhanced packages.");
-            }
             ui.add_space(ui.spacing().item_spacing.y);
             ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(classic_ready, egui::Button::new("Convert Classic")).clicked() {
-                    self.start_quick_convert(true, false);
-                }
-                if ui.add_enabled(enhanced_ready, egui::Button::new("Convert Enhanced")).clicked() {
-                    self.start_quick_convert(false, true);
-                }
-                if ui.add_enabled(classic_ready && enhanced_ready, egui::Button::new("Convert both")).clicked() {
-                    self.start_quick_convert(true, true);
+                for (mode, label) in [
+                    (QuickConvertMode::ClassicTextures, "Convert Classic textures"),
+                    (QuickConvertMode::EnhancedTextures, "Convert Enhanced textures"),
+                    (QuickConvertMode::Metadata, "Create metadata"),
+                    (QuickConvertMode::Everything, "Create everything"),
+                ] {
+                    let button = ui.add_enabled(mode.is_available(classic_ready, enhanced_ready), egui::Button::new(label));
+                    if button.clicked() {
+                        self.start_quick_convert(mode);
+                    }
                 }
             });
+            if enhanced_ready && !classic_ready {
+                ui.label("Add a Classic Client folder for maps, statics, tile metadata, and Enhanced auxiliary textures.");
+            }
         });
 
         let progress = self.asset_pack_progress(AssetPackTask::QuickConvert);
@@ -63,14 +66,18 @@ impl UddConvApp {
             });
         }
 
-        if let Some((classic, enhanced)) = self.quick_convert_overwrite {
+        if let Some(mode) = self.quick_convert_overwrite {
             let mut replace = false;
             let mut cancel = false;
             let modal = egui::Modal::new(egui::Id::new("quick_convert_overwrite")).show(ui.ctx(), |ui| {
                 ui.heading("Replace existing packages?");
                 ui.label(format!("This run will replace existing outputs in {}.", self.settings.output_uddp_dir.display()));
-                if classic && !enhanced && self.get_output_path("tilemeta.uddp").exists() {
-                    ui.label("Classic conversion rebuilds shared tile metadata from Classic data. Choose Convert both to include Enhanced metadata.");
+                if mode == QuickConvertMode::Metadata
+                    && self.settings.cc_dir.as_deref().is_some_and(Path::is_dir)
+                    && self.settings.ec_dir.as_deref().is_none_or(|path| !path.is_dir())
+                    && self.get_output_path("tilemeta.uddp").exists()
+                {
+                    ui.label("Add an Enhanced Client folder to include Enhanced data in the rebuilt tile metadata.");
                 }
                 ui.horizontal(|ui| {
                     cancel = ui.button("Cancel").clicked();
@@ -81,16 +88,16 @@ impl UddConvApp {
                 self.quick_convert_overwrite = None;
             }
             if replace {
-                self.quick_convert(classic, enhanced);
+                self.quick_convert(mode);
             }
         }
     }
 
-    fn start_quick_convert(&mut self, classic: bool, enhanced: bool) {
-        if self.quick_convert_outputs(classic, enhanced).iter().any(|path| path.symlink_metadata().is_ok()) {
-            self.quick_convert_overwrite = Some((classic, enhanced));
+    fn start_quick_convert(&mut self, mode: QuickConvertMode) {
+        if self.quick_convert_outputs(mode).iter().any(|path| path.symlink_metadata().is_ok()) {
+            self.quick_convert_overwrite = Some(mode);
         } else {
-            self.quick_convert(classic, enhanced);
+            self.quick_convert(mode);
         }
     }
 }

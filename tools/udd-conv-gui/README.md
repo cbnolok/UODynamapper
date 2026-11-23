@@ -7,11 +7,16 @@ using the command line.
 
 ## Quick Convert
 
-On the first screen, choose a Classic or Enhanced Client folder and an output folder. **Convert Classic** and **Convert Enhanced** become available when their source folders are set. **Convert both** builds the full set in one run.
+On the first screen, choose the client installation folders and an output folder. Select the Enhanced Client folder that contains `Texture.uop`.
+
+- **Convert Classic textures** builds Classic art, land, mobile animations, gumps, and world light masks.
+- **Convert Enhanced textures** builds Enhanced art, land, mobile animations, gumps, effects, and paperdolls. For auxiliary textures, configure both clients and run **Create metadata** first. The converter reads `tilemeta.uddp` from the output folder.
+- **Create metadata** builds hues and, with a Classic Client folder, tile metadata, maps, and statics. Add an Enhanced Client folder to include Enhanced data in the tile metadata and palettes.
+- **Create everything** requires both clients and builds the full set in dependency order.
 
 The batch uses BC7 and BC1 where supported and Zstd by default. The packer can choose faster-decoding LZ4 HC for atlas pages that stay within its size threshold. Native formats remain in use for packages such as the Classic texmaps and paperdoll frames. Quick Convert disables upscaling, upscale profiles, and optional filters. The other tabs keep their manual job settings.
 
-A Classic run builds art, land, animations, gumps, tile metadata, world lights, hues, and the available facet and statics packages. For radar images, use the World tab. An Enhanced run builds Enhanced art, land, animations, gumps, effects, paperdolls, and hues. With a Classic folder configured, it also builds merged tile metadata and auxiliary textures. The Enhanced packages can use the bundled Kingdom Reborn delta or the optional Kingdom Reborn folder chosen in Sources.
+For radar images, use the World tab. The Enhanced packages can use the bundled Kingdom Reborn delta or the optional Kingdom Reborn folder chosen in Sources.
 
 The log names the current job and reports failures. Stop requests cancellation, and packages that were already completed stay in the output folder. The converter asks before replacing existing outputs.
 

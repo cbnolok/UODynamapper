@@ -327,6 +327,25 @@ pub struct LogMessage {
     pub level: LogLevel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuickConvertMode {
+    ClassicTextures,
+    EnhancedTextures,
+    Metadata,
+    Everything,
+}
+
+impl QuickConvertMode {
+    pub(crate) fn is_available(self, classic_ready: bool, enhanced_ready: bool) -> bool {
+        match self {
+            Self::ClassicTextures => classic_ready,
+            Self::EnhancedTextures => enhanced_ready,
+            Self::Metadata => classic_ready || enhanced_ready,
+            Self::Everything => classic_ready && enhanced_ready,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AssetPackTask {
     QuickConvert,

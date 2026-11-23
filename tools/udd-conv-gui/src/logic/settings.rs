@@ -1,10 +1,28 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use color_eyre::eyre;
 use crate::models::AppSettings;
 use uocf::utils::config_toml::{parse_app_state, AppStateLoad};
+use uocf::utils::path::find_file_ignoring_case;
 
 const CONFIG_FILE_NAME: &str = "udd_conv_gui_config.toml";
 const CONFIG_ENV_VAR: &str = "UDD_CONV_GUI_CONFIG";
+const EC_PATCHER_DIR: &str = "patcher";
+const EC_WORLD_TEXTURE_FILE: &str = "Texture.uop";
+
+pub(crate) fn enhanced_client_has_world_textures(path: &Path) -> bool {
+    find_file_ignoring_case(path, EC_WORLD_TEXTURE_FILE).is_some()
+}
+
+/// The folder picker can return the install's patcher subfolder. Use its parent when that holds the client archive.
+pub(crate) fn enhanced_client_dir(path: PathBuf) -> PathBuf {
+    if path.file_name().is_some_and(|name| name.eq_ignore_ascii_case(EC_PATCHER_DIR))
+        && !enhanced_client_has_world_textures(&path)
+        && let Some(parent) = path.parent().filter(|parent| enhanced_client_has_world_textures(parent))
+    {
+        return parent.to_path_buf();
+    }
+    path
+}
 
 pub fn config_file_path() -> PathBuf {
     if let Some(path) = std::env::var_os(CONFIG_ENV_VAR) {
@@ -39,7 +57,15 @@ pub fn load_settings_from_path(path: &std::path::Path) -> eyre::Result<AppStateL
     }
 
     let contents = std::fs::read_to_string(path)?;
-    parse_app_state(&path.display().to_string(), &contents, &AppSettings::default())
+    let mut load = parse_app_state(&path.display().to_string(), &contents, &AppSettings::default())?;
+    if let Some(configured) = &mut load.value.ec_dir {
+        let resolved = enhanced_client_dir(configured.clone());
+        if &resolved != configured {
+            load.warnings.push(format!("Using Enhanced Client folder {} for saved path {}.", resolved.display(), configured.display()));
+            *configured = resolved;
+        }
+    }
+    Ok(load)
 }
 
 pub fn save_settings(settings: &AppSettings) -> eyre::Result<()> {
@@ -137,6 +163,24 @@ mod tests {
         save_settings_to_path(&AppSettings::default(), &path).expect("save nested settings");
         assert!(path.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_enhanced_patcher_folder_resolves_to_the_client() {
+        let dir = temp_config_path("enhanced_patcher").with_extension("");
+        let patcher = dir.join(EC_PATCHER_DIR);
+        let path = dir.join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(&patcher).unwrap();
+        let settings = AppSettings { ec_dir: Some(patcher.clone()), ..AppSettings::default() };
+        save_settings_to_path(&settings, &path).unwrap();
+
+        assert_eq!(load_settings_from_path(&path).unwrap().value.ec_dir, Some(patcher.clone()));
+        std::fs::write(dir.join(EC_WORLD_TEXTURE_FILE.to_ascii_lowercase()), []).unwrap();
+        assert_eq!(load_settings_from_path(&path).unwrap().value.ec_dir, Some(dir.clone()));
+        std::fs::write(patcher.join(EC_WORLD_TEXTURE_FILE), []).unwrap();
+        assert_eq!(load_settings_from_path(&path).unwrap().value.ec_dir, Some(patcher));
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A file from before the BC7 device choices loads with both on Auto, the CLI's default.
