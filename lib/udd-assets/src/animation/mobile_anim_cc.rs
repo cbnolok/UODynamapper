@@ -11,8 +11,8 @@ use crate::common::{
     read_path_entry, read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
 };
 use crate::animation::mobile_strides::{
-    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipStoredFrame, MobileStrideRecord,
-    PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent, MobileClipStoredFrame,
+    MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -710,6 +710,22 @@ impl MobileAnimClips for MobileAnimCcPackage {
             width: frame.width, height: frame.height, anchor_x, anchor_y,
             pixels: self.read_frame_stored_in(frame, &mut pages)?,
         }))
+    }
+
+    /// The records of the body the client takes the frames from ([`Self::frames_body`]), in any file and source.
+    fn body_actions(&self, body: u32) -> Vec<u16> {
+        let Ok(body) = u16::try_from(body) else { return Vec::new() };
+        let frames_body = self.frames_body(body).body_id;
+        let actions: BTreeSet<u16> = self.animations.iter().filter(|record| record.body_id == frames_body)
+            .map(|record| record.action_id).collect();
+        actions.into_iter().collect()
+    }
+
+    fn clip_extents(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<MobileClipFrameExtent>> {
+        // The frames are read from the records alone, so this never fails.
+        self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipFrameExtent {
+            width: frame.width, height: frame.height, anchor_x, anchor_y,
+        })).ok().flatten()
     }
 }
 

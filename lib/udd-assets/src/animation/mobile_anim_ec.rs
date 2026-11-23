@@ -12,8 +12,8 @@ use crate::common::{
     read_path_entry, read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
 };
 use crate::animation::mobile_strides::{
-    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipStoredFrame, MobileStrideRecord,
-    PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent, MobileClipStoredFrame,
+    MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -721,6 +721,22 @@ impl MobileAnimClips for MobileAnimEcPackage {
             width: frame.width, height: frame.height, anchor_x, anchor_y,
             pixels: self.read_frame_stored_in(frame, &mut pages)?,
         }))
+    }
+
+    fn body_actions(&self, body: u32) -> Vec<u16> {
+        // The records are sorted by body, action and direction.
+        let start = self.animations.partition_point(|record| record.body_id < body);
+        let mut actions: Vec<u16> = self.animations[start..].iter().take_while(|record| record.body_id == body)
+            .map(|record| record.action_id).collect();
+        actions.dedup();
+        actions
+    }
+
+    fn clip_extents(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<MobileClipFrameExtent>> {
+        // The frames are read from the records alone, so this never fails.
+        self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipFrameExtent {
+            width: frame.width, height: frame.height, anchor_x, anchor_y,
+        })).ok().flatten()
     }
 }
 

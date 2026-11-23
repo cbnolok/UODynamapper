@@ -91,6 +91,16 @@ pub struct MobileClipStoredFrame {
     pub pixels: StoredFramePixels,
 }
 
+/// A frame of a clip without its pixels ([`MobileAnimClips::clip_extents`]): its size and anchor as
+/// [`MobileClipFrame`]'s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobileClipFrameExtent {
+    pub width: u16,
+    pub height: u16,
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+}
+
 /// A frame's pixels as its package's pages store them ([`MobileAnimClips::page_pixel_format`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum StoredFramePixels {
@@ -202,6 +212,11 @@ pub trait MobileAnimClips {
     /// BC7 blocks from a `Bc7` one ([`StoredFramePixels`]). The frames of a clip read each page once.
     fn stored_clip(&self, body: u32, action: u16, direction: u8)
         -> eyre::Result<Option<MobileClip<MobileClipStoredFrame>>>;
+    /// The actions server `body` has animation records for, sorted: those [`Self::clip`] may give frames for (it
+    /// gives none in a direction without). Read from the records, no pixels.
+    fn body_actions(&self, body: u32) -> Vec<u16>;
+    /// [`Self::clip`] with each frame's size and anchor only, from the frame records: reads no pixels.
+    fn clip_extents(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<MobileClipFrameExtent>>;
 
     fn stride_record(&self, body: u32, action: u16) -> Option<&MobileStrideRecord> {
         let records = self.stride_records();
