@@ -224,6 +224,14 @@ median (NaN: measured, no usable stride). `clip_hash` is `stride_clip_hash` of t
 as `MobileAnimClips::clip` gives them; a stride applies only while it still matches. The exact
 hash input is in `docs/dev_wiki/UDDP_FORMATS.md` §3.1.
 
+`metadata/stride_sources.bin` (`MOSS`, version 1, written by the packers and `udd-cli tool strides
+sources`): `u32 count`, then records (22 bytes) sorted by body and action, `u32 body_id, u16
+action_id, u64 clip_hash, u64 source_hash`, the hash of the client frames each clip was made from
+(`stride_source_hash` of `source_frame_digest`s, before any pack-time filter or scale).
+`MobileAnimClips::clip_sources` follows a clip's frames back to the client's files; `carry_strides`
+gives the strides a repack keeps, by clip hash or by source; `write_package_stride_entries` replaces
+either entry or both.
+
 `MobileAnimClips` (both packages) gives the clips a stride is measured for, a clip's frames
 (`clip`, `side_clips`, reading each atlas page once per clip), the stored records and the hash
 now. `plan_strides` sorts stored records against the hashes now (unchanged, changed, new,

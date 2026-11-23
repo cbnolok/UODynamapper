@@ -1048,7 +1048,7 @@ enum Commands {
         upscale_profile: Option<PathBuf>,
         #[arg(long = "frame-filters-kdl", help = FRAME_FILTERS_HELP)]
         frame_filters_kdl: Option<PathBuf>,
-        #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one. The package replaced at --output is looked at in any case.")]
+        #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one, or are made from the same client frames (by the stride sources it records). The package replaced at --output is looked at in any case.")]
         strides_from: Option<PathBuf>,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
@@ -1086,7 +1086,7 @@ enum Commands {
         upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
         upscale_profile: Option<PathBuf>,
-        #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one. The package replaced at --output is looked at in any case.")]
+        #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one, or are made from the same client frames (by the stride sources it records). The package replaced at --output is looked at in any case.")]
         strides_from: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
@@ -1759,9 +1759,8 @@ where
                 },
             )?;
             if let Some(strides_from) = strides_from {
-                let previous = udd_assets::animation::mobile_strides::read_package_strides(&strides_from)?;
-                udd_conv::animation::mobile_strides::keep_matching_strides(&out_file,
-                    |path| udd_assets::MobileAnimCcPackage::load(path), &previous)?;
+                let previous = udd_conv::animation::mobile_strides::PreviousStrides::read(&strides_from)?;
+                udd_conv::animation::mobile_strides::keep_strides_from(&out_file, &previous)?;
             }
             info!(
                 "Wrote {} pages ({}) for {} packed frames out of {} total frames across {} animations to '{}'.",
@@ -1838,9 +1837,8 @@ where
                 },
             )?;
             if let Some(strides_from) = strides_from {
-                let previous = udd_assets::animation::mobile_strides::read_package_strides(&strides_from)?;
-                udd_conv::animation::mobile_strides::keep_matching_strides(&out_file,
-                    |path| udd_assets::MobileAnimEcPackage::load(path), &previous)?;
+                let previous = udd_conv::animation::mobile_strides::PreviousStrides::read(&strides_from)?;
+                udd_conv::animation::mobile_strides::keep_strides_from(&out_file, &previous)?;
             }
             info!(
                 "Wrote {} pages ({}) from {} EC animation UOPs for {} packed frames out of {} logical frames across {} EC animations from {} bodies with {} metadata items and {} source hints to '{}'.",

@@ -1,6 +1,6 @@
 //! `udd-cli tool strides`: the mobiles' measured strides in `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp`
 //! (`udd_assets::animation::mobile_strides`): measured (`udd_conv::animation::mobile_strides`), as a text table in
-//! and out, and which of them are stale.
+//! and out, which of them are stale, and the stride clip sources a repack carries them over by.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -12,12 +12,14 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use udd_assets::animation::mobile_strides::{
     format_stride_table, load_mobile_anim_clips, parse_stride_table, plan_strides, stride_clip_hashes,
-    stride_table_fields, write_package_strides, MobileStrideRecord, STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    stride_table_fields, write_package_stride_entries, write_package_strides, MobileStrideRecord, StrideSource,
+    STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
 use udd_conv::animation::mobile_strides::{
     hash_threads, inspect_side_clips, measure_package_strides, side_tiles_of_pairs, ClipInspection, MeasureOptions,
     StrideMethod, StrideProgress,
 };
+use udd_conv::animation::stride_sources::stride_sources;
 
 /// Which clips `strides measure` measures.
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +128,24 @@ pub enum StridesCommand {
         #[arg(long)]
         list: bool,
     },
+    /// Record in the packages their stride clip sources, which a repack carries the strides over by to new frames
+    /// made from the same client frames: each clip's hash next to the hash of the client frames it was made from,
+    /// read from the client files the package was packed from. A package packed before the entry existed needs it
+    /// once; the packers record it. The strides and the other entries are copied as stored.
+    Sources {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// The Classic client folder a Classic package was packed from.
+        #[arg(long)]
+        ccdir: Option<PathBuf>,
+        /// The Enhanced client folder an Enhanced package was packed from.
+        #[arg(long)]
+        ecdir: Option<PathBuf>,
+        /// Write the packages into this folder, under their names; by default each replaces itself through a
+        /// `.partial` file beside it.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 pub fn run(command: StridesCommand) -> eyre::Result<()> {
@@ -141,6 +161,9 @@ pub fn run(command: StridesCommand) -> eyre::Result<()> {
             inspect(&file, body, action, &facings, &pairs, strip.as_deref())
         }
         StridesCommand::Status { file, list } => status(&file, list),
+        StridesCommand::Sources { files, ccdir, ecdir, output } => {
+            sources(&files, ccdir.as_deref(), ecdir.as_deref(), output.as_deref())
+        }
     }
 }
 
@@ -398,6 +421,40 @@ fn status(file: &Path, list: bool) -> eyre::Result<()> {
         for (body, action, hash) in &plan.to_measure {
             println!("{body}\t{action}\t{hash:016x}");
         }
+    }
+    Ok(())
+}
+
+fn sources(files: &[PathBuf], ccdir: Option<&Path>, ecdir: Option<&Path>, output: Option<&Path>) -> eyre::Result<()> {
+    for file in files {
+        let target = match output {
+            Some(folder) => folder.join(file.file_name().ok_or_else(|| eyre::eyre!("{} names no file",
+                file.display()))?),
+            None => file.clone(),
+        };
+        let started = Instant::now();
+        let package = load_mobile_anim_clips(file)?;
+        let source = package.stride_source();
+        let (client_dir, argument) = match source {
+            StrideSource::Classic => (ccdir, "--ccdir"),
+            StrideSource::Enhanced => (ecdir, "--ecdir"),
+        };
+        let client_dir = client_dir.ok_or_else(|| eyre::eyre!("{} is a {} package: name its client folder with \
+            {argument}", file.display(), source.label()))?;
+        let sources = stride_sources(&*package, client_dir)
+            .wrap_err_with(|| format!("the stride sources of {}", file.display()))?;
+        let clip_hashes: BTreeMap<(u32, u16), u64> = sources.iter()
+            .map(|record| ((record.body_id, record.action_id), record.clip_hash)).collect();
+        let records = package.stride_records();
+        let holding = records.iter()
+            .filter(|record| clip_hashes.get(&(record.body_id, record.action_id)) == Some(&record.clip_hash)).count();
+        info!("{}: the sources of {} clips read from {} in {:.1} s; {holding} of the {} strides are of the frames the \
+            package has, and a repack carries them over to new frames of the same sources.", source.label(),
+            sources.len(), client_dir.display(), started.elapsed().as_secs_f32(), records.len());
+        drop(package);
+        let writing = Instant::now();
+        write_package_stride_entries(file, &target, None, Some(&sources))?;
+        info!("Wrote {} in {:.1} s.", target.display(), writing.elapsed().as_secs_f32());
     }
     Ok(())
 }

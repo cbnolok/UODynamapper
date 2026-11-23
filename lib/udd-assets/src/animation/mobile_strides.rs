@@ -9,6 +9,11 @@
 //!
 //! The text table (`format_stride_table`, `parse_stride_table`) is how strides move in and out of a package by hand
 //! (`udd-cli tool strides`).
+//!
+//! A packer filters, trims, scales and encodes the client's frames, so a repack can change a clip's frames, and its
+//! hash, without moving a foot. Each package therefore records its clips' sources (`metadata/stride_sources.bin`,
+//! [`StrideSourceRecord`]): a clip's hash next to the [`stride_source_hash`] of the client's frames it was made from.
+//! A repack carries a stride over to the new frames of the same source ([`carry_strides`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -39,6 +44,10 @@ const ABSENT_FACING: u8 = 0;
 const PRESENT_FACING: u8 = 1;
 /// The suffix of a package being written next to the one it replaces.
 const PARTIAL_SUFFIX: &str = ".partial";
+
+pub const STRIDE_SOURCE_ENTRY_PATH: &str = "metadata/stride_sources.bin";
+pub const STRIDE_SOURCE_MAGIC: [u8; 4] = *b"MOSS";
+pub const MOBILE_STRIDE_SOURCES_VERSION: u32 = 1;
 
 /// A clip's measured stride: `stride_tiles` is the median of the side facings that measured, `None` when the clip was
 /// measured and no stride taken (too few facings, too short, not positive): it keeps the clients' timing.
@@ -101,6 +110,20 @@ pub struct MobileClipFrameExtent {
     pub anchor_y: i32,
 }
 
+/// Where a frame of a clip comes from in the client's files ([`MobileAnimClips::clip_sources`]), read from the
+/// package's records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ClipFrameSource {
+    /// Frame `frame_index` of the animation at `source_index` of the Classic `anim*.mul` file `file_index`.
+    ClassicMul { file_index: u8, source_index: u32, frame_index: u16 },
+    /// Frame `frame_index` of stored direction `direction` of body `body`'s action `action` in the Classic
+    /// `AnimationFrame<file_index + 1>.uop`.
+    ClassicUop { file_index: u8, body: u16, action: u16, direction: u8, frame_index: u16 },
+    /// The `AnimationFrame` frame of body `body` at `source_frame_index` among the body's entries as the packer
+    /// numbers them, of `FrameEntry` action `action` and 1-based number `frame_number`.
+    Enhanced { body: u32, source_frame_index: u16, action: u16, frame_number: u16 },
+}
+
 /// A frame's pixels as its package's pages store them ([`MobileAnimClips::page_pixel_format`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum StoredFramePixels {
@@ -133,6 +156,41 @@ pub fn stride_clip_hash(clips: &[Option<MobileClip>; STRIDE_FACING_COUNT]) -> Op
             hasher.update(&frame.anchor_x.to_le_bytes());
             hasher.update(&frame.anchor_y.to_le_bytes());
             hasher.update(&frame.rgba);
+        }
+    }
+    Some(hasher.digest())
+}
+
+/// The hash of a client frame as the client's files hold it, decoded before a pack filters, trims or scales it: its
+/// size, its anchor (`center_x`, `center_y` as the client's frame gives them) and its straight-alpha RGBA, fixed-width
+/// little-endian, XXH64 with seed 0.
+pub fn source_frame_digest(width: u16, height: u16, center_x: i32, center_y: i32, rgba: &[u8]) -> u64 {
+    let mut hasher = Xxh64::new(CLIP_HASH_SEED);
+    hasher.update(&width.to_le_bytes());
+    hasher.update(&height.to_le_bytes());
+    hasher.update(&center_x.to_le_bytes());
+    hasher.update(&center_y.to_le_bytes());
+    hasher.update(rgba);
+    hasher.digest()
+}
+
+/// The hash of the client frames a clip's side facings are made from, each frame a [`source_frame_digest`]: of each
+/// of [`STRIDE_FACINGS`] in order, whether it has frames, its mirroring, and each frame's digest in order, as
+/// [`stride_clip_hash`] feeds them. `None` when no facing has frames.
+pub fn stride_source_hash(clips: &[Option<MobileClip<u64>>; STRIDE_FACING_COUNT]) -> Option<u64> {
+    if clips.iter().all(Option::is_none) {
+        return None;
+    }
+    let mut hasher = Xxh64::new(CLIP_HASH_SEED);
+    for clip in clips {
+        let Some(clip) = clip else {
+            hasher.update(&[ABSENT_FACING]);
+            continue;
+        };
+        hasher.update(&[PRESENT_FACING, u8::from(clip.mirrored)]);
+        hasher.update(&(clip.frames.len() as u32).to_le_bytes());
+        for digest in &clip.frames {
+            hasher.update(&digest.to_le_bytes());
         }
     }
     Some(hasher.digest())
@@ -217,6 +275,8 @@ pub trait MobileAnimClips {
     fn body_actions(&self, body: u32) -> Vec<u16>;
     /// [`Self::clip`] with each frame's size and anchor only, from the frame records: reads no pixels.
     fn clip_extents(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<MobileClipFrameExtent>>;
+    /// [`Self::clip`] with each frame's source in the client's files, from the records: reads no pixels.
+    fn clip_sources(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<ClipFrameSource>>;
 
     fn stride_record(&self, body: u32, action: u16) -> Option<&MobileStrideRecord> {
         let records = self.stride_records();
@@ -399,7 +459,15 @@ pub fn read_package_strides(path: &Path) -> eyre::Result<Vec<MobileStrideRecord>
 /// other entries are copied as stored ([`UddpBuilder::write_with_entries`]), to a partial file next to `output` that
 /// then replaces it.
 pub fn write_package_strides(package: &Path, output: &Path, records: &[MobileStrideRecord]) -> eyre::Result<()> {
-    let manifest = encode_stride_manifest(records);
+    write_package_stride_entries(package, output, Some(records), None)
+}
+
+/// [`write_package_strides`] with the strides, the stride clips' sources or both replaced: `None` keeps an entry as
+/// stored.
+pub fn write_package_stride_entries(package: &Path, output: &Path, records: Option<&[MobileStrideRecord]>,
+    sources: Option<&[StrideSourceRecord]>) -> eyre::Result<()> {
+    let manifests = [records.map(|records| (STRIDE_MANIFEST_ENTRY_PATH, encode_stride_manifest(records))),
+        sources.map(|sources| (STRIDE_SOURCE_ENTRY_PATH, encode_stride_source_manifest(sources)))];
     let partial = {
         let mut name = output.as_os_str().to_owned();
         name.push(PARTIAL_SUFFIX);
@@ -407,25 +475,98 @@ pub fn write_package_strides(package: &Path, output: &Path, records: &[MobileStr
     };
     {
         let base = UddpReader::load(package).wrap_err_with(|| format!("load {}", package.display()))?;
-        let entry = (udd_container::xxh64_virtual_path(STRIDE_MANIFEST_ENTRY_PATH), DataType::Metadata as u8,
-            manifest.as_slice());
-        UddpBuilder::write_with_entries(&base, &[entry], &partial)
+        let entries: Vec<(u64, u8, &[u8])> = manifests.iter().flatten()
+            .map(|(path, bytes)| (udd_container::xxh64_virtual_path(path), DataType::Metadata as u8, bytes.as_slice()))
+            .collect();
+        UddpBuilder::write_with_entries(&base, &entries, &partial)
             .map_err(|error| eyre::eyre!("{error}"))
             .wrap_err_with(|| format!("write {}", partial.display()))?;
     }
     std::fs::rename(&partial, output).wrap_err_with(|| format!("replace {}", output.display()))
 }
 
-/// The strides of `previous` whose clip in `package` still hashes the same: what a repack keeps of the strides
-/// measured on the package it replaces. The others need measuring again.
-pub fn strides_still_matching<P: MobileAnimClips + Sync + ?Sized>(package: &P, previous: &[MobileStrideRecord],
-    threads: usize) -> Vec<MobileStrideRecord> {
-    let clips: Vec<(u32, u16)> = previous.iter().map(|record| (record.body_id, record.action_id)).collect();
-    let hashes = stride_clip_hashes(package, &clips, threads, |_, _, _| {});
-    previous.iter().zip(hashes)
-        .filter(|(record, hash)| matches!(hash, Ok(Some(hash)) if *hash == record.clip_hash))
-        .map(|(record, _)| *record)
-        .collect()
+/// A clip a stride is measured for, as a pack made it: the [`stride_clip_hash`] of its frames in the package and the
+/// [`stride_source_hash`] of the client frames they were made from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrideSourceRecord {
+    pub body_id: u32,
+    pub action_id: u16,
+    pub clip_hash: u64,
+    pub source_hash: u64,
+}
+
+/// Record: `u32 body_id, u16 action_id, u64 clip_hash, u64 source_hash`.
+const STRIDE_SOURCE_RECORD_BYTES: usize = 22;
+
+/// `metadata/stride_sources.bin`: magic, version, `u32 count`, then the records sorted by body and action.
+pub fn encode_stride_source_manifest(records: &[StrideSourceRecord]) -> Vec<u8> {
+    let mut sorted = records.to_vec();
+    sorted.sort_unstable_by_key(|record| (record.body_id, record.action_id));
+    let mut bytes = Vec::with_capacity(STRIDE_SOURCE_MAGIC.len() + 8 + sorted.len() * STRIDE_SOURCE_RECORD_BYTES);
+    bytes.extend_from_slice(&STRIDE_SOURCE_MAGIC);
+    bytes.extend_from_slice(&MOBILE_STRIDE_SOURCES_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&(sorted.len() as u32).to_le_bytes());
+    for record in &sorted {
+        bytes.extend_from_slice(&record.body_id.to_le_bytes());
+        bytes.extend_from_slice(&record.action_id.to_le_bytes());
+        bytes.extend_from_slice(&record.clip_hash.to_le_bytes());
+        bytes.extend_from_slice(&record.source_hash.to_le_bytes());
+    }
+    bytes
+}
+
+pub fn parse_stride_source_manifest(bytes: &[u8]) -> eyre::Result<Vec<StrideSourceRecord>> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic)?;
+    if magic != STRIDE_SOURCE_MAGIC { eyre::bail!("invalid mobile stride source manifest magic"); }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    ensure_manifest_version("mobile stride source manifest", version, MOBILE_STRIDE_SOURCES_VERSION)?;
+    let count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        records.push(StrideSourceRecord {
+            body_id: cursor.read_u32::<LittleEndian>()?,
+            action_id: cursor.read_u16::<LittleEndian>()?,
+            clip_hash: cursor.read_u64::<LittleEndian>()?,
+            source_hash: cursor.read_u64::<LittleEndian>()?,
+        });
+    }
+    eyre::ensure!(records.is_sorted_by_key(|record| (record.body_id, record.action_id)),
+        "mobile stride source manifest: the records are not sorted by body and action");
+    Ok(records)
+}
+
+/// The stride clips' sources stored in the package at `path`, read alone (none without the entry).
+pub fn read_package_stride_sources(path: &Path) -> eyre::Result<Vec<StrideSourceRecord>> {
+    let package = UddpReader::load(path).wrap_err_with(|| format!("load {}", path.display()))?;
+    if package.find_by_path_hash(udd_container::xxh64_virtual_path(STRIDE_SOURCE_ENTRY_PATH)).is_none() {
+        return Ok(Vec::new());
+    }
+    parse_stride_source_manifest(&read_path_entry_cow(&package, STRIDE_SOURCE_ENTRY_PATH)?)
+        .wrap_err_with(|| format!("read {STRIDE_SOURCE_ENTRY_PATH} of {}", path.display()))
+}
+
+/// The strides of `previous` that hold for a package whose stride clips are `now`: those whose clip hashes the same
+/// in it, and those measured on frames made from the same client frames as the clip's now, which take its hash. The
+/// latter needs `previous_sources`, the clips' sources of the package `previous` was stored in: a stride measured on
+/// frames that package no longer had (its hash not that of the clip there) is not carried over.
+pub fn carry_strides(previous: &[MobileStrideRecord], previous_sources: &[StrideSourceRecord],
+    now: &[StrideSourceRecord]) -> Vec<MobileStrideRecord> {
+    let by_clip = |records: &[StrideSourceRecord]| -> HashMap<(u32, u16), StrideSourceRecord> {
+        records.iter().map(|record| ((record.body_id, record.action_id), *record)).collect()
+    };
+    let (previous_sources, now) = (by_clip(previous_sources), by_clip(now));
+    previous.iter().filter_map(|record| {
+        let clip = (record.body_id, record.action_id);
+        let now = now.get(&clip)?;
+        if now.clip_hash == record.clip_hash {
+            return Some(*record);
+        }
+        let before = previous_sources.get(&clip)?;
+        (before.clip_hash == record.clip_hash && before.source_hash == now.source_hash)
+            .then_some(MobileStrideRecord { clip_hash: now.clip_hash, ..*record })
+    }).collect()
 }
 
 /// A line of the text table.
@@ -618,6 +759,64 @@ mod tests {
         let mut bytes = encode_stride_manifest(&records);
         bytes[4] = 2;
         assert!(parse_stride_manifest(&bytes).is_err(), "another version");
+    }
+
+    /// The source hash of a fixed tiny clip: if this value changes, no repack carries a stride over to new frames, so
+    /// it must only change with a deliberate change of what a stride's source is.
+    #[test]
+    fn the_source_hash_of_a_fixed_clip_is_stable() {
+        const EXPECTED: u64 = 0x6b72_7366_eb60_62ab;
+        let digests = vec![source_frame_digest(2, 1, 1, -1, &[0x40; 8]), source_frame_digest(1, 2, 0, 2, &[0x80; 8])];
+        let tiny = MobileClip { frames: digests, mirrored: false, fps: 0.0, stored: 0 };
+        let clips = [Some(tiny.clone()), None, Some(MobileClip { mirrored: true, ..tiny.clone() })];
+        assert_eq!(stride_source_hash(&clips), Some(EXPECTED), "{:#018x}", stride_source_hash(&clips).unwrap());
+        assert_eq!(stride_source_hash(&[None, None, None]), None);
+
+        let mut pixel = clips.clone();
+        pixel[0].as_mut().unwrap().frames[1] = source_frame_digest(1, 2, 0, 2, &[0x81; 8]);
+        let mut anchor = clips.clone();
+        anchor[0].as_mut().unwrap().frames[0] = source_frame_digest(2, 1, 1, 0, &[0x40; 8]);
+        let mut order = clips.clone();
+        order[0].as_mut().unwrap().frames.reverse();
+        let mut mirrored = clips.clone();
+        mirrored[2].as_mut().unwrap().mirrored = false;
+        let absent = [Some(tiny.clone()), None, None];
+        for changed in [pixel, anchor, order, mirrored, absent] {
+            assert_ne!(stride_source_hash(&changed), stride_source_hash(&clips));
+        }
+    }
+
+    fn source(body_id: u32, action_id: u16, clip_hash: u64, source_hash: u64) -> StrideSourceRecord {
+        StrideSourceRecord { body_id, action_id, clip_hash, source_hash }
+    }
+
+    /// A repack that filters some bodies' frames otherwise: their clips hash otherwise, their sources the same.
+    #[test]
+    fn a_repack_carries_strides_over_to_frames_of_the_same_source() {
+        let previous = [record(1, 0, 10, Some(2.0)), record(2, 0, 20, Some(1.5)), record(3, 0, 30, None),
+            record(4, 0, 40, Some(1.0)), record(5, 0, 50, Some(1.0)), record(6, 0, 60, Some(1.0))];
+        let before = [source(1, 0, 10, 100), source(2, 0, 20, 200), source(3, 0, 30, 300), source(4, 0, 41, 400),
+            source(5, 0, 50, 500), source(6, 0, 60, 600)];
+        // 1 unchanged; 2 and 3 filtered otherwise; 4's stride was stale in the package it was stored in; 5's client
+        // frames changed; 6 is gone.
+        let now = [source(1, 0, 10, 100), source(2, 0, 21, 200), source(3, 0, 31, 300), source(4, 0, 42, 400),
+            source(5, 0, 51, 501)];
+        let carried = carry_strides(&previous, &before, &now);
+        assert_eq!(carried, vec![previous[0], MobileStrideRecord { clip_hash: 21, ..previous[1] },
+            MobileStrideRecord { clip_hash: 31, ..previous[2] }]);
+
+        // Without the sources of the package they were stored in, only the strides of unchanged frames hold.
+        assert_eq!(carry_strides(&previous, &[], &now), vec![previous[0]]);
+    }
+
+    #[test]
+    fn the_stride_source_manifest_round_trips_sorted() {
+        let records = [source(7, 19, u64::MAX, 1), source(3, 2, 0xabc, 0xdef)];
+        let parsed = parse_stride_source_manifest(&encode_stride_source_manifest(&records)).unwrap();
+        assert_eq!(parsed, vec![records[1], records[0]]);
+        let mut bytes = encode_stride_source_manifest(&records);
+        bytes[4] = 2;
+        assert!(parse_stride_source_manifest(&bytes).is_err(), "another version");
     }
 
     #[test]

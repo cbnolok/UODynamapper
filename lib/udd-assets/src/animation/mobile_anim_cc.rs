@@ -11,8 +11,9 @@ use crate::common::{
     read_path_entry, read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
 };
 use crate::animation::mobile_strides::{
-    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent, MobileClipStoredFrame,
-    MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    read_stride_records, ClipFrameSource, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent,
+    MobileClipStoredFrame, MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS,
+    STRIDE_FACING_COUNT,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -759,6 +760,21 @@ impl MobileAnimClips for MobileAnimCcPackage {
         // The frames are read from the records alone, so this never fails.
         self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipFrameExtent {
             width: frame.width, height: frame.height, anchor_x, anchor_y,
+        })).ok().flatten()
+    }
+
+    fn clip_sources(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<ClipFrameSource>> {
+        let body = u16::try_from(body).ok()?;
+        let (stored_direction, mirrored) = classic_stored_direction(direction)?;
+        let animation = self.server_body_animation(body, action, stored_direction)?;
+        let uop = animation.flags & MOBILE_ANIM_CC_FLAG_UOP_SOURCE != 0;
+        // The frames are read from the records alone, so this never fails.
+        self.record_clip_in(animation, mirrored, |frame, _, _| Ok(if uop {
+            ClipFrameSource::ClassicUop { file_index: animation.file_index, body: animation.body_id,
+                action: animation.action_id, direction: animation.direction, frame_index: frame.frame_index }
+        } else {
+            ClipFrameSource::ClassicMul { file_index: animation.file_index, source_index: animation.source_index,
+                frame_index: frame.frame_index }
         })).ok().flatten()
     }
 }

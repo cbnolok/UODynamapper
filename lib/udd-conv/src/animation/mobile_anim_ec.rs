@@ -551,8 +551,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
 
     let package_timer = Instant::now();
     finish_streaming_package_with_progress(package, &mut package_progress)?;
-    super::mobile_strides::keep_matching_strides(out_file, |path| udd_assets::MobileAnimEcPackage::load(path),
-        &previous_strides)?;
+    super::mobile_strides::keep_repacked_strides(out_file, &client_dir,
+        |path| udd_assets::MobileAnimEcPackage::load(path), &previous_strides)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "EC mobile animation package build and write completed in {:.3}s",
@@ -3503,6 +3503,28 @@ pub fn serialize_body_manifest(bodies: &[MobileAnimEcBodyRecord]) -> eyre::Resul
         }
     }
     Ok(bytes)
+}
+
+/// A frame of the client's `AnimationFrame` files: the entry holding it, its index among the entry's frames, and its
+/// `FrameEntry` action and 1-based number.
+pub(crate) struct EcSourceFrame {
+    pub(crate) path: Arc<PathBuf>,
+    pub(crate) file_hash: u64,
+    pub(crate) entry_index: u16,
+    pub(crate) action: u16,
+    pub(crate) frame_number: u16,
+}
+
+/// Every frame of the `AnimationFrame` files in `client_dir`, by body and the index the packer gives it among the
+/// body's frames (`MobileAnimEcFrameRecord::source_frame_index`): where the stride sources find the client frames a
+/// package was made from ([`super::stride_sources`]).
+pub(crate) fn ec_source_frames(client_dir: &Path) -> eyre::Result<HashMap<(u32, u16), EcSourceFrame>> {
+    let planned_by_body = plan_animationframe_packages(&discover_animationframe_paths(client_dir))?;
+    Ok(planned_by_body.into_iter().flat_map(|(body_id, frames)| frames.into_iter().map(move |frame| {
+        ((body_id, frame.source_frame_index), EcSourceFrame { path: frame.source.path,
+            file_hash: frame.source.file_hash, entry_index: frame.source_entry_index, action: frame.action,
+            frame_number: frame.frame_number })
+    })).collect())
 }
 
 #[cfg(test)]

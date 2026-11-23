@@ -77,7 +77,7 @@ const ANIMATION_RECORD_SIZE: usize = 24;
 /// The Classic client's flying animation switch for `GetActionFps` (`DAT_0074dca5`), set to 1 by both its callers of
 /// `FUN_00407f52` (Classic 7.0.103.0, confirmed).
 const CLASSIC_FLYING_ANIMATIONS: bool = true;
-const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
+pub(crate) const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
     "AnimationFrame3.uop",
@@ -462,8 +462,8 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     let package_timer = Instant::now();
     let previous_strides = super::mobile_strides::strides_before_repack(out_file);
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
-    super::mobile_strides::keep_matching_strides(out_file, |path| udd_assets::MobileAnimCcPackage::load(path),
-        &previous_strides)?;
+    super::mobile_strides::keep_repacked_strides(out_file, &client_dir,
+        |path| udd_assets::MobileAnimCcPackage::load(path), &previous_strides)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "CC mobile animation package build and write completed in {:.3}s",

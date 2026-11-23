@@ -12,8 +12,9 @@ use crate::common::{
     read_path_entry, read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
 };
 use crate::animation::mobile_strides::{
-    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent, MobileClipStoredFrame,
-    MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    read_stride_records, ClipFrameSource, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent,
+    MobileClipStoredFrame, MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS,
+    STRIDE_FACING_COUNT,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -738,14 +739,26 @@ impl MobileAnimClips for MobileAnimEcPackage {
             width: frame.width, height: frame.height, anchor_x, anchor_y,
         })).ok().flatten()
     }
+
+    fn clip_sources(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<ClipFrameSource>> {
+        let resolved = self.resolve_animation(body, action, direction, FLYING_ANIMATIONS)?;
+        let record = resolved.record;
+        // The frames are read from the records alone, so this never fails.
+        self.record_clip_in(record, resolved.fps, |frame, _, _| Ok(ClipFrameSource::Enhanced {
+            body: record.source_body_id, source_frame_index: frame.source_frame_index, action: frame.source_action,
+            frame_number: frame.source_frame_number,
+        })).ok().flatten()
+    }
 }
+
+/// The clips are those the clients show with flying animations on.
+const FLYING_ANIMATIONS: bool = true;
 
 impl MobileAnimEcPackage {
     /// [`MobileAnimClips::clip`], each frame made by `frame` from its record and its anchor.
     fn clip_in<F>(&self, body: u32, action: u16, direction: u8,
         frame: impl FnMut(&MobileAnimEcFrameRecord, i32, i32) -> eyre::Result<F>)
         -> eyre::Result<Option<MobileClip<F>>> {
-        const FLYING_ANIMATIONS: bool = true;
         let Some(resolved) = self.resolve_animation(body, action, direction, FLYING_ANIMATIONS) else { return Ok(None) };
         self.record_clip_in(resolved.record, resolved.fps, frame)
     }
