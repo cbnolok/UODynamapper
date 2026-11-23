@@ -768,6 +768,47 @@ million) and the convolutions' multiply-adds at the rate of the units they run o
 cores, 1.15 on the matrix units), fitted to every dispatch of the benchmark; it used to count the multiply-adds alone
 at the shader cores' rate, so a 576×512 block input, 0.8 ms, was estimated at 0.009.
 
+## A budget that follows the GPU's headroom: not shipped (measured 2026-11-23)
+
+Tried: the 2 ms budget grows by 0.25 ms a frame, up to 6 ms more, while the compute has steps held back and the GPU
+waited more than 1.75 ms between frames, and falls back to 2 ms the first frame it waited less than 1.5 ms. The wait
+was measured with two timestamps per frame while the compute runs: an empty pass before the compute (Queue) and one
+after the present (Cleanup), each in a submission of its own. A wgpu-hal Vulkan pass timestamp is written at the bottom
+of the pipe, so the frame's end stamp latches when its work is done, and the next frame's start stamp when that frame
+reaches the GPU; the wait is the gap.
+
+That gap is not the GPU's headroom here (Radeon 880M, RADV, XWayland under KWin). Busy view of Britain, one round,
+frame time median / p95 / p99 in ms, the gap's median, and how often the budget had grown:
+
+| style, limiter | fixed 2 ms | headroom | gap (median, p90) | frames grown | GPU busy (fdinfo) |
+|---|---|---|---|---:|---:|
+| Classic, off | 6.30 / 8.34 / 9.55 | 6.12 / 7.99 / 9.07 | 0.03, 0.04 ms | 0 % | |
+| Classic, 60 fps | 16.66 / 17.76 / 27.32 | 16.66 / 17.89 / 27.54 | 2.1, 3.0 ms | 46 % | 43 to 49 % |
+| Enhanced, off | 14.03 / 15.54 / 16.86 | 14.08 / 15.56 / 16.96 | 0.03, 0.05 ms | 0 % | |
+| Enhanced, 60 fps | 16.66 / 18.13 / 27.01 | 16.66 / 18.15 / 27.25 | 0.04, 0.07 ms | 0 % | |
+
+At 60 fps Classic keeps the GPU busy less than half the frame (the process's `drm-engine-gfx` time in
+/proc/self/fdinfo: 43 to 49 %, about 8 ms of 16.7), yet the gap between its frames is 2 ms; Enhanced at 60 fps, which
+renders in 14 ms uncapped, shows no gap at all. The span between a frame's two stamps holds more than its work: most
+likely the wait of its render submission for the swapchain image the compositor gives back, which Vulkan does on the
+GPU's queue. So the timestamps see the GPU as busy while it waits on the compositor, the budget grew in Classic at
+60 fps alone and by 0.2 ms on average, and the sequences came no sooner (2x upscales: max 8.0 against 9.2 s in
+Classic at 60 fps, 8.7 against 10.3 in Enhanced, within the runs' spread). Frame times did not move either way. The
+second round and the KR-like and UOD-Painterly runs were not made once the signal was shown not to work.
+
+Signals for a later try, each with its catch:
+
+- The process's GPU engine time in /proc/self/fdinfo (`drm-engine-gfx`, nanoseconds, per DRM client): it excludes
+  the semaphore waits (the scheduler runs a job once its dependencies are met), but sums overlapping jobs (111 % in
+  Enhanced uncapped), exists only on Linux, and is averaged over jobs that straddle frames.
+- Timestamps inside the frame's own passes (Bevy's render diagnostics), which run after the swapchain wait: a sum of
+  the passes is the GPU's work, at the cost of a query per pass.
+- Either one measures time at the clock the GPU chose: amdgpu's governor ran Classic at 60 fps at 1.5 to 1.7 GHz of
+  2.9, so the work stretches to fill part of the headroom and what is left looks smaller than it is (the safe side).
+
+Uncapped Classic is CPU-bound, and a larger budget there costs CPU (recording the dispatches) as well as GPU, so a
+grown budget should also want the frame limiter to have slept.
+
 ## Sharpening
 
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU
