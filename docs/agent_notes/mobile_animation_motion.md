@@ -341,18 +341,34 @@ used; an entry is kept when it differs from the tool by more than a tenth, or th
 | Enhanced kirin 132 run (24) and ridden run (30) | 6.9 | 5.86 4.22 7.76 → 5.86 | Pairs 1 and 6 (S 6.30, SW 6.88, W 7.76); the front hoof's heel on SW at 48 then 78 px, 30 px. The hoof touches down for one pair; the lift-off pairs read 2–8 px. |
 | Enhanced ostards 210, 218, 219 run (24) | 6.2 | 5.86 – 9.21 → 7.54 | SW pairs 7, 8 (6.18), S 6, 7 (6.28), W 7, 8 (6.84). Two of ten pairs on SW, so the stride was the mean of S and W. |
 | Enhanced flying run (24): dragons 12 and 59, harpy 30, wyrms 49 and 106, drakes 60 and 61, wyvern 62 | client timing | 0.43–5.1, or none | A flight, as above; the white wyrm hovers. |
+| Classic cows 216, 231 and bulls 232, 233 walk (0) | 1.0 | 1.46 0.53 3.49 → 1.46 (S 0.32–1.78, W 3.0–3.5 across the four) | Counted 2026-11-23: the front hoof's contact on SW moves back 8–10 px a frame, 9 px on average over the five frames (1.0); the bulls are drawn a little larger, in the cows' poses frame for frame (the tool's SW 0.53–0.56 on all four). The hooves step out of phase: while a front hoof moves, a rear one holds its canvas x for three frames, and the SW votes sit on it (0.53). The south facing's 30 degree band misses the front hooves, and the west facing's pairs match one hoof to the next. |
+| Enhanced orc captain 7, and 138, 139 (its frames) run (24) | 1.9 | 3.10 1.90 7.11 → 3.10 | Read 2026-11-23 off the SW strip: a bounding run, in the air for frames 5 and 6. Three SW pairs are stance pairs (0–1, 2–3, 3–4: the trailing foot in the band in both frames, 3–12 px) against two that sweep the swinging leg through the band (1–2 and 4–5, 22–33 px), so the facing's median is a stance pair's, 12 px a frame (1.9). On S and W the sweeping pairs reach the median (3.1 and 7.1; `inspect` reads W 4.4 today). |
 
 Looked at and left to the tool: the ridden ostards' run (30, 7.0: three pairs per facing, all agreeing within 0.2),
 the ostards' walk (22, 3.37: five steady pairs per facing), the Enhanced trolls' run (S 2.98 and W 3.10 agree with
 SW's two pairs, 3.11), the Enhanced bears' walk (0.75–0.79 on every facing), the Classic cat (walk 0.35, contacts
 0.34–0.45), the Enhanced horses' run (4.0, against the old hand count 3.8). Left with no stride, at the clients'
 timing, because no pair shows a clear planted foot: the five-frame Classic runs of the dog, cat and wolves, and the
-Enhanced runs of the skeletons (one 25 px pair on SW, the next lifting), wolves, dog, cat, cow and hind. Open: the
-Classic cow's walk (S 1.46, SW 0.53, W 3.49; 4 px hooves, the rear one holding its canvas x for three frames, so no
-count is credible), the Enhanced orc captain's run (1.9–7.1) and the Classic orc and lich walks, whose west facing
-reads about 0.6 tiles longer (the orc's walk was checked on recordings above). The Classic armed walk and run (1, 3)
-measure as the unarmed ones (1.34, 2.10) and the war walk (15) 0.68, but the renderer plays neither and the packages
-have no records for them: they would need records and the renderer's armed and war modes.
+Enhanced runs of the skeletons (one 25 px pair on SW, the next lifting), wolves, dog, cat, cow and hind.
+
+The Classic orc (17, 7, 41, 138–140) and lich (24, 78, 79, 82) walks read about 0.6 tiles longer on the west facing
+(orc S 1.31, SW 1.49, W 2.12; lich 1.12, 1.46, 2.01), and the Classic people's walk too (1.68 against 1.34). The
+cause (2026-11-23): on the pairs around the cycle's wrap the lifted foot, toe down, matches the other foot's toe about
+20 px behind it, a second "planted" foot; a facing has only about five stance pairs, so one or two of these lift its
+median a rank. The mid-stance west pairs agree with the south ones (people 5.0–6.6 px against 4.4–6.4). The clip's
+stride is the median of the three facings, the south-west's here (1.49 and 1.46), so nothing changes in game and no
+entry is needed. Two fixes in the matcher were measured over all bodies of both test packages and dropped, because
+they moved good results more than they mended these: requiring the match to hold back from the second frame within
+1 px (west/south 1.157 to 1.100 on the Classic clips, but 162 Classic and 233 Enhanced strides moved by 0.2 or more,
+150 lost, and the hand counts' mean distance from 0.130 to 0.222 tiles), and requiring the matched spot to hold still
+in the second frame (the reverse match at least half the travel: the orc's west 2.12 to 1.53, the lich's 2.01 to
+1.63, but 70 Classic and 125 Enhanced strides moved by 0.2 or more, the Classic alligators' run (202, 133) on the
+south facing from 1.31 to 0.37 among them, 139 lost, and the hand counts from 0.130 to 0.135, 11 within a tenth
+against 12).
+
+The Classic armed walk and run (1, 3) measure as the unarmed ones (1.34, 2.10) and the war walk (15) 0.68, but the
+renderer plays neither and the packages have no records for them: they would need records and the renderer's armed
+and war modes. Left as they are.
 
 Reproduce an entry with `inspect --strip` and the `--pair` lists in the table (frame numbers start at 0 and a pair
 is named by its first frame). The survey and the sheet, ruler and contact scripts were throwaway scratch.
@@ -374,6 +390,11 @@ two near-flat autocorrelations (0.01 to 0.13) settle on another peak, its sums i
 measures a view of 1941 frames in about 75 s against the script's six minutes, and gives a stretch too short for a
 period none instead of failing, as the script did on the ridden kirin. The regression
 harness (quick tier, all four styles): 99 captures, 76 identical and 23 within tolerance, none changed.
+
+The cattle's and the orc captain's entries (2026-11-23): the Classic cow's walk from 1.46 to 1.0 tiles a cycle (the
+bulls' from 0.85 and 0.56, the brown cow's from 1.78), the Enhanced orc captain's run from 3.10 to 1.9. Recorded the
+same way, Classic for the cow and Enhanced for the captain, with the Classic orc and lich walking west unchanged:
+side-by-side mp4s in `/home/claudio/rust-target/uodynamapper-scratch/strides-rest/`.
 
 ## Upscaling when zoomed
 

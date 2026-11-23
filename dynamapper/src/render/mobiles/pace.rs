@@ -83,14 +83,15 @@ impl GroundStride {
 }
 
 /// The clips whose stride stays hand-configured because the planted-foot measurement (`udd-cli tool strides
-/// measure`) does not follow them, in place of the package's. Each was counted on 2026-11-22 on the south-west
-/// facing (44 px a side tile), from the planted foot's ground contact frame to frame on the frame strips of `udd-cli
-/// tool strides inspect --strip` (its `--pair` count on the pairs where the foot is clear, against a hand count of
-/// the foot's x), or keeps the clients' timing where no foot touches the ground; the reason says why the tool is not
-/// trusted (`docs/agent_notes/mobile_animation_motion.md`, "Curated strides"). The elves and ghosts have the humans'
-/// art, and the bodies of an entry share their frames. A curated stride still needs the package's stride record (one
-/// without a stride counts), and is used only while the clip's frames hash as that record says.
-const CURATED_STRIDES: [CuratedStride; 15] = [
+/// measure`) does not follow them, in place of the package's. Each was counted on 2026-11-22 or 2026-11-23 on the
+/// south-west facing (44 px a side tile), from the planted foot's ground contact frame to frame on the frame strips of
+/// `udd-cli tool strides inspect --strip` (its `--pair` count on the pairs where the foot is clear, against a hand
+/// count of the foot's x), or keeps the clients' timing where no foot touches the ground; the reason says why the tool
+/// is not trusted (`docs/agent_notes/mobile_animation_motion.md`, "Curated strides"). The elves and ghosts have the
+/// humans' art, and the bodies of an entry share their frames or, the cattle, their poses. A curated stride still
+/// needs the package's stride record (one without a stride counts), and is used only while the clip's frames hash as
+/// that record says.
+const CURATED_STRIDES: [CuratedStride; 17] = [
     CuratedStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_WALK,
         pace: CuratedPace::Tiles(1.3),
         reason: "counted by hand before the tool, which reads 1.34 but 1.68 on the west facing" },
@@ -109,6 +110,10 @@ const CURATED_STRIDES: [CuratedStride; 15] = [
     CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_DOG_BODIES, action: CLASSIC_ACTION_WALK,
         pace: CuratedPace::Tiles(0.52),
         reason: "2 px paws: the south and west facings read 0.64 on two and three of five pairs" },
+    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_CATTLE_BODIES, action: CLASSIC_ACTION_WALK,
+        pace: CuratedPace::Tiles(1.0),
+        reason: "five frames, 3 px hooves out of step: a front hoof moves back 8 to 10 px a frame while a rear one \
+            holds still, and the south facing's band misses the front hooves: 0.53 to 3.5" },
     CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_FLYING_BODIES, action: CLASSIC_ACTION_FLY,
         pace: CuratedPace::ClientTiming, reason: "flight: no foot touches the ground, the tool follows a wing tip" },
     CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WALK,
@@ -130,6 +135,9 @@ const CURATED_STRIDES: [CuratedStride; 15] = [
     CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_OSTARD_BODIES, action: ENHANCED_ACTION_RUN,
         pace: CuratedPace::Tiles(6.2),
         reason: "two of ten pairs on the south-west facing: the stride is the mean of 5.9 and 9.2" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_ORC_CAPTAIN_BODIES, action: ENHANCED_ACTION_RUN,
+        pace: CuratedPace::Tiles(1.9),
+        reason: "a bounding run, in the air for two of seven frames: the legs' sweep reads 22 to 33 px (1.9 to 7.1)" },
     CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_FLYING_BODIES, action: ENHANCED_ACTION_RUN,
         pace: CuratedPace::ClientTiming, reason: "flight: no foot touches the ground, the tool follows a wing tip" },
 ];
@@ -140,11 +148,15 @@ const CLASSIC_HORSE_BODIES: [u32; 5] = [177, 200, 204, 226, 228];
 /// The Classic timber, dire, grey, white and plain wolves and the hell hound (one set of frames).
 const CLASSIC_WOLF_BODIES: [u32; 6] = [23, 25, 27, 34, 98, 225];
 const CLASSIC_DOG_BODIES: [u32; 1] = [217];
+/// The Classic black and brown cows and the two bulls, drawn a little larger in the cows' poses frame for frame.
+const CLASSIC_CATTLE_BODIES: [u32; 4] = [216, 231, 232, 233];
 /// The Classic bodies whose run is their flight: the eagle, the bird, the daemons, the dragons and wyrms, the harpy,
 /// the drakes and the wyvern.
 const CLASSIC_FLYING_BODIES: [u32; 12] = [5, 6, 9, 10, 12, 30, 49, 59, 60, 61, 62, 106];
 const ENHANCED_DAEMON_BODIES: [u32; 2] = [9, 10];
 const ENHANCED_KIRIN_BODIES: [u32; 1] = [132];
+/// The orc captain and the two bodies with its frames.
+const ENHANCED_ORC_CAPTAIN_BODIES: [u32; 3] = [7, 138, 139];
 /// The desert, frenzied and forest ostards.
 const ENHANCED_OSTARD_BODIES: [u32; 3] = [210, 218, 219];
 /// The Enhanced bodies whose run is a flight: the dragons, the harpy, the white and shadow wyrms, the drakes and the
@@ -361,6 +373,7 @@ mod tests {
             (AnimSource::Classic, 177, CLASSIC_ACTION_ANIMAL_RUN, CuratedPace::Tiles(2.25)),
             (AnimSource::Classic, 225, CLASSIC_ACTION_WALK, CuratedPace::Tiles(0.7)),
             (AnimSource::Classic, 217, CLASSIC_ACTION_WALK, CuratedPace::Tiles(0.52)),
+            (AnimSource::Classic, 233, CLASSIC_ACTION_WALK, CuratedPace::Tiles(1.0)),
             (AnimSource::Classic, 12, CLASSIC_ACTION_FLY, CuratedPace::ClientTiming),
             (AnimSource::Enhanced, 401, ENHANCED_HUMAN_WALK, CuratedPace::Tiles(1.4)),
             (AnimSource::Enhanced, 402, ENHANCED_HUMAN_RUN, CuratedPace::Tiles(1.75)),
@@ -368,6 +381,7 @@ mod tests {
             (AnimSource::Enhanced, 10, ENHANCED_ACTION_RUN, CuratedPace::Tiles(6.8)),
             (AnimSource::Enhanced, 132, ENHANCED_ACTION_MOUNTED_RUN, CuratedPace::Tiles(6.9)),
             (AnimSource::Enhanced, 219, ENHANCED_ACTION_RUN, CuratedPace::Tiles(6.2)),
+            (AnimSource::Enhanced, 138, ENHANCED_ACTION_RUN, CuratedPace::Tiles(1.9)),
             (AnimSource::Enhanced, 59, ENHANCED_ACTION_RUN, CuratedPace::ClientTiming),
         ] {
             assert_eq!(curated_pace(source, body, action), Some(pace), "{source:?} body {body} action {action}");
