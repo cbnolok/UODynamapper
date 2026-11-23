@@ -53,6 +53,10 @@ The mine lantern lights the path and wall under the eave. The braziers pool ligh
 
 ## RIFE frame interpolation
 
+![Enhanced daemon walking in four panels with original frames, crossfade, RIFE ×2, and RIFE ×4](images/showcase/anim-rife-daemon-loop.webp)
+
+This five-second comparison shows an Enhanced daemon walking east across Trammel. All four Dynamapper recordings use the same route, zoom, client timing, and ground speed. **Original frames** holds each sprite pose until the next one. **Crossfade** blends neighboring poses. **RIFE ×2** and **RIFE ×4** generate one and three intermediate poses per frame pair. Watch the wings and feet during each step.
+
 ![Enhanced Stygian dragon sprite showing two source frames, a crossfade and a RIFE-generated midpoint](images/showcase/anim-rife-stygian.webp)
 
 The two source frames are on the outside. In the middle, the crossfade blends the two wing outlines while RIFE estimates an intermediate pose. Dynamapper runs RIFE on the GPU and generates one or three in-between frames per pair in the ×2 and ×4 modes. The strip is from the offline RIFE comparison used during development.
@@ -61,11 +65,17 @@ The two source frames are on the outside. In the middle, the crossfade blends th
 
 The same comparison on a Classic wyrm. Look at the near wing and feet.
 
-![Two animation frames captured from Dynamapper, showing an Enhanced daemon in Britain](images/showcase/anim-daemon.webp)
-
-An Enhanced daemon heads east and west through Britain with RIFE ×4 enabled. See the [animation development notes](agent_notes/mobile_animation_motion.md) for the implementation.
+See the [animation development notes](agent_notes/mobile_animation_motion.md) for the GPU inference and playback implementation.
 
 ## Animation timing and measured strides
+
+![Enhanced human on horseback with Client timing and Match the ground](images/showcase/anim-stride-horse-loop.webp)
+
+An Enhanced rider and horse take the same walk across Trammel. **Client timing** plays the original animation cadence. **Match the ground** paces both animations using the mount's measured stride. Watch the hooves against the ground as it scrolls by.
+
+![Enhanced human walking with Client timing and Match the ground](images/showcase/anim-stride-human-loop.webp)
+
+The same comparison on foot. The ground moves at the same speed in both panels. Follow the Enhanced human's planted foot to see the change in cadence.
 
 [![Enhanced wyrm walk with client timing on the left and measured stride on the right](images/showcase/anim-stride-wyrm.webp)](images/showcase/anim-stride-wyrm-loop.webp)
 

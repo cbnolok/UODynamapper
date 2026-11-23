@@ -36,17 +36,21 @@ Britain's square in the same afternoon light and from the same camera position.
 
 ## Creature animation and upscaling
 
-| [Neural frame interpolation](docs/SHOWCASE.md#rife-frame-interpolation) | [Measured strides](docs/SHOWCASE.md#animation-timing-and-measured-strides) |
-| --- | --- |
-| ![Enhanced Stygian original frames, crossfade, and RIFE midpoint](docs/images/showcase/anim-rife-stygian.webp) | ![Enhanced wyrm with client timing and ground-matched stride pacing](docs/images/showcase/anim-stride-wyrm.webp) |
-
 **RIFE generates new poses between the original sprite frames.** The default shader crossfade softens pose changes. RIFE ×2 and ×4 use a neural model to estimate how the sprite moves and generate one or three new frames per gap. Dynamapper embeds the model weights and a compact inference engine built on wgpu compute shaders. The new frames are made on demand and add no data to the animation packages.
 
-**Measured strides reduce foot sliding.** A walk or run cycle can match the distance the creature actually moves. Client timing remains selectable and applies when a clip has no matching measurement. Riders and mounts share a cycle paced by the mount, and creature bodies follow slopes, stairs, and bridges. [Watch the side-by-side loop](docs/SHOWCASE.md#animation-timing-and-measured-strides).
+[![Enhanced daemon walking in four panels labeled Original frames, Crossfade, RIFE ×2, and RIFE ×4](docs/images/showcase/anim-rife-daemon-loop.webp)](docs/SHOWCASE.md#rife-frame-interpolation)
+
+*Watch the daemon's wings and feet as the same walk plays in all four interpolation modes.* [More frame comparisons](docs/SHOWCASE.md#rife-frame-interpolation)
+
+**Measured strides reduce foot sliding.** A walk or run cycle can match the distance the character actually moves. Client timing remains selectable and applies when a clip has no matching measurement. Riders and mounts share a cycle paced by the mount, and creature bodies follow slopes, stairs, and bridges.
+
+[![Enhanced human riding a horse with client timing on the left and ground-matched strides on the right](docs/images/showcase/anim-stride-horse-loop.webp)](docs/SHOWCASE.md#animation-timing-and-measured-strides)
+
+*Watch the horse’s hooves against the ground. Both panels travel at the same speed.* [See the human and wyrm walks](docs/SHOWCASE.md#animation-timing-and-measured-strides)
 
 **Preview and pack upscaled sprites.** Compare filters on original animation frames in the editor, then use ordered upscaling profiles when building runtime packages. [Upscaling comparisons](docs/SHOWCASE.md#sprite-upscaling).
 
-[![Classic animation frame with its 2× upscaled preview](docs/images/showcase/anim-upscale-editor.webp)](docs/SHOWCASE.md#sprite-upscaling)
+[![UOCF Editor comparing a Classic animation frame with its upscaled preview](docs/images/showcase/anim-upscale-editor.webp)](docs/SHOWCASE.md#sprite-upscaling)
 
 ## World rendering and exploration
 
