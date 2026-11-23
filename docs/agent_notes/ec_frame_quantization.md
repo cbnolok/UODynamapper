@@ -2,8 +2,9 @@
 
 Where the darker specks on bright parts of the Enhanced creature animations come from (the user's report: the
 `enhanced-ec-dragon` clip, darker orange spots on the dragon's bright back and tail), how widespread they are, and what
-filtering at pack time or at run time could do about them (2026-11-23). Study only; nothing in the production paths
-changed. The bench crate is [`ec_frame_quantization/`](ec_frame_quantization/).
+filtering at pack time or at run time could do about them (2026-11-23). The bench crate is
+[`ec_frame_quantization/`](ec_frame_quantization/). The recommended filter shipped the same day; see
+[What shipped](#what-shipped).
 
 ## Summary
 
@@ -238,6 +239,43 @@ Reading the table:
    the dragons alone. A per-body list would allow that, but the highlight filter makes it unnecessary for the reported
    case.
 
+## What shipped
+
+- **The filters** are in `lib/udd-conv/src/animation/frame_filters.rs` (`FrameFilter`: `none`, `highlight`, `median`),
+  with the prototype's constants (clip level 250, 3 clipped texels in the window, distance 12, spread factor 2.5). They
+  change only the RGB of solid texels whose 8 neighbours are solid and of the same hue class, so alpha, the
+  antialiased edge and the hue mask stay as decoded.
+- **Where they run.** Both packers filter right after decoding, before any upscale and the atlas blit:
+  - Enhanced: `decode_filtered_frame` in `mobile_anim_ec.rs`;
+  - Classic: `decode_filtered_source` in `mobile_anim_cc.rs`, where the frames carry no hue mask (one class).
+  A pack-time upscale stage goes after that call.
+- **Per-body choice.** [`MobileFrameFilters.kdl`](../../dynamapper/assets/cc_ec_convtables/MobileFrameFilters.kdl),
+  bundled and overridable like `EcMobileAnimations.kdl` (`--frame-filters-kdl`, the `--tables` folder, or the GUI's
+  routing folder), is read strictly (`frame_filter_table.rs`):
+  - `default package="ec" filter="highlight"` and `default package="cc" filter="none"`;
+  - `body <server body> package="ec"|"cc" filter=...`, followed to the frames the client draws for the body (the
+    tileart placeholder for Enhanced; mobtypes.txt, Body.def and Bodyconv.def for Classic);
+  - two entries reaching the same frames with different filters are an error, and a body without frames is a
+    warning.
+- **The list**, chosen by eye on sheets of source, highlight and median of each body's largest frames:
+  - `median`: the dragon (12 and 59, frames of 59) and the young rotworm 286. On the dragon the highlight filter
+    leaves the orange spots on the tail; the median clears them, and the skin has no fine texture to lose;
+  - `highlight` (the default, listed as reviewed): 197, 198, 180/49, 60/61, 103, 797, 131, 161, 163, 832, 123/175,
+    287, 20, 742, 256, 312 and 1246. On these the median flattens scales, feathers, rings or the efreet's carpet.
+- **The test set's repack** (`/home/claudio/test/uddp/mobile_anim_ec.uddp`, RGBA8888 pages, `--raw --zstd=19`, as
+  the package it replaced):
+  - 1230 s with Zstd 19, of which the filters take a small part: the same repack with Zstd 9 took 164 s;
+  - 2 714 595 696 bytes, 11.9 MB (0.44 %) more than before. The filtered pages compress the same: a page's Zstd size
+    moves by under 0.6 % either way. (Packed with Zstd 9 instead, the package would be 3.2 GB.)
+  - Every record is the same, frame placement included. Each of the 1 554 680 stored frames is exactly the old frame
+    through its body's filter, alpha and hue mask unchanged: 1 241 129 frames are identical, and 313 551 frames of
+    630 bodies changed 8.5 M texels (0.6 % of the solid texels). Most changed: the dragon 59, then 197, 198, 286,
+    826, 797, 1427, 180 and 131.
+- **Strides.** A repack keeps a stride only where the clip's frames hash the same, and filtered clips hash
+  differently: 1928 of the 4125 strides were dropped. The filter does not move a foot, so the old strides were put
+  back on the new hashes (`udd-cli tool strides status --list` gives them, `strides import` stores them); the
+  exported tables before and after are equal apart from the hashes.
+
 ## Visuals
 
 In `/home/claudio/rust-target/uodynamapper-scratch/ec-undither/visuals/` (not in git):
@@ -252,6 +290,16 @@ In `/home/claudio/rust-target/uodynamapper-scratch/ec-undither/visuals/` (not in
 - `dragon_walk_motion.mp4` and `dragon_fly_motion.mp4`: the clip playing as source, highlight and median side by
   side, first at 1x (3x nearest), then the SPAN 2x frames, then RIFE x2.
 - `dragon59_back_ec_vs_kr_4x.png` and `dragon59_walk_ec3x_vs_kr2x.png`: the EC render next to the KR render.
+
+The shipped filter, in `/home/claudio/rust-target/uodynamapper-scratch/frame-filters/` (not in git):
+
+- `frame_filters_flicker.mp4`: in game, Enhanced style at the walking field, zoom 0.5 (2x) with in-betweens and
+  upscale off, a crop around the standing player at 2x more, old package against the repacked one, 0.7 s each: the
+  dragon 12 and the young rotworm 286 (median), the white wyrm 180 and the efreet 131 (highlight). The two captures of
+  a pair show the same animation frame; they differ only on the body.
+- `sheets/body_<frames body>.png`: the sheets the list was chosen on (source, highlight, median, and the texels
+  each changes: red for highlight, blue for median only), from `stats.tsv`, which gives every frames body's server
+  bodies and the texels per 1000 solid ones each filter changes.
 
 ## Reproduction
 

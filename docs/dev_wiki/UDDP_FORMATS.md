@@ -395,6 +395,8 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 
 `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` always trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
 
+Between decoding and the atlas blit (before any upscale), each frame goes through the cleanup filter its body gets in `MobileFrameFilters.kdl` (`dynamapper/assets/cc_ec_convtables/`; `udd_conv::animation::frame_filters`): `none`, `highlight` (a selective 3x3 median in clipped highlights, the Enhanced default) or `median` (the same everywhere; Classic defaults to `none`). It changes only the RGB of solid texels inside solid windows of one hue class, so alpha, the edges and the hue mask stay as decoded and the format is unchanged; a changed table needs a repack.
+
 `mobile_anim_ec.uddp` also carries what drawing a moving, mounted mobile needs, in its v1 layout (record layouts in [`lib/udd-assets/README.md`](../../lib/udd-assets/README.md)):
 
 - Body records (44 bytes) end with `u16 move_actions[3][3]`: the `GetMoveAction` result for groups war, peace and mounted and movements stand, walk and run. `NO_MOVE_ACTION` (0xFFFF) marks a group the sequence lacks.
