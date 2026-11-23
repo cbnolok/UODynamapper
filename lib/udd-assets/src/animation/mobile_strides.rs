@@ -199,7 +199,7 @@ pub fn stride_source_hash(clips: &[Option<MobileClip<u64>>; STRIDE_FACING_COUNT]
 /// The atlas pages last read for a clip's frames, a few at a time: the frames of a clip, and of its facings, mostly
 /// share a page, so they read it once instead of once a frame.
 #[derive(Default)]
-pub(crate) struct PageMemo {
+pub struct PageMemo {
     pages: Vec<(u32, Vec<u8>)>,
 }
 
@@ -277,6 +277,17 @@ pub trait MobileAnimClips {
     fn clip_extents(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<MobileClipFrameExtent>>;
     /// [`Self::clip`] with each frame's source in the client's files, from the records: reads no pixels.
     fn clip_sources(&self, body: u32, action: u16, direction: u8) -> Option<MobileClip<ClipFrameSource>>;
+    /// The package's 2x frames made ahead of time ([`crate::animation::mobile_upscaled`]) of [`Self::clip`]: each
+    /// frame's 2x canvas as the pages store it, its size and anchor those of the canvas. `None` unless every frame of
+    /// the clip has one.
+    fn upscaled_stored_clip(&self, _body: u32, _action: u16, _direction: u8)
+        -> eyre::Result<Option<MobileClip<MobileClipStoredFrame>>> {
+        Ok(None)
+    }
+    /// Whether [`Self::upscaled_stored_clip`] gives the clip: from the records, no pixels.
+    fn has_upscaled_clip(&self, _body: u32, _action: u16, _direction: u8) -> bool {
+        false
+    }
 
     fn stride_record(&self, body: u32, action: u16) -> Option<&MobileStrideRecord> {
         let records = self.stride_records();

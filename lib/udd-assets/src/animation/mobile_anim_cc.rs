@@ -15,6 +15,7 @@ use crate::animation::mobile_strides::{
     MobileClipStoredFrame, MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS,
     STRIDE_FACING_COUNT,
 };
+use crate::animation::mobile_upscaled::{record_index, UpscaledFrameTable};
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
     GROUP_MOUNTED, GROUP_PEACE, GROUP_WAR, MOVE_ACTION_GROUPS, MOVE_ACTION_GROUP_COUNT, MOVE_ACTION_MOVEMENTS,
@@ -286,6 +287,8 @@ pub struct MobileAnimCcPackage {
     body_resolve: Vec<MobileAnimCcBodyResolveRecord>,
     body_types: Vec<MobileAnimCcBodyTypeRecord>,
     strides: Vec<MobileStrideRecord>,
+    /// The 2x frames made ahead of time, if the package has them ([`crate::animation::mobile_upscaled`]).
+    upscaled: Option<UpscaledFrameTable>,
     /// Indices of the animation records of each (body, action, direction).
     animation_lookup: HashMap<(u16, u16, u8), Vec<usize>>,
     page_cache: AtlasPageCache,
@@ -328,6 +331,7 @@ impl MobileAnimCcPackage {
         let body_resolve = parse_body_resolve_manifest(&body_resolve_manifest)?;
         let body_types = parse_body_type_manifest(&body_type_manifest)?;
         let strides = read_stride_records(&package)?;
+        let upscaled = UpscaledFrameTable::read(&package)?;
         let mut animation_lookup = HashMap::<(u16, u16, u8), Vec<usize>>::new();
         for (index, animation) in animations.iter().enumerate() {
             animation_lookup
@@ -349,6 +353,7 @@ impl MobileAnimCcPackage {
             body_resolve,
             body_types,
             strides,
+            upscaled,
             animation_lookup,
             page_cache: AtlasPageCache::new(options),
         })
@@ -592,6 +597,18 @@ impl MobileAnimCcPackage {
         self.frames.get(start..end).unwrap_or(&[])
     }
 
+    /// The 2x frames made ahead of time, if the package has them.
+    pub fn upscaled_frames(&self) -> Option<&UpscaledFrameTable> {
+        self.upscaled.as_ref()
+    }
+
+    /// The 2x canvas of frame record `frame` as straight-alpha RGBA8, if the package has one.
+    pub fn read_upscaled_frame_rgba(&self, frame: u32) -> eyre::Result<Option<Vec<u8>>> {
+        let Some(table) = &self.upscaled else { return Ok(None) };
+        let Some(record) = table.frame(frame) else { return Ok(None) };
+        table.read_rgba(&self.package, record, &mut PageMemo::default()).map(Some)
+    }
+
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
         let fmt = self
             .pages
@@ -633,7 +650,7 @@ impl MobileAnimCcPackage {
 
     /// [`Self::read_frame_rgba`], the atlas page read through `pages`: the frames of a clip, which mostly share a
     /// page, read it once.
-    fn read_frame_rgba_in(&self, frame: &MobileAnimCcFrameRecord, pages: &mut PageMemo) -> eyre::Result<Vec<u8>> {
+    pub fn read_frame_rgba_in(&self, frame: &MobileAnimCcFrameRecord, pages: &mut PageMemo) -> eyre::Result<Vec<u8>> {
         if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
             return Ok(Vec::new());
         }
@@ -776,6 +793,35 @@ impl MobileAnimClips for MobileAnimCcPackage {
             ClipFrameSource::ClassicMul { file_index: animation.file_index, source_index: animation.source_index,
                 frame_index: frame.frame_index }
         })).ok().flatten()
+    }
+
+    fn upscaled_stored_clip(&self, body: u32, action: u16, direction: u8)
+        -> eyre::Result<Option<MobileClip<MobileClipStoredFrame>>> {
+        let Some(table) = &self.upscaled else { return Ok(None) };
+        if !self.has_upscaled_clip(body, action, direction) {
+            return Ok(None);
+        }
+        let mut pages = PageMemo::default();
+        self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| {
+            let index = record_index(&self.frames, frame);
+            let record = table.frame(index).ok_or_else(|| eyre::eyre!("frame record {index} has no 2x canvas"))?;
+            Ok(MobileClipStoredFrame {
+                width: record.width, height: record.height,
+                anchor_x: UpscaledFrameTable::canvas_anchor(anchor_x),
+                anchor_y: UpscaledFrameTable::canvas_anchor(anchor_y),
+                pixels: table.read_stored(&self.package, record, &mut pages)?,
+            })
+        })
+    }
+
+    fn has_upscaled_clip(&self, body: u32, action: u16, direction: u8) -> bool {
+        let Some(table) = &self.upscaled else { return false };
+        let mut all = true;
+        let clip = self.clip_in(body, action, direction, |frame, _, _| {
+            all &= table.frame(record_index(&self.frames, frame)).is_some();
+            Ok(())
+        });
+        matches!(clip, Ok(Some(_))) && all
     }
 }
 

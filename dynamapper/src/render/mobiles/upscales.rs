@@ -67,16 +67,16 @@ const UPSCALE_QUEUE_KEEP_SECS: f64 = 2.0;
 const UPSCALE_RESUME_SECS: f64 = 10.0;
 /// A job's canvas, its largest frame with the border, is rounded up to this many pixels, so the jobs of a body's
 /// actions share a workspace.
-pub const UPSCALE_CANVAS_MULTIPLE: u32 = 8;
+pub const UPSCALE_CANVAS_MULTIPLE: u32 = uot_gpu_compute::frame_upscales::UPSCALE_CANVAS_SIZE_STEP;
 /// The side of the largest canvas upscaled whole, and its pixels: 260 by 260 takes about 90 MB of workspace and 30 ms
 /// on the Radeon 880M. A larger sequence upscales in tiles (`UpscalePlan`). The Balanced size rule's largest canvas
-/// (spec.rs, `max_canvas`) is at most this side, and is this side without the file.
-pub const UPSCALE_MAX_CANVAS_SIDE: u32 = 260;
+/// (spec.rs, `max_canvas`) is at most this side, and is this side without the file. The converter's packaged 2x frames
+/// (`--prescale`) are made the same way, on the same sides.
+pub const UPSCALE_MAX_CANVAS_SIDE: u32 = uot_gpu_compute::frame_upscales::UPSCALE_MAX_WHOLE_CANVAS_SIDE;
 pub const UPSCALE_MAX_CANVAS_PIXELS: u32 = UPSCALE_MAX_CANVAS_SIDE * UPSCALE_MAX_CANVAS_SIDE;
 /// The side of the workspace a sequence too large for one canvas upscales on, in tiles: the largest multiple of
 /// `UPSCALE_CANVAS_MULTIPLE` whose square is within `UPSCALE_MAX_CANVAS_PIXELS` (256).
-pub const UPSCALE_TILE_SIDE: u32 =
-    UPSCALE_MAX_CANVAS_PIXELS.isqrt() / UPSCALE_CANVAS_MULTIPLE * UPSCALE_CANVAS_MULTIPLE;
+pub const UPSCALE_TILE_SIDE: u32 = uot_gpu_compute::frame_upscales::UPSCALE_TILE_WORKSPACE_SIDE;
 /// The distance to the player, in tiles, under which two mobiles count as equally near and the larger one on screen
 /// goes first.
 const UPSCALE_DISTANCE_STEP_TILES: f32 = 1.0;
