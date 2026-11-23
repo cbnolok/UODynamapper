@@ -257,6 +257,25 @@ These need a person at the GUI or in a running client; the code side is done.
   - multi-quad layered composition
   - single-quad fragment compositing
 - Preserve deterministic layering for mount, body, equipment, hair, and overlays.
+- Player creature behaviour the clients have and we lack (not urgent; proposals of 2026-11-23, suggested order as
+  listed, multis independent):
+  - War mode (about 2 to 3 days): a setting, a key and a socket command switch the player to the combat stance.
+    Classic MUL people stand with 7 and walk with 15 (run unchanged); UOP and Enhanced bodies take their war group;
+    mounted bodies are unchanged. Armed walk and run (1, 3) wait for equipment layers; Enhanced's stance-change
+    action (group 1, 28) waits for confirmation. Adds the Classic war walk stride (counted at 0.68 tiles, check
+    with `strides inspect --strip`).
+  - Idle fidgets (about 3.5 to 4.5 days): a standing, unridden player in peace plays a fidget action once, then
+    stands again; a step cancels it. Timing per ClassicUO (30 to 60 s) for MUL bodies, the official Classic rule
+    (`CMobile_TryIdleFidget`: after 15 s, a roll per 75 ms tick) for UOP and Enhanced bodies; trace the Enhanced
+    client's own trigger first. Needs the typed type-5 action lists in the animation packages (a format bump and a
+    repack, shared with the seats) and a play-once clip mode that RIFE in-betweens respect.
+  - Enhanced seats (about 4 to 5.5 days): a player standing still on a chair or bench with tileart sitting data
+    sits: seated group 6, the facing snapped to the chair's mask, the layers moved by the seat offsets, no ground
+    strips; then the chair back drawn over the sitter for north and west chairs. Trace in UOSA what sets the seated
+    state and where the chair back splits first.
+  - Walking over multis (about 3 to 4 days): houses and boats are placed by a server, so none appear today
+    (`PlacedMultisRes` is never filled). Place them from a runtime spec and a socket command, and let the walk
+    (`world/walk_z.rs`) read their parts as floors, stairs and walls. Only useful to preview houses.
 - Light-source items glow on the Classic paperdoll and the old-style gump paperdoll (the user liked the idea,
   2026-11-06). The Enhanced client's own paperdoll (`Paperdoll.uop`) already has the halo painted into lit items'
   frames (lit lantern 0xA15: a 375x306 frame, mostly partly transparent), so it needs nothing. An item
