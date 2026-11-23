@@ -1106,6 +1106,9 @@ opaque PSNR does not see the colour the fills change, so the two are not compare
 | game's in-between from lossless (the runtime encode alone) | 33.77 dB | 34.58 dB | — |
 | game's in-between per in-between: median, p10, worst | 28.1, 17.3, 10.6 dB | 30.4, 23.1, 16.5 dB | 28.4, 21.8, 14.2 dB |
 
+  The RIFE rows misplaced frames of different heights on the pair card. The next section gives them corrected, with
+  the same conclusions.
+
   SPAN still scales the 1x error by 1.25 in MSE, as before. RIFE gains the most. Its worst in-betweens rise by 6 dB,
   and its flips drop by a fifth: the flow and the blend follow the sprite's edge colours more closely when the edge
   blocks do. VeryFast's six SPAN flips disappear.
@@ -1133,6 +1136,151 @@ left for the user:
   - the tests' rule extended to the blocks with texels of alpha 0.
 
   The in-betweens' gain from a runtime-only change, on today's package, was not measured apart.
+
+### RIFE in-betweens from the BC7 frames, looked at
+
+This section checks whether the RIFE in-betweens of the BC7 Classic frames look different on screen, before deciding
+whether the "don't care" encode's +3.4 to 4.7 % pays (2026-11-23, Radeon 880M). It is measurement only. The
+production kernel is unchanged.
+
+**An anchor bug, fixed.** `classic_span` placed each frame on the pair card by `center_y` alone. The game anchors a
+Classic frame at (`center_x`, `height + center_y`), so two frames of different heights were misaligned. With the
+anchor fixed, the `rife` rows of the table above become the following (same 115 in-betweens):
+
+| Measure | UltraFast | Don't care |
+|---|---|---|
+| game's in-between vs from lossless (flips) | 26.57 dB (700) | 28.17 dB (587) |
+| per in-between: median, p10, worst | 28.5, 19.0, 11.0 dB | 30.6, 24.3, 15.2 dB |
+| the runtime encode alone, from lossless | 33.70 dB | 34.55 dB |
+
+VeryFast gives 26.86 dB, dilated 27.27 dB and BC1 23.07 dB. The conclusions above stand.
+
+**A larger sample.** `classic_span rife-rank` makes the first four in-betweens of 400 animations spread over the
+package: 1594 in-betweens, 341 bodies. It ranks each in-between against the one RIFE makes from the lossless
+frames. It also parts the error:
+
+- the lossless frames with this input's flow and mask ("flow only");
+- this input's frames with the lossless frames' flow and mask ("colour only").
+
+Two runtime fixes of the BC7 frames run as further inputs, since they would cost nothing on disk:
+
+- `snapped`: the alpha snapped at the cutoff;
+- `rounded`: the RGB rounded to the 1555 colours of the Classic frames.
+
+Two controls show how far RIFE follows any small change of its input: the lossless frames with uniform noise of ±2 and
+±10 on the opaque RGB. ±10 has the UltraFast frames' RMS (32.9 dB against 33.1), but no block structure.
+
+| Input | Game's in-between vs from lossless | Flips (on the edge, away) | Per in-between: median, p10, worst | Flow only | Colour only |
+|---|---|---|---|---|---|
+| UltraFast (today) | 25.31 dB | 19,872 (19,182, 690) | 28.8, 19.5, 4.6 dB | 26.16 dB | 33.31 dB |
+| UltraFast, snapped | 25.31 | 19,859 | 28.8, 19.5, 4.6 | | |
+| UltraFast, rounded | 25.05 | 21,233 | 28.5, 19.3, 4.6 | | |
+| don't care | 26.48 | 17,096 (16,555, 541) | 30.8, 22.3, 9.3 | 26.80 | 33.96 |
+| don't care, rounded | 26.24 | 18,155 | 30.4, 22.0, 9.9 | | |
+| noise ±2 | 29.55 | 5,695 | 31.7, 25.2, 8.7 | | |
+| noise ±10 | 25.14 | 21,725 | 28.5, 20.7, 6.3 | | |
+
+The game's runtime encode of the in-betweens from lossless gives 33.02 dB (33.72 with "don't care"). The noise rows
+come from today's build. Per in-between, by size (opaque texels):
+
+| Opaque texels | In-betweens | UltraFast: median, p10 | Don't care: median, p10 |
+|---|---|---|---|
+| under 100 | 590 | 29.4, 17.0 dB | 32.0, 21.4 dB |
+| 100 to 400 | 540 | 28.8, 20.8 | 30.8, 22.5 |
+| 400 to 2000 | 294 | 28.0, 20.2 | 29.1, 22.0 |
+| 2000 and over | 170 | 27.5, 22.2 | 28.6, 23.3 |
+
+Under 20 dB: 172 in-betweens with UltraFast and 86 with "don't care". Of those with at least 400 opaque texels, 33 and
+18.
+
+**The worst ones.** The worst overall are tiny frames of 2 to 78 opaque texels: equipment layers, a shadow or a strap.
+There one or two flipped texels make the PSNR (#66610, 454:27:0 pair 0: 4.6 dB on 2 texels). The worst real-size
+ones, game's dB:
+
+| Record (body:action:direction) pair | Body | UltraFast | Flow only | Colour only | Don't care | Noise ±10 | Why |
+|---|---|---|---|---|---|---|---|
+| #80157 (18:3:1) 3 | monster, death | 11.3 | 11.3 | 28.8 | 11.2 | 14.0 | 235 flips. The pair jumps about 30 px (death fall), so RIFE smears and 47 % of its flow moves by more than 1 px |
+| #47505 (371:9:2) 0 | | 15.1 | 15.0 | 24.0 | 15.2 | 17.7 | dithered, speckled sprite. Its input frames are at 23.7 dB, and the warp picks other speckles |
+| #46473 (308:4:0) 2 | | 15.6 | | | 19.2 | 18.9 | large motion, thin limbs |
+| #49982 (459:21:4) 2 | | 16.0 | | | 19.4 | 25.0 | thin limbs |
+| #80497 (24:6:1) 3 | monster | 16.8 | | | 19.6 | | five thin necks that cross |
+| #99349 (344:15:1) 1 | equipment | 17.0 | | | 15.8 | | |
+| #130406 (1058:76:3) 3 | | 17.7 | | | | | |
+| #37430 (24:18:2) 3 | monster | 18.5 | | | | | |
+
+The causes, from the parted error, the flow fields and the error maps:
+
+- **The flow, not the colours.** In every listed case "flow only" equals the total, and "colour only" equals the input
+  frames' own BC7 error. RIFE picks a slightly different flow and mask from the slightly different frames. The flow
+  differs by a fraction of a pixel (a mean of 0.17 to 0.85 px on the worst twelve). Because the merge warps nearest,
+  that fraction becomes a whole texel: a speckle, a limb's edge or a ridge lands one texel away. The error maps show it
+  as a scatter of single texels over the whole sprite, densest along the edges and inside dithered areas. It is not a
+  block pattern.
+- **Not BC7-specific.** Noise of the same RMS without any block structure gives the same total (25.14 against
+  25.31 dB) and beats UltraFast on only 42 % of the in-betweens with at least 400 opaque texels. The
+  in-between's error follows the input frames' error (correlation 0.70).
+- **Where it is worst:** very small frames (a flip is a large share of them), dithered or speckled sprites, and pairs
+  that move far, where RIFE itself is unsure. No body or hue stands out. Ghosts play no part: the package's stay below
+  the cutoff, and only 2 of the 1594 pairs hold one at all.
+- **The flips are the silhouette moving by one texel**: 19,182 of the 19,872 lie on the lossless in-between's edge (a
+  neighbour of the other coverage).
+- **Equally plausible.** Two measures were taken on the whole clips of the 15 dumped subjects: the texels opaque in an
+  in-between but in neither of its frames, and the RMS distance of its opaque texels to the nearer frame.
+  - The first stays within 4 % between lossless, UltraFast and "don't care", but on the tiny #37430 and #66610 (37
+    and 6 texels in all), where BC7 has fewer.
+  - On the second, the UltraFast in-between is nearer its frames on 12 of the 15 clips, by up to 6 % (16 % on
+    #37430). It is farther on the tiny #125108 and #66610.
+
+  The BC7 in-between is another in-between, not a worse one.
+
+**The pictures.** `classic_span rife-dump` writes whole clips from the lossless, UltraFast and "don't care" frames.
+`classic_rife_sheets.py` draws, for each subject:
+
+- a sheet: the pair's frames; the three in-betweens at 1x and 3x nearest; the difference ×4, with the coverage flips
+  in magenta; and the flow from lossless and from UltraFast, with their distance;
+- a flicker mp4: lossless, UltraFast, lossless, "don't care", 0.7 s each, at 1x and 3x;
+- the whole clip at the game's RIFE x2 timing (in-betweens shown for 0.04 s), the three inputs side by side, at 1x and
+  at 3x (2x for the 145x226 #39812).
+
+They are in `uodynamapper-scratch/rife-bc7-visual/`:
+
+- `w1` to `w8`: the eight worst real-size ones;
+- `big-1432-5-1`: a 200 px animal;
+- `stand-1541-2-1`: the worst stand or idle in-between;
+- `tiny-454-27-0` and `tiny-699-31-0`: the worst overall;
+- `median-*`: three median ones;
+- `overview.png`: every subject's in-betweens and differences at 3x;
+- `ingame-*.mp4`: the in-game A/B below.
+
+**In game.** Dynamapper (c6203786) ran in a private headless KWin through the control socket, Classic style and
+sources, RIFE x2, upscale off. Body 1541 walked east and then stood, playing its idle (1541:2:1, the worst stand or
+idle in-between of the sample, 21.7 dB). It ran at zoom 1 and at zoom 0.4 (2.5x), once from the RGBA8 package and once
+from the BC7 UltraFast one, after a warm-up walk had made the in-betweens. `ingame-1541-zoom0.4.mp4` and
+`ingame-1541-zoom1-2x.mp4` (zoom 1 shown 2x nearest) put the two side by side. Frames taken at the same moments show
+the same creature, with no edge noise or block to tell the packages apart. The two runs are not frame-locked, so a
+side-by-side shows the timing differences more than the in-betweens. (Body 205, chosen for its walk, turned out to be
+a server body drawn as a rabbit a few texels tall, so it was dropped.)
+
+**Verdict.**
+
+- **Not visible in motion at zoom 1, nor in game at 2.5x.** Each in-between shows for 40 ms between two package
+  frames. The BC7 one differs from the lossless one as a second RIFE run on slightly different frames would: single
+  texels moved, never a block, a ghost or a colour shift. Judged from the sequence videos' frames side by side, the
+  three clips are hard to tell apart at 1x, even for the worst ones.
+- **Visible only side by side, magnified, on the worst cases.** At 3x, the toggle shows texels jumping along the edges
+  and in dithered areas. In those cases (a 30 px death fall, crossing necks) the lossless in-between is itself a smear.
+  The BC7 one is no worse a picture.
+- **"Don't care" does not fix it.** It moves the average by +1.2 dB, the median by +2.0 dB and the p10 by +2.8 dB, and
+  halves the in-betweens under 20 dB. The worst stay where they are (11.2 against 11.3 dB), because the flow's
+  sensitivity to any input change remains. On this evidence the RIFE gain alone does not justify +3.4 to 4.7 % on
+  disk.
+- **No cheaper targeted fix exists:**
+  - Snapping the alpha before RIFE changes nothing (13 of 19,872 flips): the decoded Classic alpha is already
+    nearly binary.
+  - Rounding to 1555 is worse, by 0.26 dB.
+  - Encoding the edge blocks differently cannot help, since structureless noise does as much harm.
+  - In-betweens identical to lossless need the lossless frames: the RGBA8 Classic package, or in-betweens baked at pack
+    time.
 
 ## Atmosphere maps and light textures
 
@@ -1302,7 +1450,12 @@ their alpha and transparent texels, `palettes <dir> <pages>` the Classic animati
 and `split` the GPU's UltraFast against the two dispatches. `--bin classic_span psnr <dir> <pages> <frames>` gives
 "BC7 frames as they show" on frames sampled from an RGBA8888 `mobile_anim_cc.uddp` (with the dilated UltraFast input
 since 2026-11-23), `--bin classic_span rife <dir> <animations> <pairs>` the RIFE in-betweens of the first `pairs` frame
-pairs of `animations` animations from each input against those from lossless, raw and after the game's encode, and `--bin classic_span frames
+pairs of `animations` animations from each input against those from lossless, raw and after the game's encode,
+`--bin classic_span rife-rank <dir> <kernel name> <animations> <pairs> <tsv>` ranks them with the runtime fixes and
+noise controls of "RIFE in-betweens from the BC7 frames, looked at", and `--bin classic_span rife-dump <dir> <kernel
+name> <out dir> <#record|body:action:direction> ...` writes whole clips for `python3 -I -B classic_rife_sheets.py
+<dump dir> <out dir> <today tsv> <don't care tsv> <record>:<pair>:<tag> ...` (run `rife-dump` with both builds into two
+folders and copy the "don't care" build's `dontcare` folders into the first). `--bin classic_span frames
 <dir> <out dir> <name>=<body>:<action>:<direction>:<frame> ...` writes each named frame lossless, BC7 UltraFast,
 VeryFast and BC1, and SPAN 2x of the lossless and the UltraFast frame, as raw RGBA (`<name>_<variant>_<w>x<h>.rgba`);
 `python3 -I -B classic_span_sheets.py <out dir> <sheets dir>` draws their sheets and the flicker pictures. For the
