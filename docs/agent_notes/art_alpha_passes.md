@@ -26,10 +26,11 @@ texel's colour (the packages' black) into an edge:
   art in `art/ground.wesl`, mobiles through `sprite_page_tap` and `mobile_frame_tap`). The art page atlases
   (`create_art_atlas_image`, statics_draw.rs) and the mobile frame atlases (`atlas_image`, frame_atlas.rs) set no
   sampler, so they get Bevy's default one, nearest (`ImagePlugin::default_nearest()`, app.rs; bevy_render's
-  `GpuImage` resolves `ImageSampler::Default` to it). `pixel_art_atlas_uv_iq` only moves the point inside the texel
-  the plain uv lies in, so the tap is nearest at every zoom; `enable_linear_filtering` (on in UOD-Painterly) reaches
-  land and EC item surfaces only. The SPAN 2x frames and the RIFE in-betweens are frames in the same atlases, drawn
-  the same way; the crossfade of two frames (`mobile_frames_mix`) blends premultiplied.
+  `GpuImage` resolves `ImageSampler::Default` to it). The tap reads the centre of the texel the uv lies in, kept
+  inside the sprite's rectangle (`pixel_art_atlas_nearest_uv`, pixel_art_filters.wesl), so it is nearest at every
+  zoom; `enable_linear_filtering` (on in UOD-Painterly) reaches land and EC item surfaces only. The SPAN 2x frames
+  and the RIFE in-betweens are frames in the same atlases, drawn the same way; the crossfade of two frames
+  (`mobile_frames_mix`) blends premultiplied.
 - **Client filter** (`texture_filter = 1`: KR-like): `client_filtered_rect` and `mobile_frame_client_filtered` load the
   texels and blend them premultiplied, the emulated mip box included.
 - **Filtered wide water** (zoom out): premultiplied taps.
@@ -39,6 +40,15 @@ on and off) with the iq point replaced by the plain uv match exactly for EC art 
 0.4, 1.4 % of the pixels differ, as single pixel columns along the roofs where float rounding puts the point in the
 neighbouring texel; with a linear sampler every magnified texel's interior would have changed. The Classic art's
 edges stay stair-stepped and binary in every style but KR-like.
+
+Until 2026-11-23 these taps went through `pixel_art_atlas_uv_iq`, the land's seam filter, which under a nearest
+sampler only moved the point within its texel and, through its float rounding, took the left or upper texel where a
+screen pixel's centre lies exactly on a texel edge. `pixel_art_atlas_nearest_uv` rounds the texel position to 1/256
+of a texel, as the sampler's sub-texel precision does, takes the texel it lies in (the right or lower one on an edge)
+and taps its centre, so the draw and the 1x1 pick pass (`pick_clip`, art/picking.wesl), whose interpolated uvs differ
+in their last bits, take the same texel. At zoom 0.4 (2.5 pixels a texel) the Classic roofs at Britain 1495,1697
+change in 1.5 % of their pixels, every one in the columns whose centres lie on texel edges (one in five), each now the
+texel to its right: the texels show 2, 3, 2, 3 pixels wide instead of 3, 2.
 
 ## The edge factor, removed 2026-11-22
 

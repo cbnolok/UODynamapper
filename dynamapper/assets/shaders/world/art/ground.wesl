@@ -17,7 +17,7 @@ import package::shaders::postprocess::global_lighting::{apply_global_lighting_rg
 import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
-import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq};
+import package::shaders::world::pixel_art_filters::{pixel_art_atlas_nearest_uv};
 import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
 import package::shaders::world::art::atlas_pages::{art_page, art_page_varying, art_page_sample, art_page_atlas_size,
     art_page_client_filtered};
@@ -147,7 +147,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
             color = art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, inst.uv_min, inst.uv_max,
                 inst.texture_stretch > 0.0, ground_uv_dx, ground_uv_dy, scene.client_view_scale);
         } else {
-            let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
+            let sample_uv = pixel_art_atlas_nearest_uv(uv, inst.uv_min, inst.uv_max, atlas_size);
             color = art_page_sample(art_atlas, art_atlas_enhanced, art_atlas_sampler, page, sample_uv);
         }
     }

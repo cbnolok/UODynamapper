@@ -16,7 +16,7 @@ import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visu
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::land::noise::noise_2d;
-import package::shaders::world::pixel_art_filters::pixel_art_atlas_uv_iq;
+import package::shaders::world::pixel_art_filters::pixel_art_atlas_nearest_uv;
 import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
 import package::shaders::world::art::atlas_pages::{ArtPage, art_page, art_page_varying, art_page_sample,
     art_page_atlas_size, art_page_client_filtered};
@@ -467,7 +467,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
     let atlas_size = art_page_atlas_size(art_atlas, art_atlas_enhanced, page);
-    let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
+    let sample_uv = pixel_art_atlas_nearest_uv(uv, inst.uv_min, inst.uv_max, atlas_size);
     var color: vec4<f32>;
     if (use_ec_item_water) {
         let energy = global_light.ambient_strength

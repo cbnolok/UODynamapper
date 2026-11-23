@@ -1031,7 +1031,7 @@ taps never show that colour: KR-like's client filter, SPAN and RIFE. Yet the ker
 on the black that the packers store there, and the edge blocks' colour line runs from black to the sprite's colour.
 
 No other tap of the renderer shows it either. The pixel-art filter of Classic, Enhanced and UOD-Painterly
-(`pixel_art_atlas_uv_iq`) samples the art and mobile frame atlases nearest, through Bevy's default sampler, so it
+(`pixel_art_atlas_nearest_uv`) samples the art and mobile frame atlases nearest, through Bevy's default sampler, so it
 never blends a transparent texel into an edge (art_alpha_passes.md, "Which taps filter sprite art"). `classic_formats`
 still measures a straight bilinear tap, as a model of a filter that would: on the Classic mobile pages its edges move
 from 22.29 to 26.32 dB against the premultiplied tap and from 37.77 to 27.09 dB against the lossless page's straight
