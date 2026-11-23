@@ -540,6 +540,10 @@ pub fn sys_render_upload_mobile_frames(
 }
 
 #[cfg(test)]
+#[path = "frame_atlas/nearest_uv_tests.rs"]
+mod nearest_uv_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

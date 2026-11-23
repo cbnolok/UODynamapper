@@ -50,6 +50,19 @@ in their last bits, take the same texel. At zoom 0.4 (2.5 pixels a texel) the Cl
 change in 1.5 % of their pixels, every one in the columns whose centres lie on texel edges (one in five), each now the
 texel to its right: the texels show 2, 3, 2, 3 pixels wide instead of 3, 2.
 
+The old filter also left the sprite's rectangle. A mirrored mobile card puts the frame's right edge (`uv_max`) on its
+screen-left side, where the rasterizer keeps a pixel centred on the card's edge; that pixel's uv clamped to `uv_max`
+and the seam filter left it there, so the nearest tap took the column right of the frame: its gutter. The frame
+uploads write the frames alone, so a gutter keeps the texels of the frames its page held before it emptied, and the
+column showed them as a pale line the frame's height beside the wing tips of the Enhanced daemon and kirin walking
+east at zoom 0.4, on the frames whose card edge lay on pixel centres, one or two frames at a time (the
+`strides-curated` videos of 2026-11-22). Recorded on the walking field (renderer-reference-validation) after other
+bodies had filled the pages, the daemon's east walk and run showed it in 37 and 39 frames with the old filter, in
+none with the new one, and in none walking west, southwest or northeast with either (crossfade; the same run with
+RIFE x4 in-betweens and two runs of the kirin's east walk showed no line with either filter: whether a card's edge
+meets the pixel centres depends on the frame's size and anchor and on where the walker stands within its pixel).
+`frame_atlas/nearest_uv_tests.rs` checks on the GPU that no tap at any zoom or on the edges reads past the frame.
+
 ## The edge factor, removed 2026-11-22
 
 From be44e69c ("Start implementing double pass art pipeline", no rationale recorded) until 2026-11-22 the transparent
