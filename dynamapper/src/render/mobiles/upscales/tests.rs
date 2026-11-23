@@ -343,6 +343,31 @@ fn a_body_upscales_whole_or_not_at_all() {
 }
 
 #[test]
+fn off_upscales_none_always_all_and_balanced_what_the_file_picks() {
+    use spec::{BodyUpscale, MobileUpscaleSpec};
+    use MobileUpscale::{Always, Balanced, Off};
+    let never_asked = || -> bool { panic!("the size rule is asked only in Balanced, for a body not listed") };
+    for listed in [None, Some(BodyUpscale::Always), Some(BodyUpscale::Never)] {
+        assert!(!body_choice(Off, listed, never_asked));
+        assert!(body_choice(Always, listed, never_asked));
+    }
+    assert!(body_choice(Balanced, Some(BodyUpscale::Always), never_asked));
+    assert!(!body_choice(Balanced, Some(BodyUpscale::Never), never_asked));
+    assert!(body_choice(Balanced, None, || true) && !body_choice(Balanced, None, || false));
+
+    // Through the resource: a body without frames fits the size rule, unless the file keeps it at 1x.
+    let spec = MobileUpscaleSpec::decode("Upscale.kdl", "body 400 package=\"cc\" upscale=\"never\"").expect("spec");
+    let mut upscales = MobileUpscales::new(spec);
+    let packages = AnimPackages::default();
+    let classic = clip_key(0);
+    let enhanced = ClipKey { source: AnimSource::Enhanced, ..classic };
+    assert!(!upscales.body_upscales(classic, &packages, false, Balanced));
+    assert!(upscales.body_upscales(classic, &packages, false, Always));
+    assert!(upscales.body_upscales(enhanced, &packages, false, Balanced));
+    assert!(!upscales.body_upscales(enhanced, &packages, false, Off));
+}
+
+#[test]
 fn a_body_whose_rife_cards_are_too_large_upscales_only_without_in_betweens() {
     // Each frame fits, but the two hang far apart from one anchor: the card holding both, the RIFE in-between's, is
     // twice as wide, and the clip's RIFE sequence needs its canvas. The crossfade draws the two frames apart.

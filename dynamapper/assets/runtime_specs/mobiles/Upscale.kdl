@@ -1,0 +1,28 @@
+// Which creatures' and characters' animations the SPAN 2x upscale sharpens in its Balanced mode (Preferences, Mobile
+// upscale; `world_rendering.mobile_upscale = "balanced"`), while the view magnifies the art 1.5 times or more. Off
+// upscales none, and Always upscales every body and does not read the `body` entries below: it is the "upscale
+// everything" choice, whatever the cost. Dynamapper reads your copy, cache/runtime_specs/mobiles/Upscale.kdl beside the
+// assets folder, in place of this file when it exists, at startup: copy this file there and edit the copy. A copy that
+// does not read leaves this file in force, with a warning naming the line, until it is fixed.
+//
+// A body upscales whole or not at all: every action and direction at 2x, or all at 1x, so its sharpness does not
+// change from one action to the next. A rider and its mount are each a body of their own.
+//
+//   default max_canvas=<side>
+//     The size rule, for the bodies not listed: a body upscales when each of its animations (or, in a RIFE in-between
+//     mode, each of its RIFE sequences, whose in-between cards hold two frames) fits a canvas of <side> by <side>
+//     pixels or fewer, its frames with a 2-pixel border, rounded up to 8 per side. <side> is 8 to 260; without this
+//     line, 260. At 260 the dragons, wyrms, daemons and great UOP bodies play at 1x: a larger body upscales in tiles,
+//     several runs of the network per frame, and takes seconds to finish.
+//
+//   body <id> [<last id>] [package="cc"|"ec"] upscale="always"|"never"
+//     The body of in-game id <id> (the server's, as a mobile's body is sent), or every id from <id> to <last id>:
+//     "always" upscales it whatever its size (in tiles when large), "never" keeps it at 1x. With package, the entry
+//     holds for that package's animations only, "cc" the Classic ones and "ec" the Enhanced ones, and comes before an
+//     entry without one. A body is listed once per package, and once without one.
+//
+// For example:
+//   body 12 package="cc" upscale="always"   // the Classic dragon at 2x
+//   body 400 401 upscale="never"            // human bodies at 1x in both packages
+
+default max_canvas=260

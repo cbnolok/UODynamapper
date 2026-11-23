@@ -1,15 +1,17 @@
-//! The SPAN upscales of the mobiles' frames (`MobileUpscale::SpanX2`): while the view magnifies the art enough
+//! The SPAN upscales of the mobiles' frames (`MobileUpscale`): while the view magnifies the art enough
 //! (`MobileUpscaleGate`), the sequence a mobile shows at 1x, its clip or the clip's RIFE sequence (rife_in_betweens.rs),
 //! is upscaled 2x by the SPAN network (uot-gpu-compute's upscale) frame by frame on the GPU, and the mobile shows the
 //! 2x frames at the same size in the world once all are made. The frames never leave the GPU: the render world reads
 //! each from the frame atlas into a SPAN workspace and writes its 2x canvas back into the atlas (render.rs), encoded to
 //! BC7 for the BC7 atlas.
 //!
-//! A body upscales whole or not at all (`MobileUpscales::body_upscales`): only a body each of whose sequences, the clip
-//! of every action and direction, or in a RIFE mode its RIFE sequence, fits the largest canvas upscaled
-//! (`UPSCALE_MAX_CANVAS_PIXELS`) is, so its sharpness does not change from one action to the next. A larger body (the
-//! dragons, the daemons, the great UOP bodies) plays at 1x at any zoom; its RIFE in-betweens, which have no size
-//! limit, are made as for any body. A rider and its mount are each a body of their own.
+//! A body upscales whole or not at all (`MobileUpscales::body_upscales`), so its sharpness does not change from one
+//! action to the next: Always upscales every body; Balanced those runtime_specs/mobiles/Upscale.kdl lists as
+//! `always` (spec.rs), none it lists as `never`, and of the rest only a body each of whose sequences, the clip of every
+//! action and direction, or in a RIFE mode its RIFE sequence, fits the file's largest canvas (`max_canvas`, at most
+//! `UPSCALE_MAX_CANVAS_SIDE`). At 260, a larger body (the dragons, the daemons, the great UOP bodies) plays at 1x at
+//! any zoom in Balanced; its RIFE in-betweens, which have no size limit, are made as for any body. A rider and its
+//! mount are each a body of their own.
 //!
 //! An upscaled sequence is an atlas entry of its own in the atlas's upscaled pool (`AtlasPool::Upscaled`), so it never
 //! empties the pages of the 1x frames. Each frame keeps the transparent border the network sees around it
@@ -32,6 +34,7 @@
 //! again.
 
 pub mod render;
+pub mod spec;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,10 +53,11 @@ use super::frame_atlas::{AtlasFormat, AtlasPool, AtlasRect, MobileFrameAtlas, MO
 use super::in_between::union_placement;
 use super::placement::FramePlacement;
 use super::rife_in_betweens::{placement_size, InBetweenKey, MobileInBetweens};
+use spec::{BodyUpscale, MobileUpscaleSpec};
 
 /// The magnification (screen pixels per art pixel) the upscales start at, and the one they stop below: apart, so a
 /// zoom around one does not switch back and forth. They apply to the bodies that upscale at all
-/// (`UPSCALE_MAX_CANVAS_PIXELS`).
+/// (`MobileUpscales::body_upscales`).
 pub const UPSCALE_ON_MAGNIFICATION: f32 = 1.5;
 pub const UPSCALE_OFF_MAGNIFICATION: f32 = 1.35;
 /// A sequence takes atlas room while drawn this recently, and its job runs first.
@@ -64,11 +68,11 @@ const UPSCALE_RESUME_SECS: f64 = 10.0;
 /// A job's canvas, its largest frame with the border, is rounded up to this many pixels, so the jobs of a body's
 /// actions share a workspace.
 pub const UPSCALE_CANVAS_MULTIPLE: u32 = 8;
-/// The largest canvas upscaled, in pixels: 260 by 260 takes about 90 MB of workspace and 30 ms on the Radeon 880M. The
-/// rule is per body (`MobileUpscales::body_upscales`): a body one of whose sequences, the clip of any action and
-/// direction or in a RIFE mode its RIFE sequence, needs a larger canvas plays at 1x in all of them. The RIFE
-/// in-betweens have no such limit.
-pub const UPSCALE_MAX_CANVAS_PIXELS: u32 = 260 * 260;
+/// The side of the largest canvas upscaled whole, and its pixels: 260 by 260 takes about 90 MB of workspace and 30 ms
+/// on the Radeon 880M. A larger sequence upscales in tiles (`UpscalePlan`). The Balanced size rule's largest canvas
+/// (spec.rs, `max_canvas`) is at most this side, and is this side without the file.
+pub const UPSCALE_MAX_CANVAS_SIDE: u32 = 260;
+pub const UPSCALE_MAX_CANVAS_PIXELS: u32 = UPSCALE_MAX_CANVAS_SIDE * UPSCALE_MAX_CANVAS_SIDE;
 /// The side of the workspace a sequence too large for one canvas upscales on, in tiles: the largest multiple of
 /// `UPSCALE_CANVAS_MULTIPLE` whose square is within `UPSCALE_MAX_CANVAS_PIXELS` (256).
 pub const UPSCALE_TILE_SIDE: u32 =
@@ -77,25 +81,30 @@ pub const UPSCALE_TILE_SIDE: u32 =
 /// goes first.
 const UPSCALE_DISTANCE_STEP_TILES: f32 = 1.0;
 
-/// Whether the mobiles' frames are upscaled while the view magnifies them. Kept in the app-written world rendering
-/// settings as `world_rendering.mobile_upscale`.
+/// Which mobiles' frames the SPAN network upscales 2x while the view magnifies them. Kept in the app-written world
+/// rendering settings as `world_rendering.mobile_upscale`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MobileUpscale {
     /// The frames as stored.
     #[default]
     Off,
-    /// The SPAN network's 2x frames.
-    SpanX2,
+    /// The bodies runtime_specs/mobiles/Upscale.kdl picks: those it lists as `always`, and of those it does not list,
+    /// the ones within its size rule. Settings written before the three modes call it `span_x2`.
+    #[serde(alias = "span_x2")]
+    Balanced,
+    /// Every body, the largest in tiles; the file's `body` entries do not apply.
+    Always,
 }
 
 impl MobileUpscale {
-    pub const ALL: [Self; 2] = [Self::Off, Self::SpanX2];
+    pub const ALL: [Self; 3] = [Self::Off, Self::Balanced, Self::Always];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Off",
-            Self::SpanX2 => "SPAN 2x",
+            Self::Balanced => "Balanced",
+            Self::Always => "Always",
         }
     }
 
@@ -103,7 +112,7 @@ impl MobileUpscale {
     fn atlas_pages(self) -> u32 {
         match self {
             Self::Off => 0,
-            Self::SpanX2 => MOBILE_ATLAS_UPSCALED_PAGES,
+            Self::Balanced | Self::Always => MOBILE_ATLAS_UPSCALED_PAGES,
         }
     }
 }
@@ -325,6 +334,8 @@ impl UpscalePriority {
 /// The 2x sequences asked for, the jobs listed for the render world this frame, and the jobs it finished since.
 #[derive(Resource, Default)]
 pub struct MobileUpscales {
+    /// Which bodies Balanced upscales (runtime_specs/mobiles/Upscale.kdl).
+    spec: MobileUpscaleSpec,
     entries: HashMap<InBetweenKey, UpscaleEntry>,
     /// The canvases of each body drawn (`body_upscales`), by source and body.
     bodies: HashMap<(AnimSource, u32), BodyCanvases>,
@@ -336,11 +347,22 @@ pub struct MobileUpscales {
 }
 
 impl MobileUpscales {
-    /// Whether the sequences of `key`'s body upscale, the RIFE sequences when `rife`, else the clips: all of them when
-    /// the largest canvas they need over every action and direction (`body_canvases`, from its package's frame
-    /// records, found once per body) fits, else none.
-    pub fn body_upscales(&mut self, key: ClipKey, packages: &AnimPackages, rife: bool) -> bool {
-        let canvases = *self.bodies.entry((key.source, key.body)).or_insert_with(|| {
+    pub fn new(spec: MobileUpscaleSpec) -> Self {
+        Self { spec, ..Self::default() }
+    }
+
+    /// Whether the sequences of `key`'s body upscale in `mode`, the RIFE sequences when `rife`, else the clips: all of
+    /// them or none (`body_choice`). The size rule's canvases over every action and direction (`body_canvases`) come
+    /// from its package's frame records, found once per body when the rule is asked.
+    pub fn body_upscales(&mut self, key: ClipKey, packages: &AnimPackages, rife: bool, mode: MobileUpscale) -> bool {
+        let max_pixels = self.spec.max_canvas_pixels();
+        let listed = self.spec.body(key.source, key.body);
+        body_choice(mode, listed, || canvas_within(self.body_canvases(key, packages, max_pixels).of(rife), max_pixels))
+    }
+
+    /// The largest canvases of `key`'s body, found once; logged when past `max_pixels`.
+    fn body_canvases(&mut self, key: ClipKey, packages: &AnimPackages, max_pixels: u32) -> BodyCanvases {
+        *self.bodies.entry((key.source, key.body)).or_insert_with(|| {
             let package: Option<&dyn MobileAnimClips> = match key.source {
                 AnimSource::Classic => packages.classic.as_deref().map(|package| package as _),
                 AnimSource::Enhanced => packages.enhanced.as_deref().map(|package| package as _),
@@ -350,14 +372,13 @@ impl MobileUpscales {
                     .filter_map(move |direction| package.clip_extents(key.body, action, direction)))
             }));
             for (rife, canvas) in [(false, canvases.clips), (true, canvases.rife)] {
-                if !canvas_fits(canvas) {
-                    debug!("Mobile upscales: {:?} body {} needs a {}x{} canvas{}, too large, so it plays at 1x.",
-                        key.source, key.body, canvas.x, canvas.y, if rife { " with RIFE" } else { "" });
+                if !canvas_within(canvas, max_pixels) {
+                    debug!("Mobile upscales: {:?} body {} needs a {}x{} canvas{}, past the size rule, so Balanced \
+                        plays it at 1x.", key.source, key.body, canvas.x, canvas.y, if rife { " with RIFE" } else { "" });
                 }
             }
             canvases
-        });
-        canvas_fits(canvases.of(rife))
+        })
     }
 
     /// Asks for the 2x frames of the sequence of `key`, shown by clip `source`, drawn at `now` with `priority`.
@@ -529,7 +550,24 @@ fn canvas_for(largest: UVec2) -> UVec2 {
 
 /// Whether a canvas upscales whole: within `UPSCALE_MAX_CANVAS_PIXELS`.
 fn canvas_fits(canvas: UVec2) -> bool {
-    canvas.x * canvas.y <= UPSCALE_MAX_CANVAS_PIXELS
+    canvas_within(canvas, UPSCALE_MAX_CANVAS_PIXELS)
+}
+
+fn canvas_within(canvas: UVec2, max_pixels: u32) -> bool {
+    canvas.x * canvas.y <= max_pixels
+}
+
+/// Whether a body upscales in `mode`, given its entry in the spec (`listed`) and whether it `fits` the size rule,
+/// asked only when needed: the one place the choice is made. (A package that comes with a body's 2x frames would answer
+/// before it.)
+fn body_choice(mode: MobileUpscale, listed: Option<BodyUpscale>, fits: impl FnOnce() -> bool) -> bool {
+    match (mode, listed) {
+        (MobileUpscale::Off, _) => false,
+        (MobileUpscale::Always, _) => true,
+        (MobileUpscale::Balanced, Some(BodyUpscale::Always)) => true,
+        (MobileUpscale::Balanced, Some(BodyUpscale::Never)) => false,
+        (MobileUpscale::Balanced, None) => fits(),
+    }
 }
 
 /// The largest canvas, in pixels, the sequences of a body would upscale on, over all its clips: the clips themselves

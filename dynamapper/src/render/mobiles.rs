@@ -92,7 +92,7 @@ impl Plugin for MobileSpritesPlugin {
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
             .init_resource::<rife_in_betweens::MobileInBetweens>()
-            .init_resource::<upscales::MobileUpscales>()
+            .insert_resource(upscales::MobileUpscales::new(upscales::spec::MobileUpscaleSpec::load()))
             .init_resource::<upscales::MobileUpscaleGate>()
             .insert_resource(MobileStrides::load())
             .add_systems(Update, (

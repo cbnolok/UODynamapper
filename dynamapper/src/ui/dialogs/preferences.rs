@@ -685,11 +685,13 @@ pub fn sys_render_preferences_dialog(
                                         })
                                         .response
                                         .on_hover_text(
-                                            "Whether the mobiles' frames are upscaled while zoomed in. Off: the frames as \
-                                             stored. SPAN 2x: once the view magnifies the art 1.5 times or more, each \
-                                             animation shown, with its RIFE in-betweens, is upscaled 2x by the SPAN network \
-                                             on the GPU, and shows at 2x from the start of a cycle once all its frames are \
-                                             made. Switching remakes the frame atlases.",
+                                            "Which mobiles' frames are upscaled while zoomed in: once the view magnifies \
+                                             the art 1.5 times or more, each animation shown, with its RIFE in-betweens, is \
+                                             upscaled 2x by the SPAN network on the GPU, and shows at 2x from the start of a \
+                                             cycle once all its frames are made. Off: the frames as stored. Balanced: the \
+                                             bodies runtime_specs/mobiles/Upscale.kdl picks, by default all but the largest \
+                                             (dragons, wyrms, daemons, great bodies). Always: every body, the largest in \
+                                             tiles, which take seconds each. Switching remakes the frame atlases.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

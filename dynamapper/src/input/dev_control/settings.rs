@@ -276,8 +276,12 @@ mod tests {
             ControlSetting::MobileInBetweenFrames(MobileInBetweenFrames::Off));
         assert_eq!(ControlSetting::parse("mobile_in_between_frames", json!("rife_x4")).unwrap(),
             ControlSetting::MobileInBetweenFrames(MobileInBetweenFrames::RifeX4));
+        assert_eq!(ControlSetting::parse("mobile_upscale", json!("balanced")).unwrap(),
+            ControlSetting::MobileUpscale(MobileUpscale::Balanced));
         assert_eq!(ControlSetting::parse("mobile_upscale", json!("span_x2")).unwrap(),
-            ControlSetting::MobileUpscale(MobileUpscale::SpanX2));
+            ControlSetting::MobileUpscale(MobileUpscale::Balanced));
+        assert_eq!(ControlSetting::parse("mobile_upscale", json!("always")).unwrap(),
+            ControlSetting::MobileUpscale(MobileUpscale::Always));
         assert_eq!(ControlSetting::parse("mobile_upscale", json!("off")).unwrap(),
             ControlSetting::MobileUpscale(MobileUpscale::Off));
         assert_eq!(ControlSetting::parse("mobile_stop", json!("at_once")).unwrap(),

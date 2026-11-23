@@ -157,8 +157,9 @@ pub struct SectWorldRendering {
     /// or the two crossfaded (render/mobiles/in_between.rs), with one or three frames made by RIFE between each two
     /// in the RIFE modes (render/mobiles/rife_in_betweens.rs).
     pub mobile_in_between_frames: crate::render::mobiles::in_between::MobileInBetweenFrames,
-    /// Whether the mobiles' frames, and their RIFE in-betweens, are upscaled 2x by the SPAN network on the GPU while
-    /// the view magnifies them 1.5 times or more (render/mobiles/upscales.rs). Off by default.
+    /// Which mobiles' frames, and their RIFE in-betweens, the SPAN network upscales 2x on the GPU while the view
+    /// magnifies them 1.5 times or more (render/mobiles/upscales.rs): none (off, the default), the bodies
+    /// runtime_specs/mobiles/Upscale.kdl picks (balanced, written `span_x2` before), or all (always).
     pub mobile_upscale: crate::render::mobiles::upscales::MobileUpscale,
     /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
     /// (world/mobile_motion.rs).
@@ -1566,7 +1567,8 @@ mod tests {
         assert_eq!(load.value.mobile_in_between_frames, MobileInBetweenFrames::Off);
     }
 
-    /// A cache copy written before the mobiles' upscale existed loads it off, and SPAN 2x round-trips.
+    /// A cache copy written before the mobiles' upscale existed loads it off, one written before its three modes loads
+    /// SPAN 2x as Balanced, and Always round-trips.
     #[test]
     fn world_rendering_cache_without_mobile_upscale_loads_it_off() {
         use crate::render::mobiles::upscales::MobileUpscale;
@@ -1581,13 +1583,19 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
         assert_eq!(load.value.mobile_upscale, MobileUpscale::Off);
 
+        let span_x2 = BUNDLED_WORLD_RENDERING.replace("mobile_upscale = \"off\"", "mobile_upscale = \"span_x2\"");
+        assert_ne!(span_x2, BUNDLED_WORLD_RENDERING);
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &span_x2, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.mobile_upscale, MobileUpscale::Balanced);
+
         let mut picked = bundled.clone();
-        picked.mobile_upscale = MobileUpscale::SpanX2;
+        picked.mobile_upscale = MobileUpscale::Always;
         let written = toml::to_string_pretty(&picked).expect("serialize");
-        assert!(written.contains("mobile_upscale = \"span_x2\""), "{written}");
+        assert!(written.contains("mobile_upscale = \"always\""), "{written}");
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
-        assert_eq!(load.value.mobile_upscale, MobileUpscale::SpanX2);
+        assert_eq!(load.value.mobile_upscale, MobileUpscale::Always);
     }
 
     /// A cache copy written before the mobiles' stop existed loads it half a step later, and at once round-trips.
