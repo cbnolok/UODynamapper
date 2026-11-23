@@ -2,14 +2,24 @@
 //! the steps, so a big Enhanced creature walking a tile in 0.4 s skates. Matched to the ground, a cycle lasts the time
 //! the steps take to cover the clip's stride: how far the body's planted feet travel in one cycle of the clip, measured
 //! offline on the frames (`udd-cli tool strides measure`) and stored in the animation packages with the hash of the
-//! frames measured, or, for the clips the measurement does not follow, counted by hand ([`CURATED_STRIDES`]).
+//! frames measured, or, for the clips the measurement does not follow, counted by hand (`runtime_specs/mobiles/
+//! Strides.kdl`, [`CuratedStrides`]).
 
 use std::collections::hash_map::{Entry, HashMap};
+use std::ops::RangeInclusive;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use bevy::prelude::*;
+use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use udd_assets::animation::mobile_strides::MobileAnimClips;
+use uot_kdl::ast::Node;
+use uot_kdl::span::LineSpan;
+use uot_kdl::strict::{self, NodeSchema};
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
+use crate::console_logger::{self, LogAbout, LogSev};
+use crate::settings::runtime_specs::SpecFiles;
 use super::clips::{AnimPackages, AnimSource};
 
 /// How a mobile's walk and run cycles are paced. Kept in the app-written world rendering settings as
@@ -44,7 +54,7 @@ const MIN_OWN_CYCLE_FRACTION: f32 = 1.0 / 3.0;
 const MAX_OWN_CYCLE_FRACTION: f32 = 3.0;
 
 /// How far a clip's planted feet travel in one cycle, in side tiles, and whether it was counted by hand
-/// ([`CURATED_STRIDES`]) rather than measured into the package.
+/// ([`CuratedStrides`]) rather than measured into the package.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stride {
     pub tiles: f32,
@@ -82,109 +92,47 @@ impl GroundStride {
     }
 }
 
-/// The clips whose stride stays hand-configured because the planted-foot measurement (`udd-cli tool strides
-/// measure`) does not follow them, in place of the package's. Each was counted on 2026-11-22 or 2026-11-23 on the
-/// south-west facing (44 px a side tile), from the planted foot's ground contact frame to frame on the frame strips of
-/// `udd-cli tool strides inspect --strip` (its `--pair` count on the pairs where the foot is clear, against a hand
-/// count of the foot's x), or keeps the clients' timing where no foot touches the ground; the reason says why the tool
-/// is not trusted (`docs/agent_notes/mobile_animation_motion.md`, "Curated strides"). The elves and ghosts have the
-/// humans' art, and the bodies of an entry share their frames or, the cattle, their poses. A curated stride still
-/// needs the package's stride record (one without a stride counts), and is used only while the clip's frames hash as
-/// that record says.
-const CURATED_STRIDES: [CuratedStride; 17] = [
-    CuratedStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_WALK,
-        pace: CuratedPace::Tiles(1.3),
-        reason: "counted by hand before the tool, which reads 1.34 but 1.68 on the west facing" },
-    CuratedStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_RUN,
-        pace: CuratedPace::Tiles(2.15),
-        reason: "half the pairs lose the foot and the facings read 1.96 to 2.43 (2.10)" },
-    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_HORSE_BODIES, action: CLASSIC_ACTION_WALK,
-        pace: CuratedPace::Tiles(1.05),
-        reason: "the trot's diagonal hooves swap within a pair: 3 of 5 pairs follow another hoof (1.38 to 1.73)" },
-    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_HORSE_BODIES, action: CLASSIC_ACTION_ANIMAL_RUN,
-        pace: CuratedPace::Tiles(2.25),
-        reason: "five-frame gallop: pairs match another hoof, the facings read 2.3 to 5.2, 2.4 or 4.1 by package" },
-    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_WOLF_BODIES, action: CLASSIC_ACTION_WALK,
-        pace: CuratedPace::Tiles(0.7),
-        reason: "five frames, 3 px paws: four-vote pairs read 8 and 11 px, the facings 0.69 to 1.11" },
-    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_DOG_BODIES, action: CLASSIC_ACTION_WALK,
-        pace: CuratedPace::Tiles(0.52),
-        reason: "2 px paws: the south and west facings read 0.64 on two and three of five pairs" },
-    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_CATTLE_BODIES, action: CLASSIC_ACTION_WALK,
-        pace: CuratedPace::Tiles(1.0),
-        reason: "five frames, 3 px hooves out of step: a front hoof moves back 8 to 10 px a frame while a rear one \
-            holds still, and the south facing's band misses the front hooves: 0.53 to 3.5" },
-    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_FLYING_BODIES, action: CLASSIC_ACTION_FLY,
-        pace: CuratedPace::ClientTiming, reason: "flight: no foot touches the ground, the tool follows a wing tip" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WALK,
-        pace: CuratedPace::Tiles(1.4), reason: "counted by hand before the tool; the tool agrees within 0.05" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_RUN,
-        pace: CuratedPace::Tiles(1.75),
-        reason: "half the pairs show no planted foot and theirs spread 3 to 12 px: the tool reads 1.83 to 2.03" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WAR_WALK,
-        pace: CuratedPace::Tiles(1.3), reason: "counted by hand before the tool; the tool reads 1.20" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_DAEMON_BODIES, action: ENHANCED_ACTION_RUN,
-        pace: CuratedPace::Tiles(6.8),
-        reason: "the wings sweep through the ground band: the west facing follows them (1.65), the rest 5.2 to 5.8" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_KIRIN_BODIES, action: ENHANCED_ACTION_RUN,
-        pace: CuratedPace::Tiles(6.9),
-        reason: "the hooves touch down for one pair, the lift-off pairs read 2 to 8 px: 4.2 to 7.8" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_KIRIN_BODIES, action: ENHANCED_ACTION_MOUNTED_RUN,
-        pace: CuratedPace::Tiles(6.9),
-        reason: "the run's frames ridden: the hooves touch down for one pair, the lift-off pairs read 2 to 8 px" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_OSTARD_BODIES, action: ENHANCED_ACTION_RUN,
-        pace: CuratedPace::Tiles(6.2),
-        reason: "two of ten pairs on the south-west facing: the stride is the mean of 5.9 and 9.2" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_ORC_CAPTAIN_BODIES, action: ENHANCED_ACTION_RUN,
-        pace: CuratedPace::Tiles(1.9),
-        reason: "a bounding run, in the air for two of seven frames: the legs' sweep reads 22 to 33 px (1.9 to 7.1)" },
-    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_FLYING_BODIES, action: ENHANCED_ACTION_RUN,
-        pace: CuratedPace::ClientTiming, reason: "flight: no foot touches the ground, the tool follows a wing tip" },
-];
-/// The male and female humans, their ghosts, and the elves, in both sources.
-const HUMAN_BODIES: [u32; 6] = [400, 401, 402, 403, 605, 606];
-/// The Classic horses and the nightmare (one set of frames).
-const CLASSIC_HORSE_BODIES: [u32; 5] = [177, 200, 204, 226, 228];
-/// The Classic timber, dire, grey, white and plain wolves and the hell hound (one set of frames).
-const CLASSIC_WOLF_BODIES: [u32; 6] = [23, 25, 27, 34, 98, 225];
-const CLASSIC_DOG_BODIES: [u32; 1] = [217];
-/// The Classic black and brown cows and the two bulls, drawn a little larger in the cows' poses frame for frame.
-const CLASSIC_CATTLE_BODIES: [u32; 4] = [216, 231, 232, 233];
-/// The Classic bodies whose run is their flight: the eagle, the bird, the daemons, the dragons and wyrms, the harpy,
-/// the drakes and the wyvern.
-const CLASSIC_FLYING_BODIES: [u32; 12] = [5, 6, 9, 10, 12, 30, 49, 59, 60, 61, 62, 106];
-const ENHANCED_DAEMON_BODIES: [u32; 2] = [9, 10];
-const ENHANCED_KIRIN_BODIES: [u32; 1] = [132];
-/// The orc captain and the two bodies with its frames.
-const ENHANCED_ORC_CAPTAIN_BODIES: [u32; 3] = [7, 138, 139];
-/// The desert, frenzied and forest ostards.
-const ENHANCED_OSTARD_BODIES: [u32; 3] = [210, 218, 219];
-/// The Enhanced bodies whose run is a flight: the dragons, the harpy, the white and shadow wyrms, the drakes and the
-/// wyvern.
-const ENHANCED_FLYING_BODIES: [u32; 8] = [12, 30, 49, 59, 60, 61, 62, 106];
-/// The Classic people layout's walk and run (unarmed).
-const CLASSIC_PEOPLE_WALK: u16 = 0;
-const CLASSIC_PEOPLE_RUN: u16 = 2;
-/// The Classic animal and monster layouts' walk, the animals' run and the monsters' flight.
-const CLASSIC_ACTION_WALK: u16 = 0;
-const CLASSIC_ACTION_ANIMAL_RUN: u16 = 1;
-const CLASSIC_ACTION_FLY: u16 = 19;
-/// The Enhanced humans' peace walk and run, and their war walk.
-const ENHANCED_HUMAN_WALK: u16 = 1;
-const ENHANCED_HUMAN_RUN: u16 = 3;
-const ENHANCED_HUMAN_WAR_WALK: u16 = 15;
-/// The Enhanced creatures' peace run, and a ridden kirin's run.
-const ENHANCED_ACTION_RUN: u16 = 24;
-const ENHANCED_ACTION_MOUNTED_RUN: u16 = 30;
+/// The folder of the curated strides under `runtime_specs`, and the file's name: the clips whose stride stays
+/// hand-configured because the planted-foot measurement (`udd-cli tool strides measure`) does not follow them, in place
+/// of the package's, each with its reason as a comment (`docs/agent_notes/mobile_animation_motion.md`, "Curated
+/// strides"). A curated stride still needs the package's stride record (one without a stride counts), and is used only
+/// while the clip's frames hash as that record says. The file is hand-written and read strictly (`uot_kdl::strict`):
+/// every error names its line. It is read at startup, and again when the user's copy under the cache dir, which takes
+/// the bundled file's place (`settings::runtime_specs`), is saved.
+pub const STRIDES_SPECS_FOLDER: &str = "mobiles";
+pub const STRIDES_FILE_NAME: &str = "Strides.kdl";
+/// What the log calls the file.
+const STRIDES_WHAT: &str = "the curated strides";
+/// How often the user's copy is checked for a save.
+const STRIDES_FILE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// The strides the file accepts, in side tiles: the curated ones are 0.52 to 6.9, the tool's widest measured 9.2.
+pub const CURATED_STRIDE_TILES: RangeInclusive<f32> = 0.1..=12.0;
+/// The action ids the file accepts lie below this: the clients' tables number the movements below it in both
+/// layouts (`uocf`'s `MAX_ACTION_ID_FALLBACK`).
+const CURATED_ACTION_LIMIT: u16 = 100;
 
-/// A clip's hand-configured pace: `pace` for `action` of each of `bodies` from `source`, and why the measurement is
-/// not trusted for it.
+const STRIDE_NODE: &str = "stride";
+const CLIENT_TIMING_NODE: &str = "client-timing";
+const PACKAGE_PROPERTY: &str = "package";
+const ACTION_PROPERTY: &str = "action";
+const TILES_PROPERTY: &str = "tiles";
+/// The `package` values: the Classic and the Enhanced animation package.
+const CLASSIC_PACKAGE: &str = "cc";
+const ENHANCED_PACKAGE: &str = "ec";
+const STRIDES_SCHEMA: &[NodeSchema] = &[
+    NodeSchema::leaf(STRIDE_NODE, &[PACKAGE_PROPERTY, ACTION_PROPERTY, TILES_PROPERTY]),
+    NodeSchema::leaf(CLIENT_TIMING_NODE, &[PACKAGE_PROPERTY, ACTION_PROPERTY]),
+];
+
+/// A clip's hand-configured pace: `pace` for `action` of each of the server `bodies` from `source`.
+#[derive(Clone, Debug, PartialEq)]
 struct CuratedStride {
     source: AnimSource,
-    bodies: &'static [u32],
+    bodies: Vec<u32>,
     action: u16,
     pace: CuratedPace,
-    reason: &'static str,
+    /// The entry's 1-based line, for the log and the error of a clip listed twice.
+    line: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -195,10 +143,97 @@ enum CuratedPace {
     ClientTiming,
 }
 
-/// The curated entry for `action` of `body` from `source`, if there is one.
-fn curated_stride(source: AnimSource, body: u32, action: u16) -> Option<&'static CuratedStride> {
-    CURATED_STRIDES.iter()
-        .find(|curated| curated.source == source && curated.action == action && curated.bodies.contains(&body))
+/// The curated strides, as read from `source_name`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CuratedStrides {
+    source_name: String,
+    entries: Vec<CuratedStride>,
+}
+
+impl CuratedStrides {
+    pub fn decode(source_name: &str, text: &str) -> eyre::Result<Self> {
+        let document = uot_kdl::parse_ast_line_span(source_name, text)
+            .map_err(|error| strict::in_file(source_name, strict::describe_error(text, &error)))?;
+        let mut entries: Vec<CuratedStride> = Vec::new();
+        for node in &document.nodes {
+            let entry = strict::node_schema(node, None, STRIDES_SCHEMA)
+                .and_then(|schema| decode_curated_stride(node, schema))
+                .map_err(|error| strict::in_file(source_name, error))?;
+            let listed = entries.iter()
+                .filter(|earlier| earlier.source == entry.source && earlier.action == entry.action)
+                .find_map(|earlier| entry.bodies.iter().find(|body| earlier.bodies.contains(body))
+                    .map(|body| (*body, earlier.line)));
+            if let Some((body, line)) = listed {
+                let error = strict::error_at(node.node_name.span(), format!(
+                    "action {} of body {body} from package \"{}\" is listed already, on line {line}", entry.action,
+                    package_name(entry.source)));
+                return Err(strict::in_file(source_name, error));
+            }
+            entries.push(entry);
+        }
+        Ok(Self { source_name: source_name.to_string(), entries })
+    }
+
+    /// The entry for `action` of `body` from `source`, if there is one.
+    fn get(&self, source: AnimSource, body: u32, action: u16) -> Option<&CuratedStride> {
+        self.entries.iter()
+            .find(|curated| curated.source == source && curated.action == action && curated.bodies.contains(&body))
+    }
+}
+
+/// The `package` value naming `source`.
+fn package_name(source: AnimSource) -> &'static str {
+    match source {
+        AnimSource::Classic => CLASSIC_PACKAGE,
+        AnimSource::Enhanced => ENHANCED_PACKAGE,
+    }
+}
+
+fn decode_curated_stride(node: &Node<LineSpan>, schema: &NodeSchema) -> eyre::Result<CuratedStride> {
+    strict::check_properties(node, schema.properties)?;
+    strict::reject_children(node)?;
+    let package = strict::required_property(node, PACKAGE_PROPERTY)?;
+    let source = match strict::value_string(package, PACKAGE_PROPERTY)?.as_str() {
+        CLASSIC_PACKAGE => AnimSource::Classic,
+        ENHANCED_PACKAGE => AnimSource::Enhanced,
+        other => return Err(strict::error_at(package.literal.span(), format!(
+            "{PACKAGE_PROPERTY}: expected \"{CLASSIC_PACKAGE}\" or \"{ENHANCED_PACKAGE}\", found \"{other}\""))),
+    };
+    let action_value = strict::required_property(node, ACTION_PROPERTY)?;
+    let action = strict::value_u16(action_value, ACTION_PROPERTY)?;
+    if action >= CURATED_ACTION_LIMIT {
+        return Err(strict::error_at(action_value.literal.span(),
+            format!("{ACTION_PROPERTY}: {action} is not below {CURATED_ACTION_LIMIT}")));
+    }
+    let pace = if schema.name == STRIDE_NODE {
+        let value = strict::required_property(node, TILES_PROPERTY)?;
+        let tiles = strict::value_f32(value, TILES_PROPERTY)?;
+        if !CURATED_STRIDE_TILES.contains(&tiles) {
+            return Err(strict::error_at(value.literal.span(), format!("{TILES_PROPERTY}: {tiles} is outside {}..={}",
+                CURATED_STRIDE_TILES.start(), CURATED_STRIDE_TILES.end())));
+        }
+        CuratedPace::Tiles(tiles)
+    } else {
+        CuratedPace::ClientTiming
+    };
+    if node.arguments.is_empty() {
+        return Err(strict::error_at(node.node_name.span(),
+            format!("`{}` takes the body ids it applies to, found none", schema.name)));
+    }
+    let mut bodies = Vec::with_capacity(node.arguments.len());
+    for argument in &node.arguments {
+        let body = u32::from(strict::value_u16(argument, "the body id")?);
+        if bodies.contains(&body) {
+            return Err(strict::error_at(argument.literal.span(), format!("body {body} is listed twice")));
+        }
+        bodies.push(body);
+    }
+    Ok(CuratedStride { source, bodies, action, pace, line: node.node_name.span().0.line + 1 })
+}
+
+/// The modification time of `path`; `None` when it does not exist.
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
 }
 
 /// The point of a mobile's cycle, in cycles, advanced by the time passing over the cycle's length then: a cycle that
@@ -230,10 +265,16 @@ impl MobileCycleClock {
 /// The measured strides of the walk and run clips (and an Enhanced mount's mounted moves), by source, server body and
 /// the action the client tables give for the movement, from the animation packages (`metadata/strides.bin`). A stride
 /// is used only once the clip's frames are checked to hash as those it was measured on: the first time a clip asks,
-/// its side facings hash on the background pool, and it keeps the clients' timing until they match.
+/// its side facings hash on the background pool, and it keeps the clients' timing until they match. The curated
+/// strides take the package's place for their clips.
 #[derive(Resource, Default)]
 pub struct MobileStrides {
     packages: AnimPackages,
+    curated: CuratedStrides,
+    /// The curated strides' files, and the user copy's modification time when it was last read (`None`: there was
+    /// none).
+    curated_files: SpecFiles,
+    curated_user_modified: Option<SystemTime>,
     checks: HashMap<(AnimSource, u32, u16), StrideCheck>,
 }
 
@@ -262,9 +303,41 @@ impl StrideCheck {
 }
 
 impl MobileStrides {
+    /// No packages yet, and the curated strides read at startup: the bundled file is required, a missing or invalid
+    /// one stops the app; a user copy that does not read leaves it in force, with a warning.
+    pub fn load() -> Self {
+        let curated_files = SpecFiles::of(STRIDES_SPECS_FOLDER, STRIDES_FILE_NAME);
+        let curated_user_modified = modified(&curated_files.user);
+        let loaded = curated_files.load(CuratedStrides::decode)
+            .unwrap_or_else(|error| crate::settings::exit_on_startup_config_error(&error));
+        loaded.report(STRIDES_WHAT);
+        Self { curated: loaded.value, curated_files, curated_user_modified, ..default() }
+    }
+
     /// The strides of `packages`, none checked yet.
-    pub fn new(packages: &AnimPackages) -> Self {
-        Self { packages: packages.clone(), checks: HashMap::new() }
+    pub fn set_packages(&mut self, packages: &AnimPackages) {
+        self.packages = packages.clone();
+        self.checks.clear();
+    }
+
+    /// Reads the curated strides again; the clips are checked again when they changed.
+    fn reload_curated(&mut self) {
+        self.curated_user_modified = modified(&self.curated_files.user);
+        match self.curated_files.load(CuratedStrides::decode) {
+            Ok(loaded) => {
+                loaded.report(STRIDES_WHAT);
+                if loaded.value != self.curated {
+                    self.curated = loaded.value;
+                    self.checks.clear();
+                }
+            }
+            // The bundled file no longer reads: what is in force stays.
+            Err(error) => {
+                let message = format!("{error:#}: the curated strides in force stay");
+                console_logger::one(LogSev::Warn, LogAbout::Settings, &message);
+                crate::ingame_sysmessage_logger::warning(message);
+            }
+        }
     }
 
     /// The stride of `action` of server `body` from `source` once its frames are checked.
@@ -273,9 +346,12 @@ impl MobileStrides {
         let check = match self.checks.entry(key) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
+                let curated = &self.curated;
                 let check = match source {
-                    AnimSource::Classic => start_check(self.packages.classic.as_ref()?, source, body, action),
-                    AnimSource::Enhanced => start_check(self.packages.enhanced.as_ref()?, source, body, action),
+                    AnimSource::Classic => start_check(self.packages.classic.as_ref()?, curated, source, body, action),
+                    AnimSource::Enhanced => {
+                        start_check(self.packages.enhanced.as_ref()?, curated, source, body, action)
+                    }
                 }?;
                 entry.insert(check)
             }
@@ -295,16 +371,26 @@ impl MobileStrides {
     }
 }
 
-/// The check of the stride for `action` of `body` from `source`, the curated one or the one `package` has, its
-/// hashing started; none without the package's stride record. A clip curated to the clients' timing needs no check.
-fn start_check<P: MobileAnimClips + Send + Sync + 'static>(package: &Arc<P>, source: AnimSource, body: u32,
-    action: u16) -> Option<StrideCheck> {
-    let curated = curated_stride(source, body, action);
-    if let Some(curated) = curated {
-        debug!("The {source:?} stride of action {action} of body {body} is curated, {:?}: {}", curated.pace,
-            curated.reason);
+/// Reads the curated strides again when the user's copy is saved, created or deleted.
+pub fn sys_watch_curated_strides(mut strides: ResMut<MobileStrides>, time: Res<Time<Real>>,
+    mut timer: Local<Option<Timer>>) {
+    let timer = timer.get_or_insert_with(|| Timer::new(STRIDES_FILE_CHECK_INTERVAL, TimerMode::Repeating));
+    let checked = timer.tick(time.delta()).just_finished();
+    if checked && modified(&strides.curated_files.user) != strides.curated_user_modified {
+        strides.reload_curated();
     }
-    let curated = curated.map(|curated| curated.pace);
+}
+
+/// The check of the stride for `action` of `body` from `source`, the one `curated` has or the one `package` has, its
+/// hashing started; none without the package's stride record. A clip curated to the clients' timing needs no check.
+fn start_check<P: MobileAnimClips + Send + Sync + 'static>(package: &Arc<P>, curated: &CuratedStrides,
+    source: AnimSource, body: u32, action: u16) -> Option<StrideCheck> {
+    let curated_entry = curated.get(source, body, action);
+    if let Some(entry) = curated_entry {
+        debug!("The {source:?} stride of action {action} of body {body} is curated, {:?}, on line {} of {}",
+            entry.pace, entry.line, curated.source_name);
+    }
+    let curated = curated_entry.map(|curated| curated.pace);
     if curated == Some(CuratedPace::ClientTiming) {
         return Some(StrideCheck::ClientTiming);
     }
@@ -364,8 +450,36 @@ mod tests {
         }
     }
 
+    const STRIDES_FILE: &str = "Strides.kdl";
+    /// The entries of the bundled file.
+    const BUNDLED_CURATED_STRIDES: usize = 17;
+    /// The Classic people layout's walk and run (unarmed).
+    const CLASSIC_PEOPLE_WALK: u16 = 0;
+    const CLASSIC_PEOPLE_RUN: u16 = 2;
+    /// The Classic animal and monster layouts' walk, the animals' run and the monsters' flight.
+    const CLASSIC_ACTION_WALK: u16 = 0;
+    const CLASSIC_ACTION_ANIMAL_RUN: u16 = 1;
+    const CLASSIC_ACTION_FLY: u16 = 19;
+    /// The Enhanced humans' peace walk and run, and their war walk.
+    const ENHANCED_HUMAN_WALK: u16 = 1;
+    const ENHANCED_HUMAN_RUN: u16 = 3;
+    const ENHANCED_HUMAN_WAR_WALK: u16 = 15;
+    /// The Enhanced creatures' peace run, and a ridden kirin's run.
+    const ENHANCED_ACTION_RUN: u16 = 24;
+    const ENHANCED_ACTION_MOUNTED_RUN: u16 = 30;
+
+    fn decode_strides(text: &str) -> CuratedStrides {
+        CuratedStrides::decode(STRIDES_FILE, text).unwrap_or_else(|error| panic!("{error:#}"))
+    }
+
+    fn bundled_text() -> &'static str {
+        include_str!("../../../assets/runtime_specs/mobiles/Strides.kdl")
+    }
+
     #[test]
     fn the_curated_clips_have_their_hand_strides_in_both_sources() {
+        let curated = decode_strides(bundled_text());
+        let curated_pace = |source, body, action| curated.get(source, body, action).map(|curated| curated.pace);
         for (source, body, action, pace) in [
             (AnimSource::Classic, 400, CLASSIC_PEOPLE_WALK, CuratedPace::Tiles(1.3)),
             (AnimSource::Classic, 606, CLASSIC_PEOPLE_RUN, CuratedPace::Tiles(2.15)),
@@ -393,25 +507,29 @@ mod tests {
         assert_eq!(curated_pace(AnimSource::Enhanced, 210, ENHANCED_ACTION_MOUNTED_RUN), None);
     }
 
-    fn curated_pace(source: AnimSource, body: u32, action: u16) -> Option<CuratedPace> {
-        curated_stride(source, body, action).map(|curated| curated.pace)
-    }
-
-    /// Every entry names its bodies, a reason and a stride, overlaps no other, and paces the cycle on the clamp-free
-    /// path: its stride's own seconds, outside the bounds a measured one would be held to.
+    /// Every entry of the bundled file names its bodies and a stride, has its reason in a comment on the line above,
+    /// overlaps no other, and paces the cycle on the clamp-free path: its stride's own seconds, outside the bounds a
+    /// measured one would be held to.
     #[test]
     fn every_curated_stride_is_unique_explained_and_unclamped() {
         const RUN_STEP_SECS: f32 = 0.2;
         /// How far outside the clamp the clip's own cycle is put, on either side.
         const OUTSIDE_THE_CLAMP: f32 = 2.0;
-        for (index, curated) in CURATED_STRIDES.iter().enumerate() {
-            let name = format!("{:?} action {} {:?}", curated.source, curated.action, curated.bodies);
-            assert!(!curated.bodies.is_empty() && !curated.reason.is_empty(), "{name}");
-            for other in &CURATED_STRIDES[index + 1..] {
-                assert!(other.source != curated.source || other.action != curated.action
-                    || !other.bodies.iter().any(|body| curated.bodies.contains(body)), "{name} overlaps");
+        let text = bundled_text();
+        let lines: Vec<&str> = text.lines().collect();
+        let curated = decode_strides(text);
+        assert_eq!(curated.entries.len(), BUNDLED_CURATED_STRIDES);
+        for (index, curated_stride) in curated.entries.iter().enumerate() {
+            let name = format!("{:?} action {} {:?}", curated_stride.source, curated_stride.action,
+                curated_stride.bodies);
+            assert!(!curated_stride.bodies.is_empty(), "{name}");
+            // `line` is 1-based: the line above it is at `line - 2`.
+            assert!(lines[curated_stride.line - 2].starts_with("//"), "{name} has no reason above it");
+            for other in &curated.entries[index + 1..] {
+                assert!(other.source != curated_stride.source || other.action != curated_stride.action
+                    || !other.bodies.iter().any(|body| curated_stride.bodies.contains(body)), "{name} overlaps");
             }
-            let CuratedPace::Tiles(tiles) = curated.pace else { continue };
+            let CuratedPace::Tiles(tiles) = curated_stride.pace else { continue };
             assert!(tiles > 0.0 && tiles.is_finite(), "{name}");
             let stride = GroundStride { stride: Stride { tiles, by_hand: true }, step_secs: RUN_STEP_SECS,
                 step_tiles: 1.0 };
@@ -422,6 +540,53 @@ mod tests {
                 assert!((stride.cycle_secs(own) - secs).abs() < 1e-6, "{name} own {own}");
             }
         }
+    }
+
+    #[test]
+    fn strides_and_client_timings_read_by_package_action_and_body() {
+        let curated = decode_strides("// A reason.\nstride 400 401 package=\"cc\" action=0 tiles=1.3\n\
+            client-timing 12 package=\"ec\" action=24\nstride 400 package=\"ec\" action=0 tiles=2\n");
+        assert_eq!(curated.get(AnimSource::Classic, 401, 0).map(|entry| (entry.pace, entry.line)),
+            Some((CuratedPace::Tiles(1.3), 2)));
+        assert_eq!(curated.get(AnimSource::Enhanced, 12, 24).map(|entry| entry.pace), Some(CuratedPace::ClientTiming));
+        assert_eq!(curated.get(AnimSource::Enhanced, 400, 0).map(|entry| entry.pace), Some(CuratedPace::Tiles(2.0)));
+        assert_eq!(curated.get(AnimSource::Classic, 12, 24), None);
+        assert!(decode_strides("").entries.is_empty());
+    }
+
+    /// The error starts with the file and the line, and says what is wrong.
+    fn assert_strides_error(text: &str, line: usize, needle: &str) {
+        let error = format!("{:#}", CuratedStrides::decode(STRIDES_FILE, text).expect_err("the file should not read"));
+        assert!(error.starts_with(&format!("{STRIDES_FILE}: line {line}, column ")), "{error}");
+        assert!(error.contains(needle), "{error}");
+    }
+
+    #[test]
+    fn strides_errors_name_the_line() {
+        assert_strides_error("stride 1 package=\"cc\" action=0 tiles=1\nwalk 2 package=\"cc\" action=0\n", 2,
+            "unknown node `walk` at the top level: expected `stride` or `client-timing`");
+        assert_strides_error("stride 1 package=\"cc\" action=0 tiles=1 reason=\"x\"\n", 1,
+            "unknown property `reason` of `stride`");
+        assert_strides_error("client-timing 1 package=\"cc\" action=19 tiles=1\n", 1,
+            "unknown property `tiles` of `client-timing`");
+        assert_strides_error("stride 1 action=0 tiles=1\n", 1, "`stride`: missing package=");
+        assert_strides_error("stride 1 package=\"cc\" tiles=1\n", 1, "`stride`: missing action=");
+        assert_strides_error("stride 1 package=\"cc\" action=0\n", 1, "`stride`: missing tiles=");
+        assert_strides_error("stride 1 package=\"kr\" action=0 tiles=1\n", 1,
+            "package: expected \"cc\" or \"ec\", found \"kr\"");
+        assert_strides_error("stride 1 package=\"cc\" action=100 tiles=1\n", 1, "action: 100 is not below 100");
+        assert_strides_error("stride 1 package=\"cc\" action=-1 tiles=1\n", 1, "action: not a u16");
+        assert_strides_error("stride 1 package=\"cc\" action=0 tiles=0\n", 1, "tiles: 0 is outside 0.1..=12");
+        assert_strides_error("stride 1 package=\"cc\" action=0 tiles=13\n", 1, "tiles: 13 is outside 0.1..=12");
+        assert_strides_error("stride 1 package=\"cc\" action=0 tiles=\"far\"\n", 1, "tiles: expected a number");
+        assert_strides_error("stride package=\"cc\" action=0 tiles=1\n", 1,
+            "`stride` takes the body ids it applies to, found none");
+        assert_strides_error("stride 70000 package=\"cc\" action=0 tiles=1\n", 1, "the body id: not a u16");
+        assert_strides_error("stride 1 2 1 package=\"cc\" action=0 tiles=1\n", 1, "body 1 is listed twice");
+        assert_strides_error("stride 1 package=\"cc\" action=0 tiles=1 { stride 2; }\n", 1,
+            "`stride` takes no children");
+        assert_strides_error("stride 1 2 package=\"cc\" action=0 tiles=1\n\nclient-timing 3 2 package=\"cc\" action=0\n",
+            3, "action 0 of body 2 from package \"cc\" is listed already, on line 1");
     }
 
     #[test]

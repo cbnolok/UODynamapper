@@ -1,0 +1,84 @@
+// The curated strides: the walk and run clips whose stride stays counted by hand, because the planted-foot
+// measurement (`udd-cli tool strides measure`) does not follow them, in place of the stride the animation package
+// holds. With Preferences' walk pace "Match the ground", a cycle of a clip lasts the time the steps take to cover its
+// stride. Dynamapper reads your copy, cache/runtime_specs/mobiles/Strides.kdl beside the assets folder, in place of
+// this file when it exists: copy this file there and edit the copy. Saving the copy applies it within a second; a copy
+// that does not read leaves this file in force, with a warning naming the line, until it is fixed.
+//
+//   stride <body> [<body> ...] package="cc"|"ec" action=<action> tiles=<tiles>
+//     The clip `action` of each in-game (server) body, from the Classic ("cc") or Enhanced ("ec") animation package,
+//     covers <tiles> side tiles a cycle (0.1 to 12; a side tile is the 44 screen px of a step along the screen's
+//     horizontal), whatever the package measured. It still needs the package's stride record for the clip (one
+//     without a stride counts), and applies only while the clip's frames hash as that record says. A stride counted
+//     by hand is not held to the bounds a measured one is (a third to three times the clip's own speed).
+//   client-timing <body> [<body> ...] package="cc"|"ec" action=<action>
+//     The clip plays at its own frame time, as the clients play it: it covers no ground to match (a flight).
+//
+// A body's action is listed once per package. The actions (below 100) are the clients' table numbers of the movement:
+// Classic people walk 0 and run 2 (unarmed); Classic animals and monsters walk 0, animals run 1, monsters fly 19;
+// Enhanced humans walk 1, run 3 and war walk 15; Enhanced creatures run 24, and a ridden mount runs 30.
+//
+// Each stride was counted on 2026-11-22 or 2026-11-23 on the south-west facing (44 px a side tile), from the planted
+// foot's ground contact frame to frame on the frame strips of `udd-cli tool strides inspect --strip` (its `--pair`
+// count on the pairs where the foot is clear, against a hand count of the foot's x), or keeps the clients' timing
+// where no foot touches the ground. The comment above each entry says why the tool is not trusted
+// (docs/agent_notes/mobile_animation_motion.md, "Curated strides"). The elves and ghosts have the humans' art, and the
+// bodies of an entry share their frames or, the cattle, their poses.
+
+// The male and female humans, their ghosts, and the elves (400, 401, 402, 403, 605, 606), in both packages.
+
+// Counted by hand before the tool, which reads 1.34 but 1.68 on the west facing.
+stride 400 401 402 403 605 606 package="cc" action=0 tiles=1.3
+// Half the pairs lose the foot and the facings read 1.96 to 2.43 (2.10).
+stride 400 401 402 403 605 606 package="cc" action=2 tiles=2.15
+
+// The Classic horses and the nightmare (177, 200, 204, 226, 228: one set of frames).
+
+// The trot's diagonal hooves swap within a pair: 3 of 5 pairs follow another hoof (1.38 to 1.73).
+stride 177 200 204 226 228 package="cc" action=0 tiles=1.05
+// Five-frame gallop: pairs match another hoof, the facings read 2.3 to 5.2, 2.4 or 4.1 by package.
+stride 177 200 204 226 228 package="cc" action=1 tiles=2.25
+
+// The Classic timber, dire, grey, white and plain wolves and the hell hound (23, 25, 27, 34, 98, 225: one set of
+// frames): five frames, 3 px paws: four-vote pairs read 8 and 11 px, the facings 0.69 to 1.11.
+stride 23 25 27 34 98 225 package="cc" action=0 tiles=0.7
+
+// The Classic dog (217): 2 px paws: the south and west facings read 0.64 on two and three of five pairs.
+stride 217 package="cc" action=0 tiles=0.52
+
+// The Classic black and brown cows and the two bulls (216, 231, 232, 233), drawn a little larger in the cows' poses
+// frame for frame: five frames, 3 px hooves out of step: a front hoof moves back 8 to 10 px a frame while a rear one
+// holds still, and the south facing's band misses the front hooves: 0.53 to 3.5.
+stride 216 231 232 233 package="cc" action=0 tiles=1.0
+
+// The Classic bodies whose run is their flight: the eagle, the bird, the daemons, the dragons and wyrms, the harpy,
+// the drakes and the wyvern. Flight: no foot touches the ground, the tool follows a wing tip.
+client-timing 5 6 9 10 12 30 49 59 60 61 62 106 package="cc" action=19
+
+// Enhanced humans: counted by hand before the tool; the tool agrees within 0.05.
+stride 400 401 402 403 605 606 package="ec" action=1 tiles=1.4
+// Half the pairs show no planted foot and theirs spread 3 to 12 px: the tool reads 1.83 to 2.03.
+stride 400 401 402 403 605 606 package="ec" action=3 tiles=1.75
+// The war walk: counted by hand before the tool; the tool reads 1.20.
+stride 400 401 402 403 605 606 package="ec" action=15 tiles=1.3
+
+// The Enhanced daemons (9, 10): the wings sweep through the ground band: the west facing follows them (1.65), the
+// rest 5.2 to 5.8.
+stride 9 10 package="ec" action=24 tiles=6.8
+
+// The Enhanced kirin (132): the hooves touch down for one pair, the lift-off pairs read 2 to 8 px: 4.2 to 7.8.
+stride 132 package="ec" action=24 tiles=6.9
+// The run's frames ridden: the hooves touch down for one pair, the lift-off pairs read 2 to 8 px.
+stride 132 package="ec" action=30 tiles=6.9
+
+// The desert, frenzied and forest ostards (210, 218, 219): two of ten pairs on the south-west facing: the stride is
+// the mean of 5.9 and 9.2.
+stride 210 218 219 package="ec" action=24 tiles=6.2
+
+// The orc captain (7) and the two bodies with its frames (138, 139): a bounding run, in the air for two of seven
+// frames: the legs' sweep reads 22 to 33 px (1.9 to 7.1).
+stride 7 138 139 package="ec" action=24 tiles=1.9
+
+// The Enhanced bodies whose run is a flight: the dragons, the harpy, the white and shadow wyrms, the drakes and the
+// wyvern. Flight: no foot touches the ground, the tool follows a wing tip.
+client-timing 12 30 49 59 60 61 62 106 package="ec" action=24

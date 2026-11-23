@@ -94,9 +94,10 @@ impl Plugin for MobileSpritesPlugin {
             .init_resource::<rife_in_betweens::MobileInBetweens>()
             .init_resource::<upscales::MobileUpscales>()
             .init_resource::<upscales::MobileUpscaleGate>()
-            .init_resource::<MobileStrides>()
+            .insert_resource(MobileStrides::load())
             .add_systems(Update, (
                 sys_sync_player_appearance,
+                pace::sys_watch_curated_strides,
                 sys_choose_mobile_clips,
                 draw::sys_setup_mobile_draw,
                 draw::sys_size_mobile_upscale_pages,
@@ -177,7 +178,7 @@ fn sys_choose_mobile_clips(
         _ => AnimSource::Classic,
     };
     if packages.is_changed() {
-        *strides = MobileStrides::new(&packages.0);
+        strides.set_packages(&packages.0);
     }
     let packages = &packages.0;
     let mut strides = (settings.world_rendering.mobile_walk_pace == MobileWalkPace::MatchTheGround)

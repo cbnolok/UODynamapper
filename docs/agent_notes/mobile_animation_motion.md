@@ -188,7 +188,7 @@ The flow measures short on most bodies, though by different amounts. Unchanged b
 side facing): Classic orc 17 walk 0.88 / 1.3 (legs 0.75 t/s ahead), ogre 1 1.92 / 2.25, daemon 9 2.79 / 2.8; Enhanced
 orc 17 1.55 / 2.4 (+1.37), wolf 225 1.04 / 1.55, ogre 1 1.83 / 2.55, daemon 9 2.73 / 3.13, horse 200 walk 1.44 / 1.36.
 The big bodies come close and the small and middle ones measure 0.6–0.8 of their stride. The humans' clips now take
-strides measured by hand (now `CURATED_STRIDES` in `render/mobiles/pace.rs`, [curated strides](#curated-strides-2026-11-22)). The table covers the Classic walk and run and
+strides measured by hand (now the runtime spec `runtime_specs/mobiles/Strides.kdl`, [curated strides](#curated-strides-2026-11-22)). The table covers the Classic walk and run and
 the Enhanced walk, run and war walk of bodies 400–403, 605 and 606; the elves' flow numbers match the humans' to 1%,
 and so do their contacts. A hand stride replaces the package's stride for the clip, still checked against the package
 record's frame hash, and paces the cycle outside the clamp, which only bounds a measured number: the Enhanced
@@ -308,10 +308,24 @@ was written. The stride TSVs before it are in
 
 #### Curated strides (2026-11-22)
 
-`CURATED_STRIDES` in `render/mobiles/pace.rs` (formerly `HAND_STRIDES`) holds the clips whose stride stays
-hand-configured because the tool does not follow them, each with its reason. An entry is a stride in side tiles,
-paced outside the clamp, or `ClientTiming`: the clip plays at its own frame time. Like a measured stride, a curated
-one needs the package's stride record and the frame hash; a client-timing entry needs neither.
+The runtime spec `dynamapper/assets/runtime_specs/mobiles/Strides.kdl` (until 2026-11-23 `CURATED_STRIDES` in
+`render/mobiles/pace.rs`, formerly `HAND_STRIDES`) holds the clips whose stride stays hand-configured because the
+tool does not follow them, each with its reason as a comment above it. An entry is a stride in side tiles, paced
+outside the clamp, or client timing: the clip plays at its own frame time. Like a measured stride, a curated one
+needs the package's stride record and the frame hash; a client-timing entry needs neither.
+
+The file is read strictly through `SpecFiles` (`CuratedStrides::decode` in `pace.rs`), so a user copy at
+`cache/runtime_specs/mobiles/Strides.kdl` takes its place without a rebuild; the copy is checked once a second and
+read again when saved, and the clips' checks start over when what is in force changed. Its header documents the
+format; in short, keyed by the in-game (server) body ids and the package (`cc` Classic, `ec` Enhanced):
+
+    stride <body> [<body> ...] package="cc"|"ec" action=<action> tiles=<tiles>
+    client-timing <body> [<body> ...] package="cc"|"ec" action=<action>
+
+`action` is the clients' table number of the movement (below 100, `CURATED_ACTION_LIMIT`), `tiles` 0.1 to 12
+(`CURATED_STRIDE_TILES`). A body's action is listed once per package; an unknown node or property, a missing one, a
+value out of range, no body or a body listed twice is an error naming the line. The `pace` tests read the bundled
+file (`include_str!`) and check every entry's value, that each has a comment above it, and the 17 entries.
 
 How the list was made: `udd-cli tool strides inspect PACKAGE --body B --action A` prints each side facing's pairs
 (travel, votes, band pixels) and the facing's stride; `--strip DIR` draws the frames side by side with the ground band
