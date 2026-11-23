@@ -173,9 +173,9 @@ Multi-tile structure data (`MultiCollection.uop`) is decoded directly from its b
 ![CC Hues](docs/images/uocf_editor_hues_cc.png)
 
 #### Animations & Multi-Tile Structures
-| Classic Client UOP Animations | Classic Client Anim w/ Upscaler |
+| Classic Client UOP Animations | Classic animation frame upscaling |
 | ----------------------------- | ------------------------------- |
-| ![CC UOP Animations](docs/images/uocf_editor_uop_anim_cc.png) | ![CC Anim Upscaler](docs/images/uocf_editor_anim_upscaler_mul.png) |
+| ![CC UOP Animations](docs/images/uocf_editor_uop_anim_cc.png) | ![UOCF Editor comparing a Classic dragon frame and its 2× upscale](../../docs/images/showcase/anim-upscale-editor.webp) |
 
 | Classic Client Multi (KR Art) | Enhanced Client Multi (CC Sprites) |
 | ----------------------------- | ---------------------------------- |
