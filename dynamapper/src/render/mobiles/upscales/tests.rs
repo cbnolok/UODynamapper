@@ -71,12 +71,18 @@ fn a_sequence_upscales_into_the_upscaled_pages_with_its_border_at_2x() {
         assert_eq!(frame.source, source.rect);
         assert!(frame.target.layer >= MOBILE_ATLAS_PAGES, "{:?}", frame.target);
         assert_eq!((frame.target.width, frame.target.height), (88, 88));
+        // One pass, the frame past the border on the canvas, all of whose output's top left goes.
+        assert_eq!(frame.passes, vec![UpscalePass {
+            origin: IVec2::splat(UPSCALE_BORDER as i32), from: UVec2::ZERO, to: UVec2::ZERO, size: UVec2::splat(88),
+        }]);
     }
     // Made, it shows the frames grown by the border, at 2 texels a pixel.
     let id = job.id;
     upscales.finished.lock().push(id);
     upscales.schedule(&mut atlas, |_, _| Some(&clip), true, NOW + 0.1);
-    let ready = upscales.ready(&key).expect("made");
+    let parts = upscales.ready(&key).expect("made");
+    assert_eq!(parts.len(), 1);
+    let ready = &parts[0];
     assert_eq!(ready.texel_scale, UPSCALE_OUTPUT_SCALE);
     assert_eq!((ready.frame_secs, ready.frames.len()), (clip.frame_secs, clip.frames.len()));
     let placement = ready.frames[0].placement;
@@ -130,14 +136,95 @@ fn upscales_empty_only_upscaled_pages_and_go_with_them() {
     assert_eq!(upscales.entries.len(), MOBILE_ATLAS_UPSCALED_PAGES as usize);
 }
 
+/// Checks the passes of `frame` cover its target once, each within its workspace's output.
+fn check_passes(frame: &UpscaleFrame, canvas: UVec2) {
+    let target = UVec2::new(frame.target.width, frame.target.height);
+    let mut covered = vec![0u8; target.element_product() as usize];
+    for pass in &frame.passes {
+        assert!((pass.from + pass.size).cmple(canvas * UPSCALE_OUTPUT_SCALE).all(), "{pass:?}");
+        assert!((pass.to + pass.size).cmple(target).all(), "{pass:?}");
+        for y in pass.to.y..pass.to.y + pass.size.y {
+            for x in pass.to.x..pass.to.x + pass.size.x {
+                covered[(y * target.x + x) as usize] += 1;
+            }
+        }
+    }
+    assert!(covered.iter().all(|&count| count == 1), "{:?}", frame.passes);
+}
+
 #[test]
-fn a_frame_too_large_plays_at_1x_and_nothing_runs_while_off() {
+fn a_sequence_too_large_for_one_canvas_upscales_in_tiles() {
+    // 300 pixels: a 304 by 304 canvas, past 260 by 260; on the 256 by 256 tiles, 2 by 2 passes a frame.
+    assert_eq!(UPSCALE_TILE_SIDE, 256);
     let huge = clip(2, 300, 1);
     let key = upscale_key(clip_key(0), &huge, 1);
     let mut upscales = MobileUpscales::default();
     let mut atlas = atlas();
     upscales.want(key, clip_key(0), near(0.0), NOW);
     upscales.schedule(&mut atlas, |_, _| Some(&huge), true, NOW);
+    let job = &upscales.jobs[0];
+    assert_eq!(job.canvas, UVec2::splat(UPSCALE_TILE_SIDE));
+    assert_eq!(job.frames.len(), 2);
+    for frame in &job.frames {
+        assert_eq!((frame.target.width, frame.target.height), (608, 608));
+        assert_eq!(frame.passes.len(), 4);
+        check_passes(frame, job.canvas);
+    }
+}
+
+/// A clip of frames 100 high of (width, anchor from the left edge), on page 0.
+fn wide_clip(frames: &[(u32, f32)]) -> Clip {
+    let mut clip = clip(frames.len(), 100, 1);
+    for (frame, &(width, anchor_x)) in clip.frames.iter_mut().zip(frames) {
+        frame.rect.width = width;
+        frame.placement.width = width as f32;
+        frame.placement.anchor_x = anchor_x;
+    }
+    clip
+}
+
+#[test]
+fn a_sequence_wider_than_a_page_at_2x_is_stored_and_drawn_in_parts() {
+    // 520 pixels: a 524 wide canvas, 1048 texels at 2x, past the 1023 an RGBA8 page holds; it splits at its anchor.
+    // The second frame, 100 wide, ends left of its anchor: all in the first part.
+    let wide = wide_clip(&[(520, 260.0), (100, 110.0)]);
+    let key = upscale_key(clip_key(0), &wide, 1);
+    let mut upscales = MobileUpscales::default();
+    let mut atlas = atlas();
+    upscales.want(key, clip_key(0), near(0.0), NOW);
+    upscales.schedule(&mut atlas, |_, _| Some(&wide), true, NOW);
+    let job = &upscales.jobs[0];
+    // Frame 0 in two parts, frame 1 in the first only.
+    assert_eq!(job.frames.len(), 3);
+    for frame in &job.frames {
+        assert!(frame.target.width <= AtlasFormat::Rgba8.page_room(), "{:?}", frame.target);
+        check_passes(frame, job.canvas);
+    }
+    upscales.finished.lock().push(job.id);
+    upscales.schedule(&mut atlas, |_, _| Some(&wide), true, NOW + 0.1);
+    let parts = upscales.ready(&key).expect("made");
+    assert_eq!(parts.len(), 2);
+    for (index, frame) in wide.frames.iter().enumerate() {
+        let [left, right] = [0, 1].map(|part| parts[part].frames[index].placement);
+        // The parts meet, and together are the frame's canvas.
+        assert_eq!(left.width - left.anchor_x, -right.anchor_x, "frame {index}");
+        assert_eq!(left.width + right.width, (frame.rect.width + 2 * UPSCALE_BORDER) as f32, "frame {index}");
+        assert_eq!(left.anchor_x, frame.placement.anchor_x + UPSCALE_BORDER as f32);
+    }
+    // The first frame splits at its anchor; the second's second part is empty.
+    assert_eq!(parts[1].frames[0].placement.anchor_x, 0.0);
+    assert_eq!(parts[1].frames[1].placement.width, 0.0);
+}
+
+#[test]
+fn a_frame_taller_than_a_page_at_2x_plays_at_1x_and_nothing_runs_while_off() {
+    let mut tall = clip(2, 100, 1);
+    tall.frames.iter_mut().for_each(|frame| frame.rect.height = 520);
+    let key = upscale_key(clip_key(0), &tall, 1);
+    let mut upscales = MobileUpscales::default();
+    let mut atlas = atlas();
+    upscales.want(key, clip_key(0), near(0.0), NOW);
+    upscales.schedule(&mut atlas, |_, _| Some(&tall), true, NOW);
     assert!(matches!(upscales.entries[&key].state, UpscaleState::Missing));
     assert!(upscales.jobs.is_empty());
 

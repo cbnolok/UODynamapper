@@ -367,15 +367,21 @@ pub fn sys_draw_mobiles(
             let switch = UpscaleSwitch::next(shown.upscales.get(drawn.tie_level), drawn.tie_level, key,
                 clip.frames.len(), pick.index, wanted, upscaled.is_some());
             switches.push(switch);
-            if wanted && let Some(upscaled) = upscaled {
-                upscaled.touch_pages(&mut atlas, now);
+            if wanted && let Some(parts) = upscaled {
+                parts.iter().for_each(|part| part.touch_pages(&mut atlas, now));
             }
-            let clip = upscaled.filter(|_| switch.upscaled).unwrap_or(clip);
-            let Some(frames) = layer_frames(in_between_mode, clip, pick) else { continue };
-            clip.touch_pages(&mut atlas, now);
-            // Both frames of an in-between come from the clip, so they share its mirroring.
-            instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
-                drawn.tie_level, source, local_lights));
+            // The 2x frames come in parts side by side when wider than a page: a card each.
+            let shown = upscaled.filter(|_| switch.upscaled).unwrap_or(std::slice::from_ref(clip));
+            for clip in shown {
+                if instances.len() >= MAX_MOBILE_INSTANCES as usize {
+                    break;
+                }
+                let Some(frames) = layer_frames(in_between_mode, clip, pick) else { continue };
+                clip.touch_pages(&mut atlas, now);
+                // Both frames of an in-between come from the clip, so they share its mirroring.
+                instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
+                    drawn.tie_level, source, local_lights));
+            }
         }
         shown.upscales = MobileUpscaleSwitches(switches);
     }

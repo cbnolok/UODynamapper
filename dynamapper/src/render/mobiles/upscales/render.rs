@@ -6,8 +6,10 @@
 //! finished into the workspace's 2x output, whose top left part, the frame and its border at 2x, is copied into its
 //! place in the atlas: as it is into the RGBA8 atlas, and through the scratch rows of the BC7 encoding it shares with
 //! the in-betweens (bc7_encoding.rs) into the BC7 one, all of a submission's frames encoded in one pass after their
-//! steps. A workspace stays with the job in the middle of a frame until the frame ends; a job finished goes back to
-//! the main world.
+//! steps. A frame made in tiles (or a part of a frame stored apart, upscales.rs) runs a pass of those steps per tile,
+//! each copying its core into the RGBA8 atlas, or for the BC7 one into the workspace's assembly (`Assembly`), encoded
+//! after the last. A workspace stays with the job in the middle of a frame until the frame ends; a job finished
+//! goes back to the main world.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -23,7 +25,7 @@ use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use crate::render::shader_compiles::begin_shader_compile;
 use uot_gpu_compute::block_encode::record_copy_to_layer;
 use uot_gpu_compute::upscale::{UpscaleDispatch, UpscaleModel, UpscalePipelines, UpscaleWorkspace,
-    UPSCALE_FRAME_SLOTS};
+    UPSCALE_FRAME_SLOTS, UPSCALE_OUTPUT_TEXEL_BYTES};
 use uot_gpu_compute::{ConvUnits, SourceRect};
 use super::super::bc7_encoding::{bc7_encode_ms, scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder,
     BC7_SCRATCH_SIDE, MOBILE_BLOCK_FORMAT};
@@ -31,8 +33,8 @@ use super::super::clips::AtlasEntry;
 use super::super::compute_budget::{steps_within_budget, CostScale, GpuClock, MobileComputeBudget,
     MOBILE_COMPUTE_FRAME_BUDGET_MS};
 use super::super::compute_warm_up::{ComputeWarmUp, Warm};
-use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas};
-use super::{MobileUpscales, UpscaleFrame, UpscaleJob};
+use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas, MOBILE_ATLAS_PAGE_SIZE};
+use super::{MobileUpscales, UpscaleFrame, UpscaleJob, UpscalePass};
 
 /// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to uot-gpu-compute's
 /// upscale::tests::benchmark on the Radeon 880M with the convolutions on the shader cores (a frame, 25 dispatches:
@@ -76,6 +78,44 @@ struct Workspace {
     span: UpscaleWorkspace,
     next_slot: usize,
     last_used: Instant,
+    /// Made the first time a frame of the BC7 atlas is made in parts on it.
+    assembly: Option<Assembly>,
+}
+
+/// Where a frame of the BC7 atlas made in parts (tiles, or columns of its canvas) is put together over the frames it
+/// takes, before it is encoded whole: a page-sized RGBA8 texture, which a zeroed buffer clears where the frame goes, so
+/// the blocks past the frame's edge encode transparent texels as a whole canvas's would.
+struct Assembly {
+    texture: wgpu::Texture,
+    zeros: wgpu::Buffer,
+}
+
+const ASSEMBLY_TEXEL_BYTES: u32 = 4;
+
+impl Assembly {
+    fn new(device: &wgpu::Device) -> Self {
+        let side = MOBILE_ATLAS_PAGE_SIZE;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mobile upscales assembly"),
+            size: wgpu::Extent3d { width: side, height: side, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
+        });
+        // Buffers start zeroed.
+        let zeros = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mobile upscales assembly zeros"),
+            size: u64::from(side * ASSEMBLY_TEXEL_BYTES) * u64::from(side),
+            usage: wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+        });
+        Self { texture, zeros }
+    }
+}
+
+/// Whether a frame is put together in an `Assembly`: a BC7 frame made in several passes, or from a part of the
+/// canvas's output.
+fn assembles(format: AtlasFormat, frame: &UpscaleFrame) -> bool {
+    format == AtlasFormat::Bc7 && (frame.passes.len() > 1 || frame.passes.iter().any(|pass| pass.from != UVec2::ZERO))
 }
 
 /// A workspace's canvas, and the atlas texture it reads.
@@ -105,8 +145,9 @@ fn frame_steps(workspace: &UpscaleWorkspace) -> Vec<FrameStep> {
     steps
 }
 
-/// A step's estimated GPU time, in ms; with its BC7 encode, for a frame of the BC7 atlas.
-fn step_ms(workspace: &UpscaleWorkspace, step: FrameStep, frame: &UpscaleFrame) -> f64 {
+/// A step of a frame's pass, estimated GPU time, in ms; with its BC7 encode after the last pass, for a frame of the BC7
+/// atlas.
+fn step_ms(workspace: &UpscaleWorkspace, step: FrameStep, frame: &UpscaleFrame, last_pass: bool) -> f64 {
     let (width, height) = workspace.size();
     let canvas = width * height;
     match step {
@@ -114,11 +155,11 @@ fn step_ms(workspace: &UpscaleWorkspace, step: FrameStep, frame: &UpscaleFrame) 
         FrameStep::Network(index) => dispatch_ms(workspace.network()[index].multiply_adds(), 0),
         FrameStep::Finish => {
             let encode = match frame.target.format {
-                AtlasFormat::Rgba8 => 0.0,
-                AtlasFormat::Bc7 => {
+                AtlasFormat::Bc7 if last_pass => {
                     let (width, height) = frame.target.padded_size();
                     bc7_encode_ms(width * height)
                 }
+                AtlasFormat::Bc7 | AtlasFormat::Rgba8 => 0.0,
             };
             dispatch_ms(0, workspace.output_size().0 * workspace.output_size().1) + encode
         }
@@ -130,7 +171,8 @@ fn dispatch_ms(multiply_adds: u64, pixels: u32) -> f64 {
         + pixels as f64 / MEGA * PIXEL_STEP_MS_PER_MEGAPIXEL
 }
 
-/// Where a job is: the frame, the step of the frame next, and the slot the frame took.
+/// Where a job is: the frame, the step of the frame next (counting the steps of its passes one after another), and
+/// the slot the pass took.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct JobProgress {
     frame: usize,
@@ -141,10 +183,16 @@ struct JobProgress {
 /// What a frame records, in order.
 enum Recorded {
     Dispatch(UpscaleDispatch),
-    /// A workspace's output into the RGBA8 atlas.
-    Copy { workspace: WorkspaceKey, target: AtlasRect },
+    /// A workspace's output from texel `from` into `target`, a part of a frame of the RGBA8 atlas.
+    Copy { workspace: WorkspaceKey, from: UVec2, target: AtlasRect },
     /// A workspace's output into the scratch texture at row `y`, for its BC7 encode into `target`.
     Scratch { workspace: WorkspaceKey, target: AtlasRect, y: u32 },
+    /// A workspace's assembly cleared over `target`'s padded size, before a frame's first pass.
+    Clear { workspace: WorkspaceKey, target: AtlasRect },
+    /// A pass's part of a workspace's output into its assembly.
+    Assemble { workspace: WorkspaceKey, pass: UpscalePass },
+    /// A workspace's assembly into the scratch texture at row `y`, for its BC7 encode into `target`.
+    AssembledScratch { workspace: WorkspaceKey, target: AtlasRect, y: u32 },
 }
 
 /// The render world's upscales: the jobs listed this frame, the network, the workspaces and the jobs' progress.
@@ -284,7 +332,7 @@ pub fn sys_render_mobile_upscales(
             let canvas = job.canvas;
             WorkspaceState::Creating(background_pool().spawn(Priority::Visible, "span workspace", move || {
                 let span = UpscaleWorkspace::new(&gpu, &device, &source, canvas.x, canvas.y)?;
-                Ok(Workspace { span, next_slot: 0, last_used: Instant::now() })
+                Ok(Workspace { span, next_slot: 0, last_used: Instant::now(), assembly: None })
             }))
         });
         if let WorkspaceState::Creating(task) = workspace {
@@ -304,23 +352,25 @@ pub fn sys_render_mobile_upscales(
         let at = progress.entry(job.id).or_default();
         while at.frame < job.frames.len() && spent < MOBILE_COMPUTE_FRAME_BUDGET_MS && !bc7_full {
             let frame = &job.frames[at.frame];
+            // The frame's pass, and its step.
+            let (pass_index, first) = (at.step / plan.len(), at.step % plan.len());
+            let pass = frame.passes[pass_index];
+            let last_pass = pass_index + 1 == frame.passes.len();
             let started_here = frames_started.entry(key).or_default();
-            if at.step == 0 && *started_here >= FRAMES_STARTED_PER_SUBMISSION {
+            if first == 0 && *started_here >= FRAMES_STARTED_PER_SUBMISSION {
                 break;
             }
-            let costs = plan[at.step..].iter().map(|&step| step_ms(&workspace.span, step, frame) * cost_scale)
-                .collect::<Vec<_>>();
+            let costs = plan[first..].iter()
+                .map(|&step| step_ms(&workspace.span, step, frame, last_pass) * cost_scale).collect::<Vec<_>>();
             let (mut count, _) = steps_within_budget(costs.iter().copied(), spent);
-            for (index, &step) in plan[at.step..at.step + count].iter().enumerate() {
+            for (index, &step) in plan[first..first + count].iter().enumerate() {
                 match step {
                     FrameStep::Prepare => {
                         at.slot = workspace.next_slot;
                         workspace.next_slot = (workspace.next_slot + 1) % UPSCALE_FRAME_SLOTS;
                         *started_here += 1;
-                        if let Err(error) = workspace.span.set_frame(&render_queue, at.slot, source_rect(frame.source),
-                            job.snap_alpha) {
-                            error!("A mobile frame was not upscaled: {error}");
-                        }
+                        workspace.span.set_frame_at(&render_queue, at.slot, source_rect(frame.source),
+                            pass.origin.to_array(), job.snap_alpha);
                         recorded.extend(workspace.span.prepare(at.slot).iter().cloned().map(Recorded::Dispatch));
                     }
                     FrameStep::Network(dispatch) =>
@@ -328,7 +378,7 @@ pub fn sys_render_mobile_upscales(
                     FrameStep::Finish => {
                         let target = frame.target;
                         let y = scratch_rows;
-                        if format == AtlasFormat::Bc7 {
+                        if format == AtlasFormat::Bc7 && last_pass {
                             // Out of scratch rows: the rest waits for the next frame.
                             let rows = target.padded_size().1;
                             if scratch_rows + rows > BC7_SCRATCH_SIDE {
@@ -339,20 +389,41 @@ pub fn sys_render_mobile_upscales(
                             scratch_rows += rows;
                         }
                         recorded.extend(workspace.span.finish(at.slot).iter().cloned().map(Recorded::Dispatch));
-                        recorded.push(match format {
-                            AtlasFormat::Rgba8 => Recorded::Copy { workspace: key, target },
-                            AtlasFormat::Bc7 => Recorded::Scratch { workspace: key, target, y },
-                        });
+                        match format {
+                            AtlasFormat::Rgba8 => recorded.push(Recorded::Copy {
+                                workspace: key,
+                                from: pass.from,
+                                target: AtlasRect { x: target.x + pass.to.x, y: target.y + pass.to.y,
+                                    width: pass.size.x, height: pass.size.y, ..target },
+                            }),
+                            AtlasFormat::Bc7 if !assembles(format, frame) =>
+                                recorded.push(Recorded::Scratch { workspace: key, target, y }),
+                            AtlasFormat::Bc7 => {
+                                workspace.assembly.get_or_insert_with(|| Assembly::new(device));
+                                if pass_index == 0 {
+                                    recorded.push(Recorded::Clear { workspace: key, target });
+                                }
+                                recorded.push(Recorded::Assemble { workspace: key, pass });
+                                if last_pass {
+                                    recorded.push(Recorded::AssembledScratch { workspace: key, target, y });
+                                }
+                            }
+                        }
                     }
                 }
             }
             spent += costs[..count].iter().sum::<f64>();
             at.step += count;
-            if at.step < plan.len() {
+            if at.step < (pass_index + 1) * plan.len() {
                 if at.step > 0 {
                     holders.insert(key, job.id);
                 }
                 break;
+            }
+            // A frame in the middle of its passes keeps its workspace, and its assembly.
+            if at.step < frame.passes.len() * plan.len() {
+                holders.insert(key, job.id);
+                continue;
             }
             holders.remove(&key);
             *at = JobProgress { frame: at.frame + 1, step: 0, slot: at.slot };
@@ -373,10 +444,11 @@ pub fn sys_render_mobile_upscales(
     if let Some(clock) = timed {
         clock.stamp(&mut encoder, 0);
     }
-    let output = |key: &WorkspaceKey| {
+    let workspace_of = |key: &WorkspaceKey| {
         let WorkspaceState::Ready(workspace) = &state.workspaces[key] else { unreachable!("a step ran on it") };
-        (workspace.span.output(), workspace.span.output_bytes_per_row())
+        workspace
     };
+    let assembly_of = |key: &WorkspaceKey| workspace_of(key).assembly.as_ref().expect("made for the frame");
     let mut next = recorded.iter().peekable();
     let mut encodes = Vec::new();
     while next.peek().is_some() {
@@ -388,27 +460,48 @@ pub fn sys_render_mobile_upscales(
                 dispatch.record(&mut pass);
             }
         }
-        // The output's top left part, the frame and its border at 2x: into the RGBA8 atlas, or whole blocks of it
-        // into the scratch rows.
-        let (workspace, texture, origin, (width, height)): (_, &wgpu::Texture, _, _) = match next.next() {
+        // Each pass's part of the output (the frame and its border at 2x, or a tile's core): into the RGBA8 atlas,
+        // or, whole blocks of it, into the scratch rows, directly or put together in the assembly.
+        let scratch_at = |y: u32| (&bc7.ready().expect("a BC7 step ran").scratch, wgpu::Origin3d { x: 0, y, z: 0 });
+        let (source, texture, origin, (width, height)): (_, &wgpu::Texture, _, _) = match next.next() {
             None | Some(Recorded::Dispatch(_)) => continue,
-            Some(Recorded::Copy { workspace, target }) => {
+            Some(Recorded::Copy { workspace, from, target }) => {
                 let atlas = atlas_of(AtlasFormat::Rgba8).expect("a step ran on it");
-                (workspace, &atlas.texture, wgpu::Origin3d { x: target.x, y: target.y, z: target.layer },
-                    (target.width, target.height))
+                (output_from(&workspace_of(workspace).span, *from), &atlas.texture,
+                    wgpu::Origin3d { x: target.x, y: target.y, z: target.layer }, (target.width, target.height))
             }
             Some(Recorded::Scratch { workspace, target, y }) => {
                 encodes.push((*target, *y));
-                let bc7_encoding: &Bc7Encoding = bc7.ready().expect("a BC7 step ran");
-                (workspace, &bc7_encoding.scratch, wgpu::Origin3d { x: 0, y: *y, z: 0 }, target.padded_size())
+                let (scratch, origin) = scratch_at(*y);
+                (output_from(&workspace_of(workspace).span, UVec2::ZERO), scratch, origin, target.padded_size())
+            }
+            Some(Recorded::Clear { workspace, target }) => {
+                let assembly = assembly_of(workspace);
+                let layout = wgpu::TexelCopyBufferLayout {
+                    offset: 0, bytes_per_row: Some(MOBILE_ATLAS_PAGE_SIZE * ASSEMBLY_TEXEL_BYTES), rows_per_image: None,
+                };
+                (wgpu::TexelCopyBufferInfo { buffer: &assembly.zeros, layout }, &assembly.texture,
+                    wgpu::Origin3d::ZERO, target.padded_size())
+            }
+            Some(Recorded::Assemble { workspace, pass }) => {
+                let assembly = assembly_of(workspace);
+                (output_from(&workspace_of(workspace).span, pass.from), &assembly.texture,
+                    wgpu::Origin3d { x: pass.to.x, y: pass.to.y, z: 0 }, (pass.size.x, pass.size.y))
+            }
+            Some(Recorded::AssembledScratch { workspace, target, y }) => {
+                encodes.push((*target, *y));
+                let (scratch, origin) = scratch_at(*y);
+                let (width, height) = target.padded_size();
+                encoder.copy_texture_to_texture(
+                    assembly_of(workspace).texture.as_image_copy(),
+                    wgpu::TexelCopyTextureInfo { texture: scratch, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
+                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                );
+                continue;
             }
         };
-        let (buffer, bytes_per_row) = output(workspace);
         encoder.copy_buffer_to_texture(
-            wgpu::TexelCopyBufferInfo {
-                buffer,
-                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bytes_per_row), rows_per_image: None },
-            },
+            source,
             wgpu::TexelCopyTextureInfo { texture, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
             wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
@@ -451,6 +544,19 @@ pub fn sys_render_mobile_upscales(
 /// The atlas of a job's frames, and of its 2x frames.
 fn job_format(job: &UpscaleJob) -> AtlasFormat {
     job.frames.first().map_or(AtlasFormat::Rgba8, |frame| frame.source.format)
+}
+
+/// A workspace's 2x output from texel `from` on, as a copy reads it.
+fn output_from(span: &UpscaleWorkspace, from: UVec2) -> wgpu::TexelCopyBufferInfo<'_> {
+    let bytes_per_row = span.output_bytes_per_row();
+    wgpu::TexelCopyBufferInfo {
+        buffer: span.output(),
+        layout: wgpu::TexelCopyBufferLayout {
+            offset: u64::from(from.y) * u64::from(bytes_per_row) + u64::from(from.x * UPSCALE_OUTPUT_TEXEL_BYTES),
+            bytes_per_row: Some(bytes_per_row),
+            rows_per_image: None,
+        },
+    }
 }
 
 /// An atlas rectangle as the compute crate takes a frame.

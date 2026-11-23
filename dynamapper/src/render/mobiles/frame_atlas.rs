@@ -81,6 +81,12 @@ impl AtlasFormat {
         }
     }
 
+    /// The widest (and tallest) frame a page holds, in texels: the page less the gutter after it, a whole number of
+    /// blocks for BC7.
+    pub const fn page_room(self) -> u32 {
+        MOBILE_ATLAS_PAGE_SIZE - self.gutter()
+    }
+
     /// The extent a `width` by `height` frame's pixels cover: the frame, padded to whole blocks for BC7.
     pub const fn padded(self, width: u32, height: u32) -> (u32, u32) {
         (width.next_multiple_of(self.align()), height.next_multiple_of(self.align()))

@@ -17,6 +17,13 @@
 //! mobile switches between its 1x and 2x frames only as its sequence starts over (`UpscaleSwitch`), so a cycle never
 //! mixes the two, except that it drops 2x frames the atlas emptied at once.
 //!
+//! A sequence whose canvas would be larger than `UPSCALE_MAX_CANVAS_PIXELS` upscales in tiles (`UpscalePlan`) on a
+//! workspace of `UPSCALE_TILE_SIDE` square, each frame in a pass per tile, which uot-gpu-compute's upscale::tiles lays
+//! out to give the frame's whole-canvas upscale. A sequence whose 2x frames are wider than a page (a frame over about
+//! 506 pixels wide: the largest dragons, wyrms and great UOP bodies) is stored in parts side by side, split at the same
+//! columns from the anchor in every frame, and drawn as a card per part; a frame taller than a page at 2x (none is)
+//! plays at 1x with a warning.
+//!
 //! The main world takes the atlas room and lists the jobs each frame, those of the sequences drawn first, nearest the
 //! player first, then the largest on screen, then those started of sequences drawn lately (`UPSCALE_RESUME_SECS`);
 //! the render world works through them within what the in-betweens leave of the mobiles' compute budget
@@ -33,12 +40,13 @@ use bevy::window::PrimaryWindow;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use udd_assets::animation::mobile_strides::{MobileAnimClips, MobileClip, MobileClipFrameExtent};
+use uot_gpu_compute::upscale::tiles::{upscale_tiles, TileSpan};
 use uot_gpu_compute::upscale::{upscale_canvas_size, UPSCALE_BORDER, UPSCALE_OUTPUT_SCALE};
 use crate::render::view::camera::RenderZoom;
 use crate::settings::Settings;
 use crate::world::mobile_motion::DIRECTION_COUNT;
 use super::clips::{AnimPackages, AnimSource, AtlasEntry, Clip, ClipFrame, ClipKey, MobileClips};
-use super::frame_atlas::{AtlasPool, AtlasRect, MobileFrameAtlas, MOBILE_ATLAS_UPSCALED_PAGES};
+use super::frame_atlas::{AtlasFormat, AtlasPool, AtlasRect, MobileFrameAtlas, MOBILE_ATLAS_UPSCALED_PAGES};
 use super::in_between::union_placement;
 use super::placement::FramePlacement;
 use super::rife_in_betweens::{placement_size, InBetweenKey, MobileInBetweens};
@@ -61,6 +69,10 @@ pub const UPSCALE_CANVAS_MULTIPLE: u32 = 8;
 /// direction or in a RIFE mode its RIFE sequence, needs a larger canvas plays at 1x in all of them. The RIFE
 /// in-betweens have no such limit.
 pub const UPSCALE_MAX_CANVAS_PIXELS: u32 = 260 * 260;
+/// The side of the workspace a sequence too large for one canvas upscales on, in tiles: the largest multiple of
+/// `UPSCALE_CANVAS_MULTIPLE` whose square is within `UPSCALE_MAX_CANVAS_PIXELS` (256).
+pub const UPSCALE_TILE_SIDE: u32 =
+    UPSCALE_MAX_CANVAS_PIXELS.isqrt() / UPSCALE_CANVAS_MULTIPLE * UPSCALE_CANVAS_MULTIPLE;
 /// The distance to the player, in tiles, under which two mobiles count as equally near and the larger one on screen
 /// goes first.
 const UPSCALE_DISTANCE_STEP_TILES: f32 = 1.0;
@@ -139,12 +151,24 @@ pub fn sys_update_mobile_upscale_gate(
     }
 }
 
-/// One frame of a job: a frame of the 1x sequence, and where its 2x canvas goes, from the canvas's top left
-/// (`UPSCALE_BORDER` before the frame's).
+/// A run of the network for a frame: where the frame's top left lies on the workspace's canvas, and the part of the
+/// 2x output kept, `size` texels from `from`, which goes `to` texels from its target's top left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpscalePass {
+    pub origin: IVec2,
+    pub from: UVec2,
+    pub to: UVec2,
+    pub size: UVec2,
+}
+
+/// One frame of a job: a frame of the 1x sequence, where its 2x canvas goes (the canvas from its top left,
+/// `UPSCALE_BORDER` before the frame's, or the part of it stored there, `UpscalePlan`), and the passes that make it:
+/// one on a canvas that holds the frame, one per tile on a smaller one.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpscaleFrame {
     pub source: AtlasRect,
     pub target: AtlasRect,
+    pub passes: Vec<UpscalePass>,
 }
 
 /// The upscaling of a sequence, as the render world runs it: its frames in order on one canvas size.
@@ -153,19 +177,111 @@ pub struct UpscaleJob {
     pub id: u64,
     /// The 2x alpha snaps to 0 or 1, as the Classic frames' is.
     pub snap_alpha: bool,
-    /// The workspace's canvas: the largest frame with its border, rounded up to `UPSCALE_CANVAS_MULTIPLE`.
+    /// The workspace's canvas: the largest frame with its border, rounded up to `UPSCALE_CANVAS_MULTIPLE`, or the
+    /// tiles' (`UPSCALE_TILE_SIDE` square).
     pub canvas: UVec2,
     pub frames: Vec<UpscaleFrame>,
+}
+
+/// How a sequence upscales: on what workspace canvas, and in how many parts side by side its 2x frames are stored.
+#[derive(Clone, Debug, PartialEq)]
+struct UpscalePlan {
+    /// The canvas of its largest frame (`canvas_for`) when within `UPSCALE_MAX_CANVAS_PIXELS`, else the tiles'.
+    canvas: UVec2,
+    /// The columns, in pixels from the anchor, the parts meet at: none when the 2x frames fit a page's width.
+    splits: Vec<i32>,
+}
+
+impl UpscalePlan {
+    /// The plan of `clip`'s frames in the atlas of `format`, unless a frame is taller than a page at 2x.
+    fn of(clip: &Clip, format: AtlasFormat) -> Result<Self, String> {
+        let largest = clip.frames.iter().fold(UVec2::ONE, |largest, frame| {
+            largest.max(UVec2::new(frame.rect.width, frame.rect.height))
+        });
+        let whole = canvas_for(largest);
+        let canvas = if canvas_fits(whole) { whole } else { UVec2::splat(UPSCALE_TILE_SIDE) };
+        // The pixels of a canvas a page holds at 2x.
+        let room = format.page_room() / UPSCALE_OUTPUT_SCALE;
+        let (_, height) = upscale_canvas_size(largest.x, largest.y);
+        if height > room {
+            return Err(format!("a frame {} pixels high is {} texels high at 2x with its border, more than a page \
+                holds", largest.y, height * UPSCALE_OUTPUT_SCALE));
+        }
+        // The frames' canvases on their anchor: the widest reach to each side, and the parts that fit a page.
+        let (mut left, mut right) = (i32::MIN, i32::MIN);
+        for frame in &clip.frames {
+            let (anchor, width) = canvas_anchor(frame);
+            left = left.max(anchor);
+            right = right.max(width - anchor);
+        }
+        let span = u32::try_from(left.saturating_add(right)).unwrap_or(0);
+        let parts = span.div_ceil(room).max(1);
+        let splits = (1..parts).map(|part| (part * span / parts) as i32 - left).collect();
+        Ok(Self { canvas, splits })
+    }
+
+    fn parts(&self) -> usize {
+        self.splits.len() + 1
+    }
+
+    /// The columns of `frame`'s canvas in `part`: empty when the frame lies wholly in other parts.
+    fn span(&self, frame: &ClipFrame, part: usize) -> TileSpan {
+        let (anchor, width) = canvas_anchor(frame);
+        let column = |split: Option<&i32>, edge: i32| split.map_or(edge, |split| (anchor + split).clamp(0, width)) as u32;
+        TileSpan {
+            start: column(part.checked_sub(1).and_then(|before| self.splits.get(before)), 0),
+            end: column(self.splits.get(part), width),
+        }
+    }
+
+    /// The placement of `part` of `frame` at 2x: its canvas's (`upscaled_placement`) cut to the part's columns.
+    fn placement(&self, frame: &ClipFrame, part: usize) -> FramePlacement {
+        let span = self.span(frame, part);
+        let canvas = upscaled_placement(frame.rect, frame.placement);
+        FramePlacement { width: span.len() as f32, anchor_x: canvas.anchor_x - span.start as f32, ..canvas }
+    }
+
+    /// The room of `part` of `frame` at 2x, in texels.
+    fn size(&self, frame: &ClipFrame, part: usize) -> (u32, u32) {
+        let (_, height) = upscale_canvas_size(frame.rect.width, frame.rect.height);
+        (self.span(frame, part).len() * UPSCALE_OUTPUT_SCALE, height * UPSCALE_OUTPUT_SCALE)
+    }
+
+    /// The passes that make `part` of `frame`: the tiles over its columns, one when the canvas holds the frame.
+    fn passes(&self, frame: &ClipFrame, part: usize) -> Vec<UpscalePass> {
+        let span = self.span(frame, part);
+        let (width, height) = upscale_canvas_size(frame.rect.width, frame.rect.height);
+        let rows = TileSpan { start: 0, end: height };
+        let tiles = match upscale_tiles([width, height], self.canvas.to_array(), [span, rows]) {
+            Ok(tiles) => tiles,
+            Err(_) => return Vec::new(),
+        };
+        tiles.iter().map(|tile| {
+            let (from, size) = tile.output_core();
+            UpscalePass {
+                origin: IVec2::from(tile.frame_origin()),
+                from: UVec2::from(from),
+                to: UVec2::new(tile.core[0].start - span.start, tile.core[1].start) * UPSCALE_OUTPUT_SCALE,
+                size: UVec2::from(size),
+            }
+        }).collect()
+    }
+}
+
+/// Where a frame's anchor lies on its canvas, past the border, and the canvas's width, in pixels.
+fn canvas_anchor(frame: &ClipFrame) -> (i32, i32) {
+    let (width, _) = upscale_canvas_size(frame.rect.width, frame.rect.height);
+    (frame.placement.anchor_x.round() as i32 + UPSCALE_BORDER as i32, width as i32)
 }
 
 enum UpscaleState {
     /// Drawn, without room in the atlas yet.
     Wanted,
-    /// The 2x frames have their room, and the render world fills them as `job`; none while not queued.
-    Generating { sequence: Clip, job: Option<u64> },
-    Ready(Clip),
-    /// The sequence does not fit the upscaled pages, or its canvas would be larger than `UPSCALE_MAX_CANVAS_PIXELS`
-    /// (which `MobileUpscales::body_upscales` keeps from being asked for).
+    /// The 2x frames have their room, and the render world fills them as `job`; none while not queued. The sequence
+    /// comes in one part, or in several side by side (`UpscalePlan`).
+    Generating { parts: Vec<Clip>, job: Option<u64> },
+    Ready(Vec<Clip>),
+    /// The sequence does not fit the upscaled pages, or a frame is taller than a page at 2x.
     Missing,
 }
 
@@ -257,10 +373,10 @@ impl MobileUpscales {
         entry.priority = priority;
     }
 
-    /// The 2x frames of the sequence of `key`, once all are made.
-    pub fn ready(&self, key: &InBetweenKey) -> Option<&Clip> {
+    /// The 2x frames of the sequence of `key`, once all are made: a clip per part, each drawn as a card of its own.
+    pub fn ready(&self, key: &InBetweenKey) -> Option<&[Clip]> {
         match &self.entries.get(key)?.state {
-            UpscaleState::Ready(sequence) => Some(sequence),
+            UpscaleState::Ready(parts) => Some(parts),
             _ => None,
         }
     }
@@ -290,10 +406,10 @@ impl MobileUpscales {
         let finished = std::mem::take(&mut *self.finished.lock());
         for (key, entry) in self.entries.iter_mut() {
             if let UpscaleState::Generating { job: Some(job), .. } = &entry.state && finished.contains(job) {
-                let UpscaleState::Generating { sequence, .. } =
+                let UpscaleState::Generating { parts, .. } =
                     std::mem::replace(&mut entry.state, UpscaleState::Missing) else { unreachable!() };
                 debug!("Mobile upscales: {:?} at 2x in {:.2} s.", key, now - entry.first_drawn);
-                entry.state = UpscaleState::Ready(sequence);
+                entry.state = UpscaleState::Ready(parts);
             }
         }
         self.entries.retain(|_, entry| entry.queued(now) || !matches!(entry.state, UpscaleState::Wanted));
@@ -310,17 +426,18 @@ impl MobileUpscales {
         for (key, entry) in wanted {
             let Some(clip) = base(key, entry.source) else { continue };
             let Some(format) = clip.frames.first().map(|frame| frame.rect.format) else { continue };
-            if canvas_of(clip).is_none() {
-                let largest = clip.frames.iter().map(|frame| (frame.rect.width, frame.rect.height))
-                    .max_by_key(|(width, height)| width * height).unwrap_or_default();
-                warn!("Mobile clip {:?} has a frame of {}x{}, too large to upscale, so it plays at 1x.", entry.source,
-                    largest.0, largest.1);
-                entry.state = UpscaleState::Missing;
-                continue;
-            }
-            let placements = clip.frames.iter().map(|frame| upscaled_placement(frame.rect, frame.placement))
+            let plan = match UpscalePlan::of(clip, format) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    warn!("Mobile clip {:?} plays at 1x: {error}.", entry.source);
+                    entry.state = UpscaleState::Missing;
+                    continue;
+                }
+            };
+            // The parts one after another, each its frames in order.
+            let frames = (0..plan.parts()).flat_map(|part| clip.frames.iter().map(move |frame| (part, frame)))
                 .collect::<Vec<_>>();
-            let sizes = clip.frames.iter().map(|frame| upscaled_size(frame.rect)).collect::<Vec<_>>();
+            let sizes = frames.iter().map(|&(part, frame)| plan.size(frame, part)).collect::<Vec<_>>();
             // The pages drawn this frame stay: without one free of them, the sequence waits.
             if !atlas.has_room_sparing_in(format, AtlasPool::Upscaled, &sizes, now) {
                 continue;
@@ -328,17 +445,16 @@ impl MobileUpscales {
             entry.state = match atlas.reserve_in(AtlasEntry::Upscaled(*key), format, AtlasPool::Upscaled, &sizes, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
-                    UpscaleState::Generating {
-                        sequence: Clip {
-                            frames: rects.into_iter().zip(placements)
-                                .map(|(rect, placement)| ClipFrame { rect, placement }).collect(),
-                            mirrored: clip.mirrored,
-                            frame_secs: clip.frame_secs,
-                            stored: clip.stored,
-                            texel_scale: UPSCALE_OUTPUT_SCALE,
-                        },
-                        job: None,
-                    }
+                    let mut rects = rects.into_iter();
+                    let parts = (0..plan.parts()).map(|part| Clip {
+                        frames: clip.frames.iter().zip(rects.by_ref())
+                            .map(|(frame, rect)| ClipFrame { rect, placement: plan.placement(frame, part) }).collect(),
+                        mirrored: clip.mirrored,
+                        frame_secs: clip.frame_secs,
+                        stored: clip.stored,
+                        texel_scale: UPSCALE_OUTPUT_SCALE,
+                    }).collect();
+                    UpscaleState::Generating { parts, job: None }
                 }
                 None => {
                     warn!("The 2x frames of mobile clip {:?} do not fit the frame atlas, so it plays at 1x.",
@@ -361,8 +477,9 @@ impl MobileUpscales {
                 _ => false,
             };
             let clip = base(key, entry.source).filter(|_| listed);
-            let UpscaleState::Generating { sequence, job } = &mut entry.state else { continue };
-            let (Some(clip), Some(canvas)) = (clip, clip.and_then(canvas_of)) else {
+            let UpscaleState::Generating { parts, job } = &mut entry.state else { continue };
+            let plan = clip.and_then(|clip| UpscalePlan::of(clip, clip.frames.first()?.rect.format).ok());
+            let (Some(clip), Some(plan)) = (clip, plan) else {
                 *job = None;
                 continue;
             };
@@ -371,13 +488,21 @@ impl MobileUpscales {
                 self.next_job
             });
             // Its pages are in use while it is made, though not drawn yet.
-            sequence.touch_pages(atlas, now);
+            for part in parts.iter() {
+                part.touch_pages(atlas, now);
+            }
+            // A frame's parts one after another; a part the frame does not reach has nothing to make.
+            let frames = clip.frames.iter().enumerate().flat_map(|(index, frame)| {
+                parts.iter().enumerate().map(move |(part, upscaled)| (part, frame, upscaled.frames[index].rect))
+            });
             self.jobs.push(UpscaleJob {
                 id,
                 snap_alpha: key.source == AnimSource::Classic,
-                canvas,
-                frames: clip.frames.iter().zip(&sequence.frames)
-                    .map(|(frame, upscaled)| UpscaleFrame { source: frame.rect, target: upscaled.rect }).collect(),
+                canvas: plan.canvas,
+                frames: frames.filter_map(|(part, frame, target)| {
+                    let passes = plan.passes(frame, part);
+                    (!passes.is_empty()).then_some(UpscaleFrame { source: frame.rect, target, passes })
+                }).collect(),
             });
         }
         evicted
@@ -396,28 +521,13 @@ fn upscaled_placement(rect: AtlasRect, placement: FramePlacement) -> FramePlacem
     }
 }
 
-/// The room of a frame's 2x canvas cut to the frame and its border, in texels.
-fn upscaled_size(rect: AtlasRect) -> (u32, u32) {
-    let (width, height) = upscale_canvas_size(rect.width, rect.height);
-    (width * UPSCALE_OUTPUT_SCALE, height * UPSCALE_OUTPUT_SCALE)
-}
-
-/// The canvas of a sequence's frames (`UpscaleJob::canvas`), unless larger than `UPSCALE_MAX_CANVAS_PIXELS`.
-fn canvas_of(clip: &Clip) -> Option<UVec2> {
-    let largest = clip.frames.iter().fold(UVec2::ONE, |largest, frame| {
-        largest.max(UVec2::new(frame.rect.width, frame.rect.height))
-    });
-    let canvas = canvas_for(largest);
-    canvas_fits(canvas).then_some(canvas)
-}
-
 /// The canvas of frames up to `largest` on each side: with the border, rounded up to `UPSCALE_CANVAS_MULTIPLE`.
 fn canvas_for(largest: UVec2) -> UVec2 {
     let (width, height) = upscale_canvas_size(largest.x, largest.y);
     UVec2::new(width.next_multiple_of(UPSCALE_CANVAS_MULTIPLE), height.next_multiple_of(UPSCALE_CANVAS_MULTIPLE))
 }
 
-/// Whether a canvas is upscaled: within `UPSCALE_MAX_CANVAS_PIXELS`.
+/// Whether a canvas upscales whole: within `UPSCALE_MAX_CANVAS_PIXELS`.
 fn canvas_fits(canvas: UVec2) -> bool {
     canvas.x * canvas.y <= UPSCALE_MAX_CANVAS_PIXELS
 }
