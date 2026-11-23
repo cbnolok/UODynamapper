@@ -426,8 +426,8 @@ side-by-side mp4s in `/home/claudio/rust-target/uodynamapper-scratch/strides-res
 
 ### SPAN 2× in game (`mobile_upscale`, 2026-11-21)
 
-`world_rendering.mobile_upscale` is `off` (default) or `span_x2`: in Preferences, and `set mobile_upscale` on the
-control socket. Off by default: it costs GPU time and VRAM the zoomed-out view never shows, and it is a look the user
+`world_rendering.mobile_upscale` is `off` (default), `balanced` or `always` (since 2026-11-23; settings written as
+`span_x2` read as `balanced`): in Preferences, and `set mobile_upscale` on the control socket. Off by default: it costs GPU time and VRAM the zoomed-out view never shows, and it is a look the user
 has not chosen yet for every style. Code: `render/mobiles/upscales.rs` (main world) and `upscales/render.rs`; the
 network and its frame steps are uot-gpu-compute's `upscale`.
 
@@ -435,17 +435,18 @@ network and its frame steps are uot-gpu-compute's `upscale`.
   2×). Upscales start at 1.5× and stop below 1.35×, so a zoom around the threshold does not flap
   (`UPSCALE_ON_MAGNIFICATION`, `UPSCALE_OFF_MAGNIFICATION`). Below it the 1× frames draw as before, and the queued
   jobs stop.
-- **Which bodies (per body, 2026-11-23)**: a body upscales whole or not at all, so its sharpness does not jump between
+- **Which bodies (per body, 2026-11-23)**: Always upscales every body; Balanced the bodies
+  `runtime_specs/mobiles/Upscale.kdl` picks (below), by default the rule that follows. A body upscales whole or not at all, so its sharpness does not jump between
   actions (it did with a rule per clip: a Classic dragon 12 upscaled its walk but not its attack). A body upscales
-  only when every sequence it can show fits the canvas cap (`UPSCALE_MAX_CANVAS_PIXELS`, 260×260 with the 2-pixel
-  border, sides rounded up to 8): the clip of every action and direction in its package (`mobile_anim_cc` for
+  in Balanced only when every sequence it can show fits the size rule's canvas (the file's `max_canvas`, 260×260
+  by default and at most, with the 2-pixel border, sides rounded up to 8): the clip of every action and direction in its package (`mobile_anim_cc` for
   Classic, `mobile_anim_ec` for Enhanced), or in a RIFE mode each clip's RIFE sequence, whose in-betweens sit on the
   card of two neighbouring frames on one anchor, wider or taller than either. Each sequence has a canvas of its own,
   so a wide clip and a tall one don't add up. A rider and its mount are two bodies, each with its own rule. The
   sizes come from the frame records (`MobileAnimClips::body_actions`, `clip_extents`), with no pixels read, once per
-  body drawn while upscaling is on (about 0.2 ms, 0.7 ms at most). A body over the cap plays at 1× at every zoom; its
+  body drawn while upscaling is on (about 0.2 ms, 0.7 ms at most). In Balanced a body over the rule plays at 1× at every zoom; its
   RIFE in-betweens have no size limit and are made as for any body. A future filter on the frames (a denoise) should
-  likewise take every body. Excluded with the 2026-11-22 packages:
+  likewise take every body. Excluded in Balanced at 260 with the 2026-11-22 packages:
   - Classic, 49 of 1030 bodies with frames (54 in a RIFE mode): 9 10 12 13 38 40 43 46 47 49 59 60 61 62 77
     102–106 131 162–164 172 175 180 197 198 735 755 790 797 798 826 1248 1288 1417–1422 1427 1431 1531 1532 1545
     1760; a RIFE mode adds 189 285 796 999 1433.
@@ -481,8 +482,8 @@ network and its frame steps are uot-gpu-compute's `upscale`.
   because the upscales of a RIFE mode wait for its sequences. Each frame step (prepare, the network's 22 dispatches,
   finish with its encode) has a cost estimate from uot-gpu-compute's benchmark fit (0.027 ms a dispatch plus 1 ms per
   10⁹ multiply-adds, ~0.43 M per canvas pixel), corrected by timestamp queries (`CostScale`). A frame larger than the
-  budget spreads over several frames; its workspace stays with it until it ends. Canvases above 260×260 (90 MB of
-  workspace, ~30 ms) are not upscaled, and neither is any sequence of their body (above).
+  budget spreads over several frames; its workspace stays with it until it ends. No workspace is larger than 260×260
+  (90 MB, ~30 ms): a larger sequence upscales in 256×256 tiles (below).
 - **Workspaces**: one per canvas size (rounded up to 8, so a body's actions share one) and atlas texture, made on the
   background pool, freed after 20 s unused (~1360 bytes per canvas pixel: 5.6 MB at 64², 89 MB at 256²).
 
@@ -501,12 +502,79 @@ crossfade, RIFE x2 and x4 (scripts and captures in `uodynamapper-scratch/span-in
   16 upscaled pages, 64 MiB, plus the workspaces); with BC7 the pages are 16 MiB and the drop is within the driver's
   64 MiB blocks. The card sat at 3.4–3.6 GiB of 4 with the desktop.
 - **Not upscaled**: the stygian (frames up to 512×413, above the 260×260 canvas cap; a 516×417 canvas would need
-  ~290 MB of workspace). Tiling a large frame over a small canvas would lift the cap. Since 2026-11-23 the daemon 9
+  ~290 MB of workspace). Tiling a large frame over a small canvas would lift the cap (done 2026-11-23, below). Since 2026-11-23 the daemon 9
   above plays at 1× too: its body is over the cap (above).
 - **Looks**: at 2.5× the 2× frames are sharper and smoother at the edges, Classic edges stay hard, BC7 and RGBA8 look
   the same, the placement matches the 1× frames, and at zoom 1 nothing is upscaled. Side-by-side videos (RIFE x4,
   walking then standing): `uodynamapper-scratch/span-ingame/videos/*-off-vs-span.mp4`.
 - The regression harness with upscale off (quick tier) matches the commit before: 76 identical, 15 within tolerance.
+
+### Modes, Upscale.kdl and tiles (2026-11-23)
+
+The user's decisions: three modes, Off, Balanced (the per-body rule above, now from a file) and Always (every body,
+whatever its size); large bodies upscale in tiles without growing the workspace.
+
+- **`runtime_specs/mobiles/Upscale.kdl`** (`upscales/spec.rs`, strict, every error naming its line; a copy under
+  `cache/runtime_specs/mobiles/` takes its place, read at startup). `default max_canvas=<side>` is the size rule
+  (8 to 260, 260 without it; the code's `UPSCALE_MAX_CANVAS_SIDE` is both the fallback and the bound, since a side
+  past the workspace would only mean tiles). `body <id> [<last id>] [package="cc"|"ec"] upscale="always"|"never"` lists
+  in-game (server) body ids, a range, in one package or both; a package's entry comes before one for both, and a body
+  listed twice in the same scope is an error. The bundled file holds only `default max_canvas=260`, so Balanced is
+  today's rule.
+- **Always ignores the `body` entries**: it is the "upscale everything" choice, and a `never` that still held would
+  make it "Balanced without the size rule", a fourth mode nobody asked for; a body the user wants at 1x everywhere is a
+  Balanced `never`. Written in the file's header and the Preferences hover text.
+- **One decision point**: `MobileUpscales::body_upscales(key, packages, rife, mode)` and its `body_choice`; the size
+  rule's canvases are found only when Balanced asks for an unlisted body. A package that carries a body's 2× frames
+  (pack-time upscaling, planned) answers before it.
+- **Tiles** (uot-gpu-compute `upscale::tiles`): a canvas larger than its workspace is cut into windows of the
+  workspace's size (256×256, `UPSCALE_TILE_SIDE`, the largest multiple of 8 within 260×260), each keeping as its core
+  only what lies at least the network's reach inside its inner edges: 21 pixels, one per 3×3 convolution (1 + 3×6 + 1
+  + 1 layers); the bicubic alpha's reach of 2 is within it. A window's source is the frame read at an origin of its
+  own (`set_frame_at`; the pixel shader reads `origin_x/y` instead of the border). The cores tile the canvas exactly,
+  and the GPU test `tiles_stitch_into_the_whole_canvas` (150×118 frame, 64² workspace, two regions) matches the whole
+  canvas's upscale bit for bit on the shader cores and the matrix units: 0 of 75152 texels differ.
+- **Parts** (an atlas limit): an upscaled sequence's frames each fit an atlas page at 2×, so a frame at most 510 canvas
+  pixels wide or tall (BC7; 511 RGBA8: the page's room less its gutter, halved). A sequence wider than that is stored
+  in parts split at the same anchor-relative columns in every frame, each part its own atlas entry and drawn as a card
+  of its own (`Vec<Clip>` per sequence); a frame taller than that plays at 1× with a warning (no body's is: every
+  frame is at most 480 tall). Classic 12, 49, 59, 105, 106, 180, 198, 826, 1531, 1532, 1545 and 1760 and Enhanced 12,
+  59, 197, 198, 797 and 826 have frames wider than 506 pixels (frames up to 640×480), so they draw in two parts. At a
+  part's edge each card's filter clamps at its edge instead of blending across it, a sub-pixel seam at most.
+- **BC7 frames made in several passes**, or from a part's columns, are put together in an RGBA8 1024² texture per
+  workspace (cleared before the first pass, copied into the BC7 scratch rows after the last) and encoded once; RGBA8
+  passes copy straight into the atlas. The compute budget counts each pass as a frame step, and the BC7 encode only
+  on the last.
+
+- **The log** (debug) names each upscaled sequence's canvas, parts and passes when it is reserved, and its time to 2×.
+
+Measured 2026-11-23 on the Radeon 880M (profiling build with the span trace, 1900×1000, zoom 0.5 = 2×, frame limiter
+off, crossfade, the 2026-11-22/23 packages, west of Yew at 2111,790; scripts, captures and traces in
+`uodynamapper-scratch/upscale-spec/`):
+
+- **Balanced**: human 400 on horse 200 upscale (0.02–0.04 s to 2×); the Classic dragon 12 gets no job and plays at 1×.
+  With a user copy listing `body 12 package="cc" upscale="always"`, Balanced upscales the Classic dragon and leaves the
+  Enhanced one (not listed for `ec`) at 1×.
+- **Always, what tiles**: the clips a player can show (stand, walk, run) mostly fit 260² whole, even on the largest
+  bodies: the Classic dragon's stand (192×216 canvas) and walk (200×224). Tiled on 256² windows: the Classic dragon's
+  run (21 passes for 10 frames), Classic 197 and 198 standing (4 passes a frame), Classic and Enhanced 826 and
+  Enhanced 197 and 198 standing (48 passes for 12 frames). No clip reachable there needs parts (the frames wider than
+  506 pixels are in other actions); parts are covered by the unit tests, and the captures of every listed wide body
+  standing show no seam between tiles.
+- **Time to 2×** (unloaded): the Classic dragon's tiled run 1.6 s per direction at ~160 fps; Classic 826 standing
+  3.7 s, Classic 197 1.7 s; in the Enhanced style (~16 ms frames) Enhanced 197, 198 and 826 standing 8.6–8.9 s,
+  Enhanced dragon 12 (whole) 2.4 s. The budget is per frame, so the time follows the frame rate: with other agents'
+  GPU load (frames ~20 ms) the dragon's run took 10.3 s and Enhanced 197 13.7 s.
+- **Frame time**, one session alternating Balanced and Always three times (Classic dragon standing 8 s, running east
+  and west 6.7 s, standing 10 s), from the trace's frame spans: the same in both, median 6.0–6.3 ms, p95 7.3–8.2 ms,
+  p99 8.0–9.6 ms, none over 33 ms, also in the window where Always made the tiled run (453 SPAN submissions, median
+  1.87 ms, max 2.17 ms on the GPU). Classic is CPU-bound here. In the Enhanced style, GPU-bound, Enhanced 197's
+  upscale raised the median from 14.3 to 16.1 ms (p99 16.2 to 18.1 ms) while it ran: the 2 ms budget.
+- **Switching** between Balanced and Always keeps the atlases (both have the upscaled pages), so 2× frames made in one
+  stay for the other.
+- **Looks**: the four styles draw the 2× dragon at the 1× placement; Classic edges stay hard. Side-by-side clip of the
+  Classic dragon running, 1× against its 2× tiles (crossfade on, so both show a fading wing between frames):
+  `uodynamapper-scratch/upscale-spec/dragon-1x-vs-tiled-2x.mp4`.
 
 ## Ahead of time instead of at run time (measured 2026-11-22)
 

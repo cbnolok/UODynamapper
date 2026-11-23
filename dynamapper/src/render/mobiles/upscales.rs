@@ -466,6 +466,10 @@ impl MobileUpscales {
             entry.state = match atlas.reserve_in(AtlasEntry::Upscaled(*key), format, AtlasPool::Upscaled, &sizes, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
+                    debug!("Mobile upscales: {key:?} on a {}x{} canvas, in {} parts, {} passes for {} frames.",
+                        plan.canvas.x, plan.canvas.y, plan.parts(),
+                        frames.iter().map(|&(part, frame)| plan.passes(frame, part).len()).sum::<usize>(),
+                        clip.frames.len());
                     let mut rects = rects.into_iter();
                     let parts = (0..plan.parts()).map(|part| Clip {
                         frames: clip.frames.iter().zip(rects.by_ref())
