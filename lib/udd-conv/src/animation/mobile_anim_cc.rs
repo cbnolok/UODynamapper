@@ -32,6 +32,8 @@ use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::utils::path::find_file_ignoring_case;
 
 use super::animation_sequences::{load_animation_sequences, move_actions};
+use super::frame_filter_table::{load_mobile_frame_filters, FramePackage, ResolvedFrameFilters};
+use super::frame_filters::{apply_frame_filter, FrameFilter};
 use crate::atlas::bc_encode_device::on_bc7_devices;
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
@@ -49,7 +51,7 @@ use crate::upscale::{apply_upscale_passes_owned, UpscaleFilter, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_cc::{
-    page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
+    page_entry_path, ClassicBodyTables, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
     MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord, MobileAnimCcPageRecord,
     ANIMATION_MANIFEST_ENTRY_PATH, BODY_RESOLVE_FLAG_BODYCONV_DEF, BODY_RESOLVE_FLAG_BODY_DEF,
     MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
@@ -115,6 +117,9 @@ pub struct MobileAnimCcAtlasOptions {
     pub bc7_rdo_lookback_blocks: usize,
     pub upscale_passes: Vec<UpscalePass>,
     pub upscale_profile: Option<Arc<UpscaleProfile>>,
+    /// The MobileFrameFilters.kdl to read; when unset, the copy shipped with the tools
+    /// ([`crate::conversion_tables::MOBILE_FRAME_FILTERS_KDL`]).
+    pub frame_filters_path: Option<PathBuf>,
 }
 
 impl Default for MobileAnimCcAtlasOptions {
@@ -129,6 +134,7 @@ impl Default for MobileAnimCcAtlasOptions {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         }
     }
 }
@@ -188,6 +194,8 @@ struct PlannedMobileAnimFrame {
     source_height: u16,
     source: PlannedAnimationSource,
     source_frame_index: u16,
+    /// The cleanup filter of the frame's body (`MobileFrameFilters.kdl`), set once the body records are known.
+    filter: FrameFilter,
 }
 
 #[derive(Debug, Clone)]
@@ -394,6 +402,10 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
     let (body_type_records, sequences) = build_body_type_records(&client_dir)?;
     fill_uop_animation_fps(&mut animation_records, &body_type_records, &sequences);
+    set_frame_filters(&mut planned_frames, options, ClassicBodyTables {
+        body_resolve: &body_resolve_records,
+        body_types: &body_type_records,
+    })?;
     stage_timings.body_records = stage_timer.elapsed();
     info!(
         "CC mobile animation planning prepared {} frames, {} animations, {} body resolves in {:.3}s",
@@ -477,6 +489,46 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         stage_timings.total.as_secs_f64()
     );
     Ok(summary)
+}
+
+/// Where a Classic body's frames are stored: `AnimationFrame*.uop`, or the `anim*.mul` file index; and the body id.
+type ClassicFramesKey = (bool, u8, u16);
+
+fn planned_frames_key(frame: &PlannedMobileAnimFrame) -> ClassicFramesKey {
+    match frame.source {
+        PlannedAnimationSource::Mul { file_index, .. } => (false, file_index, frame.body_id),
+        PlannedAnimationSource::AnimationFrameUop { .. } => (true, 0, frame.body_id),
+    }
+}
+
+/// Sets each planned frame's cleanup filter: the `MobileFrameFilters.kdl` entries of package "cc", their server
+/// bodies followed to the frames the client draws for them ([`ClassicBodyTables::frames_body`]).
+fn set_frame_filters(
+    planned_frames: &mut [PlannedMobileAnimFrame],
+    options: &MobileAnimCcAtlasOptions,
+    body_tables: ClassicBodyTables<'_>,
+) -> eyre::Result<()> {
+    let (path, table) = load_mobile_frame_filters(options.frame_filters_path.as_deref())?;
+    println!("Using mobile frame filters: {}", path.display());
+    let stored = planned_frames.iter().map(planned_frames_key).collect::<HashSet<_>>();
+    let frames_of = |body: u16| {
+        let frames = body_tables.frames_body(body);
+        let key = if frames.uop { (true, 0, frames.body_id) } else { (false, frames.file_index, frames.body_id) };
+        stored.contains(&key).then_some(key)
+    };
+    let describe = |(uop, file_index, body): ClassicFramesKey| {
+        if uop {
+            format!("AnimationFrame body {body}")
+        } else {
+            format!("{} body {body}", classic_anim_mul_name(file_index))
+        }
+    };
+    let resolved: ResolvedFrameFilters<ClassicFramesKey> = table.resolve(FramePackage::Cc, frames_of, describe)?;
+    resolved.log(FramePackage::Cc, describe);
+    for frame in planned_frames {
+        frame.filter = resolved.filter_for(planned_frames_key(frame));
+    }
+    Ok(())
 }
 
 fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimPage]) -> MobileAnimPageStats {
@@ -964,6 +1016,7 @@ fn plan_present_animations(
                     source_height: frame.height,
                     source: source.clone(),
                     source_frame_index: frame_index as u16,
+                    filter: FrameFilter::None,
                 });
             }
         }
@@ -1229,6 +1282,7 @@ fn decode_planned_page_sources(
 ) -> eyre::Result<PlannedPageSources> {
     let mut page_sources = PlannedPageSources::new();
     let mut missing_seen = HashSet::new();
+    // With the cleanup filter of their frames: one source holds one body's frames.
     let mut missing = Vec::new();
     for frame in frames {
         if page_sources.contains_key(&frame.source) {
@@ -1240,19 +1294,36 @@ fn decode_planned_page_sources(
             }
             None => {
                 if missing_seen.insert(&frame.source) {
-                    missing.push(&frame.source);
+                    missing.push((&frame.source, frame.filter));
                 }
             }
         }
     }
     let decoded = missing
         .par_iter()
-        .map(|source| decode_planned_animation_source_shared(source, anim_map, animationframe_packages).map(Arc::new))
+        .map(|&(source, filter)| {
+            decode_filtered_source(source, filter, anim_map, animationframe_packages).map(Arc::new)
+        })
         .collect::<eyre::Result<Vec<_>>>()?;
-    for (source, frames) in missing.into_iter().zip(decoded) {
+    for ((source, _), frames) in missing.into_iter().zip(decoded) {
         page_sources.insert(source.clone(), frames);
     }
     Ok(page_sources)
+}
+
+/// Decodes a planned source and applies its frames' cleanup filter: the stage before any upscale and the atlas blit.
+fn decode_filtered_source(
+    source: &PlannedAnimationSource,
+    filter: FrameFilter,
+    anim_map: &AnimMap,
+    animationframe_packages: &HashMap<Arc<PathBuf>, UopPackage>,
+) -> eyre::Result<Vec<AnimFrame>> {
+    let mut frames = decode_planned_animation_source_shared(source, anim_map, animationframe_packages)?;
+    for frame in &mut frames {
+        // Classic frames carry no hue mask: every texel is of one class.
+        apply_frame_filter(filter, usize::from(frame.width), usize::from(frame.height), &mut frame.data, &[])?;
+    }
+    Ok(frames)
 }
 
 fn page_source_frames(
@@ -3113,6 +3184,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let pages: Vec<BuiltMobileAnimPage> = (0..PARALLEL_TEST_PAGES)
             .map(|page_index| BuiltMobileAnimPage {
@@ -3296,6 +3368,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut records = vec![
             MobileAnimCcFrameRecord {
@@ -3346,6 +3419,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3388,6 +3462,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3425,6 +3500,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3458,6 +3534,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3493,6 +3570,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3588,6 +3666,7 @@ mod tests {
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
             upscale_profile: None,
+            frame_filters_path: None,
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,

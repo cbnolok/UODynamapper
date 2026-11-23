@@ -28,6 +28,8 @@ use uocf::enhanced::mobile_body::{MobileBodyDefinition, MobileBodyMap};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use super::animation_sequences::{load_animation_sequences, move_actions};
+use super::frame_filter_table::{load_mobile_frame_filters, FramePackage, ResolvedFrameFilters};
+use super::frame_filters::{apply_frame_filter, FrameFilter};
 use crate::atlas::bc_encode_device::on_bc7_devices;
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
@@ -188,6 +190,9 @@ pub struct MobileAnimEcAtlasOptions {
     pub metadata_path: Option<PathBuf>,
     /// Write empty item metadata instead of failing when that table is not found.
     pub allow_missing_metadata: bool,
+    /// The MobileFrameFilters.kdl to read; when unset, the copy shipped with the tools
+    /// ([`crate::conversion_tables::MOBILE_FRAME_FILTERS_KDL`]).
+    pub frame_filters_path: Option<PathBuf>,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -204,6 +209,7 @@ impl Default for MobileAnimEcAtlasOptions {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         }
     }
 }
@@ -248,6 +254,8 @@ struct PlannedMobileAnimEcFrame {
     center_x: i16,
     center_y: i16,
     source: PlannedMobileAnimEcSource,
+    /// The cleanup filter of the frame's body (`MobileFrameFilters.kdl`), set once the layout is known.
+    filter: FrameFilter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,6 +471,11 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         frames.retain(|frame| referenced_frames.contains(&(body_id, frame.source_frame_index)));
     }
     planned_by_body.retain(|_, frames| !frames.is_empty());
+    let frame_filters = resolve_frame_filters(options, &layout.bodies)?;
+    for (&body_id, frames) in planned_by_body.iter_mut() {
+        let filter = frame_filters.filter_for(body_id);
+        frames.iter_mut().for_each(|frame| frame.filter = filter);
+    }
     stage_timings.layout = stage_timer.elapsed();
     info!(
         "EC mobile animation layout: {} records, {} frame records, {:?}",
@@ -848,6 +861,37 @@ fn resolve_ec_mobile_animations_kdl(options: &MobileAnimEcAtlasOptions) -> eyre:
     }
 }
 
+/// The cleanup filter of each `AnimationFrame` body's frames: the `MobileFrameFilters.kdl` entries of package "ec",
+/// their server bodies followed to the frame body of their records.
+fn resolve_frame_filters(
+    options: &MobileAnimEcAtlasOptions,
+    bodies: &[MobileAnimEcBodyRecord],
+) -> eyre::Result<ResolvedFrameFilters<u32>> {
+    let (path, table) = load_mobile_frame_filters(options.frame_filters_path.as_deref())?;
+    println!("Using mobile frame filters: {}", path.display());
+    let frames_body_of = bodies
+        .iter()
+        .map(|body| (body.body_id, body.frames_body_id))
+        .collect::<HashMap<_, _>>();
+    let describe = |frames_body: u32| format!("AnimationFrame body {frames_body}");
+    let resolved = table.resolve(FramePackage::Ec, |body| frames_body_of.get(&u32::from(body)).copied(), describe)?;
+    resolved.log(FramePackage::Ec, describe);
+    Ok(resolved)
+}
+
+/// Decodes a planned frame and applies its cleanup filter: the stage before any upscale and the atlas blit.
+fn decode_filtered_frame(animation: &AnimationFrame, entry: &FrameEntry, filter: FrameFilter) -> eyre::Result<DecodedFrame> {
+    let mut decoded = animation.decode_frame(entry)?;
+    apply_frame_filter(
+        filter,
+        usize::from(decoded.width),
+        usize::from(decoded.height),
+        &mut decoded.data,
+        &decoded.hue_mask,
+    )?;
+    Ok(decoded)
+}
+
 fn build_item_metadata(
     metadata: &EcMobileAnimationsKdl,
 ) -> eyre::Result<(Vec<MobileAnimEcItemRecord>, Vec<MobileAnimEcSourceHintRecord>)> {
@@ -1218,6 +1262,7 @@ fn planned_frame_from_entry(
         center_x,
         center_y,
         source: PlannedMobileAnimEcSource { path, file_hash },
+        filter: FrameFilter::None,
     })
 }
 
@@ -2477,6 +2522,7 @@ fn build_planned_page(
     struct PendingPlannedBlit {
         body_id: u32,
         source_frame_index: u16,
+        filter: FrameFilter,
         extrusion: RectExtrusion,
         inner_x: u32,
         inner_y: u32,
@@ -2548,6 +2594,7 @@ fn build_planned_page(
             pending_blits.push(PendingPlannedBlit {
                 body_id: frame.body_id,
                 source_frame_index: frame.source_frame_index,
+                filter: frame.filter,
                 extrusion,
                 inner_x: inner_x as u32,
                 inner_y: inner_y as u32,
@@ -2586,7 +2633,7 @@ fn build_planned_page(
         let prepared_blits = pending_blits
             .into_par_iter()
             .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
-                let decoded = pending.animation.decode_frame(&pending.source_entry)?;
+                let decoded = decode_filtered_frame(&pending.animation, &pending.source_entry, pending.filter)?;
                 let window = FrameWindow {
                     left: u32::from(pending.source_left),
                     top: u32::from(pending.source_top),
@@ -2675,7 +2722,7 @@ fn build_planned_page(
         let decoded_frames = pending_blits
             .par_iter()
             .map(|pending| -> eyre::Result<_> {
-                let decoded = pending.animation.decode_frame(&pending.source_entry)?;
+                let decoded = decode_filtered_frame(&pending.animation, &pending.source_entry, pending.filter)?;
                 let window = FrameWindow {
                     left: u32::from(pending.source_left),
                     top: u32::from(pending.source_top),
@@ -3684,6 +3731,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -3711,6 +3759,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 5, 5)], &options).unwrap();
@@ -3743,6 +3792,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![sparse_frame(42, 0)], &options).unwrap();
@@ -3771,6 +3821,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
@@ -4171,6 +4222,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
         let mut frames_by_body = sample_sequence_frames();
         frames_by_body.insert(NO_SEQUENCE_BODY, vec![source(0, 0, 1)]);
@@ -4297,6 +4349,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
         let (_, placements) = pack_frames_into_pages(source_frames, &options).unwrap();
         let layout = build_animation_layout(
@@ -4439,6 +4492,7 @@ mod tests {
             upscale_profile: None,
             metadata_path: None,
             allow_missing_metadata: false,
+            frame_filters_path: None,
         };
         let (pages, placements) = pack_frames_into_pages(vec![half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
         let page = &pages[0];

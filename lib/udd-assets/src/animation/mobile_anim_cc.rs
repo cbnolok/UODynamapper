@@ -194,6 +194,69 @@ pub struct ClassicFramesBody {
     pub type_body_id: u16,
 }
 
+/// The body records the Classic frame resolution reads, each sorted by body id as the packer writes them: the
+/// `Body.def` and `Bodyconv.def` resolves and the `mobtypes.txt` rows. The packer resolves server bodies through it
+/// before it has written the package.
+#[derive(Debug, Clone, Copy)]
+pub struct ClassicBodyTables<'a> {
+    pub body_resolve: &'a [MobileAnimCcBodyResolveRecord],
+    pub body_types: &'a [MobileAnimCcBodyTypeRecord],
+}
+
+impl<'a> ClassicBodyTables<'a> {
+    pub fn body_resolve_record(&self, body_id: u16) -> Option<&'a MobileAnimCcBodyResolveRecord> {
+        self.body_resolve
+            .binary_search_by_key(&body_id, |record| record.body_id)
+            .ok()
+            .map(|index| &self.body_resolve[index])
+    }
+
+    pub fn body_type_record(&self, body_id: u16) -> Option<&'a MobileAnimCcBodyTypeRecord> {
+        self.body_types
+            .binary_search_by_key(&body_id, |record| record.body_id)
+            .ok()
+            .map(|index| &self.body_types[index])
+    }
+
+    /// Whether the client draws this body from UOP. The client's frame code doesn't always test the requested id
+    /// (`docs/client_research/ghidra-classic-frames/results/classic_frames.md`); this is the mobile's own body.
+    pub fn body_uses_uop_frames(&self, body_id: u16) -> bool {
+        MOB_TYPE_BODY_IDS.contains(&body_id)
+            && self
+                .body_type_record(body_id)
+                .is_some_and(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0)
+    }
+
+    /// Where the client takes the frames of server body `body_id`. A body `mobtypes.txt` flags for UOP draws its own
+    /// id from UOP. Otherwise `Body.def` gives the body another id unless `Bodyconv.def` moves the body to another
+    /// `anim*.mul`; the resulting id then goes through UOP or `Bodyconv.def` the same way (ClassicUO
+    /// `ConvertBodyIfNeeded`, `GetIndices`; the client applies `body.def`, then the bodyconv table, on the MUL side
+    /// only: `uop_reachability.md`).
+    pub fn frames_body(&self, body_id: u16) -> ClassicFramesBody {
+        let type_body_id = match self.body_resolve_record(body_id) {
+            Some(record)
+                if !self.body_uses_uop_frames(body_id)
+                    && record.flags & BODY_RESOLVE_FLAG_BODYCONV_DEF == 0
+                    && record.flags & BODY_RESOLVE_FLAG_BODY_DEF != 0 =>
+            {
+                record.resolved_body_id
+            }
+            _ => body_id,
+        };
+        let (frames_body_id, file_index, uop) = if self.body_uses_uop_frames(type_body_id) {
+            (type_body_id, 0, true)
+        } else {
+            match self.body_resolve_record(type_body_id) {
+                Some(record) if record.flags & BODY_RESOLVE_FLAG_BODYCONV_DEF != 0 => {
+                    (record.resolved_body_id, record.file_index, false)
+                }
+                _ => (type_body_id, 0, false),
+            }
+        };
+        ClassicFramesBody { body_id: frames_body_id, file_index, uop, type_body_id }
+    }
+}
+
 /// Stored direction (0..=4) and mirroring of world direction `direction` (0 north .. 7
 /// north-west): world `FIRST_STORED_DIRECTION + k` is stored at `k`; world 0, 1 and 2 show world 6, 5 and 4
 /// mirrored horizontally about the frame anchor (ClassicUO `GetAnimDirection`, and the client's stored direction
@@ -332,26 +395,21 @@ impl MobileAnimCcPackage {
     }
 
     pub fn body_resolve_record(&self, body_id: u16) -> Option<&MobileAnimCcBodyResolveRecord> {
-        self.body_resolve
-            .binary_search_by_key(&body_id, |record| record.body_id)
-            .ok()
-            .map(|index| &self.body_resolve[index])
+        self.body_tables().body_resolve_record(body_id)
     }
 
     pub fn body_type_record(&self, body_id: u16) -> Option<&MobileAnimCcBodyTypeRecord> {
-        self.body_types
-            .binary_search_by_key(&body_id, |record| record.body_id)
-            .ok()
-            .map(|index| &self.body_types[index])
+        self.body_tables().body_type_record(body_id)
     }
 
-    /// Whether the client draws this body from UOP. The client's frame code doesn't always test the requested id
-    /// (`docs/client_research/ghidra-classic-frames/results/classic_frames.md`); this is the mobile's own body.
+    /// See [`ClassicBodyTables::body_uses_uop_frames`].
     pub fn body_uses_uop_frames(&self, body_id: u16) -> bool {
-        MOB_TYPE_BODY_IDS.contains(&body_id)
-            && self
-                .body_type_record(body_id)
-                .is_some_and(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0)
+        self.body_tables().body_uses_uop_frames(body_id)
+    }
+
+    /// The body records the frame resolution reads.
+    pub fn body_tables(&self) -> ClassicBodyTables<'_> {
+        ClassicBodyTables { body_resolve: &self.body_resolve, body_types: &self.body_types }
     }
 
     /// The animation of record body `body_id` in any animation file, from the source the client would use. A package
@@ -376,33 +434,9 @@ impl MobileAnimCcPackage {
             .map(|&index| &self.animations[index])
     }
 
-    /// Where the client takes the frames of server body `body_id`. A body `mobtypes.txt` flags for UOP draws its own
-    /// id from UOP. Otherwise `Body.def` gives the body another id unless `Bodyconv.def` moves the body to another
-    /// `anim*.mul`; the resulting id then goes through UOP or `Bodyconv.def` the same way (ClassicUO
-    /// `ConvertBodyIfNeeded`, `GetIndices`; the client applies `body.def`, then the bodyconv table, on the MUL side
-    /// only: `uop_reachability.md`).
+    /// See [`ClassicBodyTables::frames_body`].
     pub fn frames_body(&self, body_id: u16) -> ClassicFramesBody {
-        let type_body_id = match self.body_resolve_record(body_id) {
-            Some(record)
-                if !self.body_uses_uop_frames(body_id)
-                    && record.flags & BODY_RESOLVE_FLAG_BODYCONV_DEF == 0
-                    && record.flags & BODY_RESOLVE_FLAG_BODY_DEF != 0 =>
-            {
-                record.resolved_body_id
-            }
-            _ => body_id,
-        };
-        let (frames_body_id, file_index, uop) = if self.body_uses_uop_frames(type_body_id) {
-            (type_body_id, 0, true)
-        } else {
-            match self.body_resolve_record(type_body_id) {
-                Some(record) if record.flags & BODY_RESOLVE_FLAG_BODYCONV_DEF != 0 => {
-                    (record.resolved_body_id, record.file_index, false)
-                }
-                _ => (type_body_id, 0, false),
-            }
-        };
-        ClassicFramesBody { body_id: frames_body_id, file_index, uop, type_body_id }
+        self.body_tables().frames_body(body_id)
     }
 
     /// The animation the client draws for server body `body_id`, `action_id` and stored direction `direction`

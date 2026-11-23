@@ -1,0 +1,30 @@
+// The cleanup filter each body's mobile animation frames get when they are packed (udd-cli pack-ec-mobile-anims and
+// pack-mobile-anims, the converter GUI). The renderer draws the packed frames as they are, so a change here needs a
+// repack of the package it names. Study: docs/agent_notes/ec_frame_quantization.md.
+//
+// Syntax (KDL, read strictly: an unknown node, property or value is an error naming its line):
+//
+//   default package="ec" filter="highlight"   // each package's default, exactly once
+//   body 12 package="ec" filter="median"      // one body of one package, at most once per package
+//
+// - package: "ec" (mobile_anim_ec.uddp, the Enhanced frames) or "cc" (mobile_anim_cc.uddp, the Classic frames).
+// - body: the in-game (server) body id. The packer follows it to the stored frames the client draws for it (the
+//   tileart.uop placeholder for Enhanced; mobtypes.txt, Body.def and Bodyconv.def for Classic) and filters those
+//   frames, so every body sharing them shows them filtered. Two bodies sharing their frames must ask for the same
+//   filter, else packing fails. A body the package has no frames for is a warning.
+// - filter:
+//   - "none": the frames as the client stores them.
+//   - "highlight": a selective 3x3 median in clipped highlights only. Where at least 3 of the 9 window texels have
+//     a channel at 250 or above (an overexposed render, where only the unclipped channels carry the shading and
+//     its steps show as pale and saturated specks), a texel 12 or more (RGB distance) from its 8 neighbours'
+//     channel median, and 2.5 times farther from it than the neighbours themselves, takes that median. Fine
+//     texture elsewhere stays.
+//   - "median": the same test on every texel. It removes more specks, and softens fine texture (scales, stone).
+//   Both change only solid texels whose 8 neighbours are solid, keep alpha, the anti-aliased edge and the hue mask,
+//   and leave a texel whose window mixes hueable texels with texels keeping their colour.
+//
+// The Enhanced default fixes the overexposed models (the red dragon among them) without touching textured bodies.
+// Classic frames are 16-bit art without the clipped highlights; they stay as stored.
+
+default package="ec" filter="highlight"
+default package="cc" filter="none"

@@ -78,7 +78,9 @@ use udd_conv_cli::{
     tool_cli::{diff_paths_report, export_csv_auto_report, export_kdl_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
-use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
+use udd_conv::conversion_tables::{
+    EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, MOBILE_FRAME_FILTERS_KDL, TERRAIN_TRANSCODE_KDL,
+};
 use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
 use udd_conv::animation::mobile_strides::{
@@ -1080,6 +1082,7 @@ fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetPr
             bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
             upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
             upscale_profile,
+            frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
         },
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
         |build_progress| progress.build_progress(build_progress),
@@ -1136,6 +1139,7 @@ fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetPr
             upscale_profile,
             metadata_path,
             allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
+            frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
         },
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
         |build_progress| progress.build_progress(build_progress),

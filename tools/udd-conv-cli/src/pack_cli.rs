@@ -21,7 +21,8 @@ use uocf::map_edition::MapEdition;
 use uocf::utils::bundled_files;
 use udd_assets::kr_delta::KR_DELTA_FILE_NAME;
 use udd_conv::conversion_tables::{
-    EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL,
+    EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL, MOBILE_FRAME_FILTERS_KDL,
+    TERRAIN_TRANSCODE_KDL,
 };
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
@@ -262,6 +263,18 @@ fn resolve_ec_mobile_animations_kdl(exact: Option<PathBuf>, tables: Option<PathB
         if tables.is_dir() { EC_MOBILE_ANIMATIONS_KDL.in_dir(&tables) } else { tables }
     }));
     bundled_files::resolve(given.as_deref(), EC_MOBILE_ANIMATIONS_KDL)
+}
+
+const FRAME_FILTERS_HELP: &str = "MobileFrameFilters.kdl to read: the cleanup filter each body's frames get. Default: \
+the copy shipped with the tools.";
+
+/// The MobileFrameFilters.kdl of `--frame-filters-kdl`, else the one in the `--tables` folder (or beside the file it
+/// names); `None`: the copy shipped with the tools.
+fn resolve_frame_filters_kdl(exact: Option<PathBuf>, tables: Option<&Path>) -> Option<PathBuf> {
+    exact.or_else(|| tables.map(|tables| {
+        let dir = if tables.is_dir() { tables } else { tables.parent().unwrap_or(Path::new("")) };
+        MOBILE_FRAME_FILTERS_KDL.in_dir(dir)
+    }))
 }
 
 /// The Classic options of a map, statics or radar command.
@@ -1033,6 +1046,8 @@ enum Commands {
         upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
         upscale_profile: Option<PathBuf>,
+        #[arg(long = "frame-filters-kdl", help = FRAME_FILTERS_HELP)]
+        frame_filters_kdl: Option<PathBuf>,
         #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one. The package replaced at --output is looked at in any case.")]
         strides_from: Option<PathBuf>,
     },
@@ -1061,10 +1076,12 @@ enum Commands {
         bc7_rdo_lambda: f32,
         #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
         bc7_rdo_lookback_blocks: usize,
-        #[arg(long, help = "Directory containing EcMobileAnimations.kdl, or the KDL file itself. Default: the copy shipped with the tools.")]
+        #[arg(long, help = "Directory containing EcMobileAnimations.kdl and MobileFrameFilters.kdl, or the EcMobileAnimations.kdl file itself. Default: the copies shipped with the tools.")]
         tables: Option<PathBuf>,
         #[arg(long = "ec-mobile-animations-kdl", help = "Exact EcMobileAnimations.kdl path. Default: the copy shipped with the tools.")]
         ec_mobile_animations_kdl: Option<PathBuf>,
+        #[arg(long = "frame-filters-kdl", help = FRAME_FILTERS_HELP)]
+        frame_filters_kdl: Option<PathBuf>,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
@@ -1710,6 +1727,7 @@ where
             bc7_rdo_lookback_blocks,
             upscale_passes,
             upscale_profile,
+            frame_filters_kdl,
             strides_from,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
@@ -1737,6 +1755,7 @@ where
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
+                    frame_filters_path: frame_filters_kdl,
                 },
             )?;
             if let Some(strides_from) = strides_from {
@@ -1783,6 +1802,7 @@ where
             bc7_rdo_lookback_blocks,
             tables,
             ec_mobile_animations_kdl,
+            frame_filters_kdl,
             upscale_passes,
             upscale_profile,
             strides_from,
@@ -1812,6 +1832,7 @@ where
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
+                    frame_filters_path: resolve_frame_filters_kdl(frame_filters_kdl, tables.as_deref()),
                     metadata_path: Some(resolve_ec_mobile_animations_kdl(ec_mobile_animations_kdl, tables)?),
                     allow_missing_metadata: false,
                 },
@@ -3869,6 +3890,8 @@ mod tests {
             "/tables",
             "--ec-mobile-animations-kdl",
             "/tables/EcMobileAnimations.kdl",
+            "--frame-filters-kdl",
+            "/filters/MobileFrameFilters.kdl",
         ])
         .expect("parse ec mobile animation metadata paths");
 
@@ -3876,6 +3899,7 @@ mod tests {
             Commands::PackEcMobileAnims {
                 tables,
                 ec_mobile_animations_kdl,
+                frame_filters_kdl,
                 ..
             } => {
                 assert_eq!(tables, Some(PathBuf::from("/tables")));
@@ -3883,9 +3907,21 @@ mod tests {
                     ec_mobile_animations_kdl,
                     Some(PathBuf::from("/tables/EcMobileAnimations.kdl"))
                 );
+                assert_eq!(frame_filters_kdl, Some(PathBuf::from("/filters/MobileFrameFilters.kdl")));
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    #[test]
+    fn frame_filters_come_from_the_option_then_the_tables_folder() {
+        let exact = PathBuf::from("/filters/MobileFrameFilters.kdl");
+        assert_eq!(resolve_frame_filters_kdl(Some(exact.clone()), Some(Path::new("/tables"))), Some(exact));
+        assert_eq!(
+            resolve_frame_filters_kdl(None, Some(Path::new("/tables/EcMobileAnimations.kdl"))),
+            Some(PathBuf::from("/tables/MobileFrameFilters.kdl"))
+        );
+        assert_eq!(resolve_frame_filters_kdl(None, None), None);
     }
 
     #[test]

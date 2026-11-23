@@ -85,8 +85,9 @@ impl UddConvApp {
                                 .on_hover_text(
                                     "Directory containing KDL metadata files shipped with UODynamapper — \
                                     not part of the UO client.\n\n\
-                                    Used to locate EcMobileAnimations.kdl for EC mobile animation packing, and \
-                                    EcTerrainOverrides.kdl and TerrainTranscode.kdl (the land routing table, \
+                                    Used to locate EcMobileAnimations.kdl for EC mobile animation packing, \
+                                    MobileFrameFilters.kdl (the cleanup filter of each body's frames) for both \
+                                    mobile animation packings, and EcTerrainOverrides.kdl and TerrainTranscode.kdl (the land routing table, \
                                     embedded in tex_land_ec.uddp) for EC land packing. If not set, the packer uses the \
                                     copies shipped with the tools (shared/cc_ec_convtables/ in a release, \
                                     dynamapper/assets/cc_ec_convtables/ in a source checkout), so this field is \
