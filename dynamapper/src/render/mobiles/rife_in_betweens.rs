@@ -252,7 +252,7 @@ impl MobileInBetweens {
 }
 
 /// The size of a frame's room in the atlas.
-fn placement_size(placement: FramePlacement) -> (u32, u32) {
+pub(super) fn placement_size(placement: FramePlacement) -> (u32, u32) {
     (placement.width.ceil() as u32, placement.height.ceil() as u32)
 }
 

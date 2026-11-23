@@ -1328,7 +1328,8 @@ The bodies, identified from a contact sheet:
 
 **The game upscales few of them.** A clip upscales only when its largest frame, with the border, fits
 `UPSCALE_MAX_CANVAS_PIXELS` (260 x 260). Otherwise it plays at 1x (upscales.rs `canvas_of`). The share of each body's
-texels in clips the game upscales:
+texels in clips the game upscaled by that rule (since 2026-11-23 a server body upscales whole or not at all, so most of
+these play at 1x: mobile_animation_motion.md, "Which bodies"):
 
 - the five great bodies: 1 to 5 % (1288: 53 %);
 - the dragons 12 and 59: 54 to 64 %;

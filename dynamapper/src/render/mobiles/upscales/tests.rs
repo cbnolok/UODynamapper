@@ -210,3 +210,65 @@ fn a_layer_switches_only_as_its_sequence_starts_over() {
     assert!(step(Some(switch), other, 3, true, true).upscaled);
     assert!(!step(Some(switch), other, 3, true, false).upscaled);
 }
+
+/// A clip of frames of `sizes` (width, height), anchored at their bottom middle.
+fn extents(sizes: &[(u16, u16)]) -> MobileClip<MobileClipFrameExtent> {
+    MobileClip {
+        frames: sizes.iter().map(|&(width, height)| MobileClipFrameExtent {
+            width, height, anchor_x: i32::from(width / 2), anchor_y: i32::from(height),
+        }).collect(),
+        mirrored: false,
+        fps: 0.0,
+        stored: 0,
+    }
+}
+
+/// A side a canvas fits with room, and one it does not.
+const FITTING_SIDE: u16 = 200;
+const TOO_LARGE_SIDE: u16 = 300;
+
+/// Whether a body of `clips` upscales, without in-betweens and in a RIFE mode.
+fn body_fits(clips: Vec<MobileClip<MobileClipFrameExtent>>) -> [bool; 2] {
+    let canvases = body_canvases(clips);
+    [false, true].map(|rife| canvas_fits(canvases.of(rife)))
+}
+
+fn square_fits(side: u16) -> bool {
+    canvas_fits(canvas_for(UVec2::splat(u32::from(side))))
+}
+
+#[test]
+fn a_body_upscales_whole_or_not_at_all() {
+    const BOTH: [bool; 2] = [true; 2];
+    const NEITHER: [bool; 2] = [false; 2];
+    assert!(square_fits(FITTING_SIDE) && !square_fits(TOO_LARGE_SIDE));
+    let walk = extents(&[(FITTING_SIDE, FITTING_SIDE); 3]);
+    assert_eq!(body_fits(vec![walk.clone(), walk.clone()]), BOTH);
+    // Its walk fits, but a frame of its attack does not: none of its clips upscales.
+    let attack = extents(&[(FITTING_SIDE, FITTING_SIDE), (TOO_LARGE_SIDE, TOO_LARGE_SIDE)]);
+    assert_eq!(body_fits(vec![walk, attack]), NEITHER);
+    // A wide clip and a tall one each fit a canvas of their own: the body upscales, though no one canvas holds both.
+    let (wide, tall) = ((TOO_LARGE_SIDE, FITTING_SIDE / 2), (FITTING_SIDE / 2, TOO_LARGE_SIDE));
+    assert_eq!(body_fits(vec![extents(&[wide]), extents(&[tall])]), BOTH);
+    assert_eq!(body_fits(vec![extents(&[wide, tall])]), NEITHER);
+    // A body without frames has nothing too large.
+    assert_eq!(body_fits(Vec::new()), BOTH);
+}
+
+#[test]
+fn a_body_whose_rife_cards_are_too_large_upscales_only_without_in_betweens() {
+    // Each frame fits, but the two hang far apart from one anchor: the card holding both, the RIFE in-between's, is
+    // twice as wide, and the clip's RIFE sequence needs its canvas. The crossfade draws the two frames apart.
+    let mut clip = extents(&[(FITTING_SIDE, FITTING_SIDE); 2]);
+    clip.frames[0].anchor_x = 0;
+    clip.frames[1].anchor_x = i32::from(FITTING_SIDE);
+    let side = u32::from(FITTING_SIDE);
+    assert_eq!(body_canvases(vec![clip.clone()]), BodyCanvases {
+        clips: canvas_for(UVec2::splat(side)),
+        rife: canvas_for(UVec2::new(2 * side, side)),
+    });
+    assert_eq!(body_fits(vec![clip.clone()]), [true, false]);
+    // On one anchor, the card is the frame.
+    clip.frames[1].anchor_x = 0;
+    assert_eq!(body_fits(vec![clip]), [true, true]);
+}

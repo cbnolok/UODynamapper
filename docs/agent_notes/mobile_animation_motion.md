@@ -418,8 +418,31 @@ has not chosen yet for every style. Code: `render/mobiles/upscales.rs` (main wor
 network and its frame steps are uot-gpu-compute's `upscale`.
 
 - **Gate**: the view's magnification is the window's scale factor over `RenderZoom` (zoom 0.5 on a scale-1 display is
-  2×). Upscales start at 1.5× and stop below 1.35×, so a zoom around the threshold does not flap. Below it the 1×
-  frames draw as before, and the queued jobs stop.
+  2×). Upscales start at 1.5× and stop below 1.35×, so a zoom around the threshold does not flap
+  (`UPSCALE_ON_MAGNIFICATION`, `UPSCALE_OFF_MAGNIFICATION`). Below it the 1× frames draw as before, and the queued
+  jobs stop.
+- **Which bodies (per body, 2026-11-23)**: a body upscales whole or not at all, so its sharpness does not jump between
+  actions (it did with a rule per clip: a Classic dragon 12 upscaled its walk but not its attack). A body upscales
+  only when every sequence it can show fits the canvas cap (`UPSCALE_MAX_CANVAS_PIXELS`, 260×260 with the 2-pixel
+  border, sides rounded up to 8): the clip of every action and direction in its package (`mobile_anim_cc` for
+  Classic, `mobile_anim_ec` for Enhanced), or in a RIFE mode each clip's RIFE sequence, whose in-betweens sit on the
+  card of two neighbouring frames on one anchor, wider or taller than either. Each sequence has a canvas of its own,
+  so a wide clip and a tall one don't add up. A rider and its mount are two bodies, each with its own rule. The
+  sizes come from the frame records (`MobileAnimClips::body_actions`, `clip_extents`), with no pixels read, once per
+  body drawn while upscaling is on (about 0.2 ms, 0.7 ms at most). A body over the cap plays at 1× at every zoom; its
+  RIFE in-betweens have no size limit and are made as for any body. A future filter on the frames (a denoise) should
+  likewise take every body. Excluded with the 2026-11-22 packages:
+  - Classic, 49 of 1030 bodies with frames (54 in a RIFE mode): 9 10 12 13 38 40 43 46 47 49 59 60 61 62 77
+    102–106 131 162–164 172 175 180 197 198 735 755 790 797 798 826 1248 1288 1417–1422 1427 1431 1531 1532 1545
+    1760; a RIFE mode adds 189 285 796 999 1433.
+  - Enhanced, 60 of 1145 (76 in a RIFE mode): 8 9 10 12 38 40 43 46 49 59 62 66 102–106 123 128 129 157 172 173 175
+    176 180 197 198 242 265 273 276 728 735 777 782 794 797 798 804 807 808 826 1068 1071 1246 1248 1288 1400 1404
+    1417–1422 1427 1431 1432 1434; a RIFE mode adds 47 76 256 285 308 312 666 667 694 695 741 746 780 785 1405 1433.
+  - So the dragons 12 and 59, the wyrms 46, 49 and 180, the daemons 9, 10, 38, 40 and 43, the wyvern 62, the giant
+    beetle 735 and the great bodies 197, 198, 826, 1248 and 1288 play at 1× in both packages; the drakes 60 and 61
+    only in Classic, 1400 and 1404 only in Enhanced. The blue fiend 11, the horse 200 and the human 400 upscale in
+    both. Every excluded body had some clips upscaled before (none had all), so the rule only took the 2× away from
+    the actions of bodies that were mixed.
 - **What upscales**: the sequence a layer shows at 1×: its clip, or in a RIFE mode the clip's RIFE sequence once that
   is made (RIFE first: the upscale of a sequence still being generated would be thrown away). Crossfade and Off
   upscale the clip, and the crossfade blends the 2× frames as it blends the 1× ones. Classic frames get their 2× alpha
@@ -445,7 +468,7 @@ network and its frame steps are uot-gpu-compute's `upscale`.
   finish with its encode) has a cost estimate from uot-gpu-compute's benchmark fit (0.027 ms a dispatch plus 1 ms per
   10⁹ multiply-adds, ~0.43 M per canvas pixel), corrected by timestamp queries (`CostScale`). A frame larger than the
   budget spreads over several frames; its workspace stays with it until it ends. Canvases above 260×260 (90 MB of
-  workspace, ~30 ms) are not upscaled.
+  workspace, ~30 ms) are not upscaled, and neither is any sequence of their body (above).
 - **Workspaces**: one per canvas size (rounded up to 8, so a body's actions share one) and atlas texture, made on the
   background pool, freed after 20 s unused (~1360 bytes per canvas pixel: 5.6 MB at 64², 89 MB at 256²).
 
@@ -464,7 +487,8 @@ crossfade, RIFE x2 and x4 (scripts and captures in `uodynamapper-scratch/span-in
   16 upscaled pages, 64 MiB, plus the workspaces); with BC7 the pages are 16 MiB and the drop is within the driver's
   64 MiB blocks. The card sat at 3.4–3.6 GiB of 4 with the desktop.
 - **Not upscaled**: the stygian (frames up to 512×413, above the 260×260 canvas cap; a 516×417 canvas would need
-  ~290 MB of workspace). Tiling a large frame over a small canvas would lift the cap.
+  ~290 MB of workspace). Tiling a large frame over a small canvas would lift the cap. Since 2026-11-23 the daemon 9
+  above plays at 1× too: its body is over the cap (above).
 - **Looks**: at 2.5× the 2× frames are sharper and smoother at the edges, Classic edges stay hard, BC7 and RGBA8 look
   the same, the placement matches the 1× frames, and at zoom 1 nothing is upscaled. Side-by-side videos (RIFE x4,
   walking then standing): `uodynamapper-scratch/span-ingame/videos/*-off-vs-span.mp4`.

@@ -356,7 +356,8 @@ pub fn sys_draw_mobiles(
             let Some(pick) = pick else { continue };
             // The sequence's 2x frames once all are made, switched to and from as it starts over.
             let key = upscale_key(drawn.key, base, factor);
-            let wanted = upscaling && !rife_waits;
+            let wanted = upscaling && !rife_waits
+                && upscales.body_upscales(drawn.key, &packages.0, in_between_mode.rife_factor().is_some());
             if wanted {
                 let placement = clip.frames[pick.index].placement;
                 let area = placement.width * placement.height * upscale_gate.magnification.powi(2);
