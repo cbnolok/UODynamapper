@@ -785,7 +785,8 @@ compact source descriptors. It checks physical package, family, UV stream,
 finite repetition and the packed `PRIMARY_SELECTED` identity. Identical
 source 0/1 and source 2/3 samples are reused. It shares the auxiliary image array
 with terrain and water; it adds no duplicate atlas or draw pass. Authored
-fractional alpha uses the blended pass without the legacy sprite RGB scaling.
+fractional alpha uses the blended pass without the legacy sprite RGB scaling
+(removed for all art on 2026-11-22, [art alpha passes](art_alpha_passes.md)).
 The graph blends encoded RGB and converts the result before modern art lighting
 and postprocessing. The sampler/output color-state trace below establishes that
 domain; exact frame lighting and runtime texture upload formats are separate.
@@ -999,7 +1000,8 @@ margin, and a fade there
 let the land and items under an EC floor show along every cell edge (a grid of
 crosses on the Britain shop's stone floor, items 1309-1312). Classic styling
 retains its point coverage choice. Fractional coverage remains straight alpha
-through the blended pass, without legacy sprite RGB scaling.
+through the blended pass, without legacy sprite RGB scaling (since removed for all
+art, [art alpha passes](art_alpha_passes.md)).
 
 The geometry experiment must not be generalized to every water quad in
 isolation: camera-facing background water covered parts of the bridge stairs

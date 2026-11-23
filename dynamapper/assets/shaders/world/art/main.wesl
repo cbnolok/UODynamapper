@@ -32,7 +32,7 @@ import package::shaders::world::art::art_bindings::{
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
-    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW
+    PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
     client_shadow_logical_offset, CLIENT_SHADOW_TIE_LEVEL_OFFSET};
@@ -570,12 +570,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         shaded = vec4<f32>(apply_client_grunge(shaded.rgb, in.client_grunge_uv, effects.client_grunge_strength,
             client_grunge_texture, client_grunge_sampler), shaded.a);
     }
-    // The existing fractional-edge color adjustment is not a material opacity
-    // rule. Explicitly translucent art keeps straight RGB for standard blending.
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface && !filter_wide_water
-        && in.color.a >= 0.9999) {
-        shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
-    }
+    // The transparent pass blends straight RGB (src * a + dst * (1 - a)), fractional edges and explicitly translucent
+    // art alike, as the Enhanced and KR clients blend their sprites (SRCALPHA / INVSRCALPHA). Until 2026-11-22 the
+    // edges' RGB was scaled by 2a, which darkened every fringe below alpha one half by up to an eighth of its colour.
     // CC surface-like water statics lie flat and must read as a continuous water
     // surface that seams with the terrain water beneath them. apply_art_surface_shading
     // models an upright object's self-occlusion (lower_occlusion / side_contact darkening,

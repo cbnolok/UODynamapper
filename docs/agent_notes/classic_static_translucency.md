@@ -49,9 +49,11 @@ weight only to ordinary legacy-source sprites, including flat CC art. The
 collector and picker share the opacity rule. `art/main.wesl` uses image alpha
 multiplied by instance opacity for pass admission, routing explicit translucency
 through the blended pass. Merely changing instance color would have left those
-texels in the opaque pass. Explicit translucency also bypasses the existing
+texels in the opaque pass. Explicit translucency also bypassed the
 fractional-edge RGB adjustment, preserving straight color for standard alpha
-blending. Projected shadow opacity receives the same multiplier.
+blending; since 2026-11-22 every texel of the transparent pass keeps straight
+color ([art alpha passes](art_alpha_passes.md)). Projected shadow opacity
+receives the same multiplier.
 
 EC authored material surfaces already compose image masks and keep their
 existing path. New world-art pixels do not inherit this legacy opacity rule.

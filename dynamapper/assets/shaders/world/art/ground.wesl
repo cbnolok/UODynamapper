@@ -27,7 +27,7 @@ import package::shaders::world::art::art_ground_bindings::{
     art_atlas_sampler, art_atlas, art_atlas_enhanced, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
     item_liquid_atlas, item_liquid_lookup, liquid_sampler, client_grunge_texture, client_grunge_sampler,
-    HEIGHT_SCALE, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT,
+    HEIGHT_SCALE, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, PASS_MODE_OPAQUE,
     GROUND_FLAG_EC_WATER_MATERIAL
 };
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
@@ -186,9 +186,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         shaded = vec4<f32>(apply_client_grunge(shaded.rgb, in.client_grunge_uv, effects.client_grunge_strength,
             client_grunge_texture, client_grunge_sampler), shaded.a);
     }
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && !use_ec_water_material) {
-        shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
-    }
+    // The transparent pass blends straight RGB, as art/main.wesl does.
     if (!use_ec_water_material) {
         shaded = vec4<f32>(apply_art_surface_shading(
             shaded.rgb,
