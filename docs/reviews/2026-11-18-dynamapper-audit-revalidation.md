@@ -223,6 +223,15 @@ comment at `:326`); art extraction clones staged page bytes
 **NEW14 — Light-sprite sync respawns everything and loads textures twice.**
 `client_light_sprites.rs:844-919` despawns and respawns every sprite on any
 change; glow RGB and material each load the same texture.
+*Fixed 2026-11-22:* the sync keeps the entities of the sprites that stay and
+updates, spawns or despawns only the changed ones (`plan_client_light_sprite_sync`),
+their blend order where depths tie carried by `ClientLightSpriteOrder`; the
+material takes the texture the glow colour was read from; the collect reads only
+the map blocks it has not read as the view moves (`RenderClientLightSprites::blocks`).
+Walking at night in KR-like and Enhanced (profiling build, zoom 1) a scan took
+1.4 to 1.7 ms against 2.3 to 6.5 and its sync's commands 0.3 to 0.8 ms against
+0.8 to 2.9; the scans of 13 to 81 ms seen in a run took at most 12 ms; a
+teleport costs as much as before.
 
 **NEW15 — Light-scene images are kept and touched when idle.**
 `sys_sync_light_scene_image` iterates every glow material each frame without an
@@ -285,7 +294,8 @@ ignore those writes. The gumps migration write inside the settings loader
 
 **NEW36 — Smaller contract leftovers.** `StaticSurfaceLikeResolutionCache` is
 never invalidated though KR packages can change (`statics_collect.rs:1880-1890`);
-the light-sprite `last_scan` omits package and light-scale changes; picking's
+the light-sprite `last_scan` omits package and light-scale changes (fixed
+2026-11-22 with NEW14, item routes too); picking's
 highlight geometry re-derives emission choices with literal `flat_quad` values
 (`static_geometry.rs:153`, `:190`, `:198`); routine ground counts log at Warn
 (`statics_draw.rs:1501`, `:1705`); the art chunk cache wipes on atlas
