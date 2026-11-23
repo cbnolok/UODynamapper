@@ -436,6 +436,39 @@ impl UddpBuilder {
     /// `path` must not be the file `base` reads.
     pub fn write_with_entries(base: &UddpReader, entries: &[(u64, u8, &[u8])], path: impl AsRef<Path>)
         -> Result<(), BuildError> {
+        let built = entries.iter().map(|&(path_hash64, data_type, data)| {
+            let size = u32::try_from(data.len()).map_err(|_| BuildError::FileTooLarge(data.len() as u64))?;
+            Ok((FileLayout { key: PendingKey::PathHash(path_hash64), data_type, codec: Codec::None,
+                independent_frames: false, raw_size: size, stored_size: size }, data))
+        }).collect::<Result<Vec<_>, BuildError>>()?;
+        Self::write_merged(base, &built, |_| false, path)
+    }
+
+    /// [`Self::write_with_entries`] with each entry compressed by its own [`CompressionFlag`], as `add_file` compresses
+    /// it, in parallel, and without the entries of `base` whose path hash `dropped` names: what a package rewritten
+    /// with a section of its own replaced keeps. A flag that needs a type dictionary is refused, since `base`'s
+    /// dictionaries were trained without the new entries.
+    pub fn write_with_compressed_entries(base: &UddpReader, entries: Vec<AddOwnedFileRequest>,
+        dropped: impl Fn(u64) -> bool, path: impl AsRef<Path>) -> Result<(), BuildError> {
+        let mut next_dense_id = 0;
+        let pending = entries.into_iter().map(|entry| {
+            if entry.compression == CompressionFlag::ZstdDict {
+                return Err(BuildError::MissingDictionaryForType(entry.data_type));
+            }
+            make_pending_file(LookupMode::VirtualPathHash, &mut next_dense_id, entry.data_type, entry.compression,
+                entry.width, entry.height, entry.virtual_path.as_deref(), entry.path_hash64, entry.id, entry.data)
+        }).collect::<Result<Vec<_>, BuildError>>()?;
+        let no_dictionaries = HashMap::new();
+        let built = pending.par_iter().map(|file| compress_file(file, &no_dictionaries))
+            .collect::<Result<Vec<_>, BuildError>>()?;
+        let built = built.iter().map(|file| (file.layout(), file.encoded_payload.as_slice())).collect::<Vec<_>>();
+        Self::write_merged(base, &built, dropped, path)
+    }
+
+    /// Writes `base` with `entries` (path-hash keyed layouts and their stored bytes) in place of its entries of the
+    /// same path or after its own, without those `dropped` names, the rest copied as stored.
+    fn write_merged(base: &UddpReader, entries: &[(FileLayout, &[u8])], dropped: impl Fn(u64) -> bool,
+        path: impl AsRef<Path>) -> Result<(), BuildError> {
         let to_build_error = |error: FormatError| BuildError::Io(std::io::Error::other(error.to_string()));
         if base.lookup_mode() != LookupMode::VirtualPathHash {
             return Err(BuildError::WrongKeyForLookupMode);
@@ -445,11 +478,6 @@ impl UddpBuilder {
             let bytes = base.dictionary_for_type(data_type).ok_or(BuildError::MissingDictionaryForType(data_type))?;
             dictionaries.push(BuiltDictionary { data_type, codec, bytes: bytes.to_vec() });
         }
-        let entry_layout = |path_hash64: u64, data_type: u8, data: &[u8]| -> Result<FileLayout, BuildError> {
-            let size = u32::try_from(data.len()).map_err(|_| BuildError::FileTooLarge(data.len() as u64))?;
-            Ok(FileLayout { key: PendingKey::PathHash(path_hash64), data_type, codec: Codec::None,
-                independent_frames: false, raw_size: size, stored_size: size })
-        };
         let mut records = base.records();
         records.sort_by_key(|record| unpack_offset40(record.locator.pos64));
         // Each file's layout and where its stored bytes come from: `base`'s payload, or the entry of that index.
@@ -457,10 +485,12 @@ impl UddpBuilder {
         let mut placed = vec![false; entries.len()];
         for record in records {
             let FileKey::PathHash(path_hash64) = record.key else { return Err(BuildError::WrongKeyForLookupMode) };
-            if let Some(index) = entries.iter().position(|(hash, _, _)| *hash == path_hash64) {
-                let (_, data_type, data) = entries[index];
-                files.push((entry_layout(path_hash64, data_type, data)?, Err(index)));
+            if let Some(index) = entries.iter().position(|(layout, _)| layout.key == PendingKey::PathHash(path_hash64)) {
+                files.push((entries[index].0, Err(index)));
                 placed[index] = true;
+                continue;
+            }
+            if dropped(path_hash64) {
                 continue;
             }
             let payload = base.locator_payload(&record.locator).map_err(to_build_error)?;
@@ -473,9 +503,9 @@ impl UddpBuilder {
                 stored_size: payload.len() as u32,
             }, Ok(payload)));
         }
-        for (index, &(path_hash64, data_type, data)) in entries.iter().enumerate() {
+        for (index, (layout, _)) in entries.iter().enumerate() {
             if !placed[index] {
-                files.push((entry_layout(path_hash64, data_type, data)?, Err(index)));
+                files.push((*layout, Err(index)));
             }
         }
         let layouts = files.iter().map(|(layout, _)| *layout).collect::<Vec<_>>();
@@ -491,7 +521,7 @@ impl UddpBuilder {
         for (_, source) in &files {
             let bytes = match *source {
                 Ok(payload) => payload,
-                Err(index) => entries[index].2,
+                Err(index) => entries[index].1,
             };
             writer.write_all(bytes).map_err(BuildError::Io)?;
         }
