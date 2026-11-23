@@ -2,7 +2,7 @@
 //! the steps, so a big Enhanced creature walking a tile in 0.4 s skates. Matched to the ground, a cycle lasts the time
 //! the steps take to cover the clip's stride: how far the body's planted feet travel in one cycle of the clip, measured
 //! offline on the frames (`udd-cli tool strides measure`) and stored in the animation packages with the hash of the
-//! frames measured, or counted by hand for the human clips ([`HAND_STRIDES`]).
+//! frames measured, or, for the clips the measurement does not follow, counted by hand ([`CURATED_STRIDES`]).
 
 use std::collections::hash_map::{Entry, HashMap};
 use std::sync::Arc;
@@ -44,7 +44,7 @@ const MIN_OWN_CYCLE_FRACTION: f32 = 1.0 / 3.0;
 const MAX_OWN_CYCLE_FRACTION: f32 = 3.0;
 
 /// How far a clip's planted feet travel in one cycle, in side tiles, and whether it was counted by hand
-/// ([`HAND_STRIDES`]) rather than measured into the package.
+/// ([`CURATED_STRIDES`]) rather than measured into the package.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stride {
     pub tiles: f32,
@@ -82,45 +82,111 @@ impl GroundStride {
     }
 }
 
-/// Strides counted by hand for the walk and run clips named, which take the place of the package's (`udd-cli tool
-/// strides measure`). The flow, the first measurement, under-measured the human clips by a fifth to a third; the
-/// planted-foot measurement matches these within about 0.1 tiles on the walks and the Classic run, but reads the
-/// Enhanced run 0.1 to 0.3 tiles longer (about half of its frame pairs show no planted foot), so the counts stay. Each
-/// was counted on the south-west facing (44 px a tile) by following the planted foot's ground contact from frame to
-/// frame, on 2026-11-22 (`docs/agent_notes/mobile_animation_motion.md`, "Walk pace"). The elves and ghosts have the
-/// humans' art and measure the same. A hand stride still needs the package's stride record, and is used only while
-/// the clip's frames hash as that record says.
-const HAND_STRIDES: [HandStride; 5] = [
-    HandStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_WALK, tiles: 1.3 },
-    HandStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_RUN, tiles: 2.15 },
-    HandStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WALK, tiles: 1.4 },
-    HandStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_RUN, tiles: 1.75 },
-    HandStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WAR_WALK,
-        tiles: 1.3 },
+/// The clips whose stride stays hand-configured because the planted-foot measurement (`udd-cli tool strides
+/// measure`) does not follow them, in place of the package's. Each was counted on 2026-11-22 on the south-west
+/// facing (44 px a side tile), from the planted foot's ground contact frame to frame on the frame strips of `udd-cli
+/// tool strides inspect --strip` (its `--pair` count on the pairs where the foot is clear, against a hand count of
+/// the foot's x), or keeps the clients' timing where no foot touches the ground; the reason says why the tool is not
+/// trusted (`docs/agent_notes/mobile_animation_motion.md`, "Curated strides"). The elves and ghosts have the humans'
+/// art, and the bodies of an entry share their frames. A curated stride still needs the package's stride record (one
+/// without a stride counts), and is used only while the clip's frames hash as that record says.
+const CURATED_STRIDES: [CuratedStride; 15] = [
+    CuratedStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_WALK,
+        pace: CuratedPace::Tiles(1.3),
+        reason: "counted by hand before the tool, which reads 1.34 but 1.68 on the west facing" },
+    CuratedStride { source: AnimSource::Classic, bodies: &HUMAN_BODIES, action: CLASSIC_PEOPLE_RUN,
+        pace: CuratedPace::Tiles(2.15),
+        reason: "half the pairs lose the foot and the facings read 1.96 to 2.43 (2.10)" },
+    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_HORSE_BODIES, action: CLASSIC_ACTION_WALK,
+        pace: CuratedPace::Tiles(1.05),
+        reason: "the trot's diagonal hooves swap within a pair: 3 of 5 pairs follow another hoof (1.38 to 1.73)" },
+    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_HORSE_BODIES, action: CLASSIC_ACTION_ANIMAL_RUN,
+        pace: CuratedPace::Tiles(2.25),
+        reason: "five-frame gallop: pairs match another hoof, the facings read 2.3 to 5.2, 2.4 or 4.1 by package" },
+    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_WOLF_BODIES, action: CLASSIC_ACTION_WALK,
+        pace: CuratedPace::Tiles(0.7),
+        reason: "five frames, 3 px paws: four-vote pairs read 8 and 11 px, the facings 0.69 to 1.11" },
+    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_DOG_BODIES, action: CLASSIC_ACTION_WALK,
+        pace: CuratedPace::Tiles(0.52),
+        reason: "2 px paws: the south and west facings read 0.64 on two and three of five pairs" },
+    CuratedStride { source: AnimSource::Classic, bodies: &CLASSIC_FLYING_BODIES, action: CLASSIC_ACTION_FLY,
+        pace: CuratedPace::ClientTiming, reason: "flight: no foot touches the ground, the tool follows a wing tip" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WALK,
+        pace: CuratedPace::Tiles(1.4), reason: "counted by hand before the tool; the tool agrees within 0.05" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_RUN,
+        pace: CuratedPace::Tiles(1.75),
+        reason: "half the pairs show no planted foot and theirs spread 3 to 12 px: the tool reads 1.83 to 2.03" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &HUMAN_BODIES, action: ENHANCED_HUMAN_WAR_WALK,
+        pace: CuratedPace::Tiles(1.3), reason: "counted by hand before the tool; the tool reads 1.20" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_DAEMON_BODIES, action: ENHANCED_ACTION_RUN,
+        pace: CuratedPace::Tiles(6.8),
+        reason: "the wings sweep through the ground band: the west facing follows them (1.65), the rest 5.2 to 5.8" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_KIRIN_BODIES, action: ENHANCED_ACTION_RUN,
+        pace: CuratedPace::Tiles(6.9),
+        reason: "the hooves touch down for one pair, the lift-off pairs read 2 to 8 px: 4.2 to 7.8" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_KIRIN_BODIES, action: ENHANCED_ACTION_MOUNTED_RUN,
+        pace: CuratedPace::Tiles(6.9),
+        reason: "the run's frames ridden: the hooves touch down for one pair, the lift-off pairs read 2 to 8 px" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_OSTARD_BODIES, action: ENHANCED_ACTION_RUN,
+        pace: CuratedPace::Tiles(6.2),
+        reason: "two of ten pairs on the south-west facing: the stride is the mean of 5.9 and 9.2" },
+    CuratedStride { source: AnimSource::Enhanced, bodies: &ENHANCED_FLYING_BODIES, action: ENHANCED_ACTION_RUN,
+        pace: CuratedPace::ClientTiming, reason: "flight: no foot touches the ground, the tool follows a wing tip" },
 ];
 /// The male and female humans, their ghosts, and the elves, in both sources.
 const HUMAN_BODIES: [u32; 6] = [400, 401, 402, 403, 605, 606];
+/// The Classic horses and the nightmare (one set of frames).
+const CLASSIC_HORSE_BODIES: [u32; 5] = [177, 200, 204, 226, 228];
+/// The Classic timber, dire, grey, white and plain wolves and the hell hound (one set of frames).
+const CLASSIC_WOLF_BODIES: [u32; 6] = [23, 25, 27, 34, 98, 225];
+const CLASSIC_DOG_BODIES: [u32; 1] = [217];
+/// The Classic bodies whose run is their flight: the eagle, the bird, the daemons, the dragons and wyrms, the harpy,
+/// the drakes and the wyvern.
+const CLASSIC_FLYING_BODIES: [u32; 12] = [5, 6, 9, 10, 12, 30, 49, 59, 60, 61, 62, 106];
+const ENHANCED_DAEMON_BODIES: [u32; 2] = [9, 10];
+const ENHANCED_KIRIN_BODIES: [u32; 1] = [132];
+/// The desert, frenzied and forest ostards.
+const ENHANCED_OSTARD_BODIES: [u32; 3] = [210, 218, 219];
+/// The Enhanced bodies whose run is a flight: the dragons, the harpy, the white and shadow wyrms, the drakes and the
+/// wyvern.
+const ENHANCED_FLYING_BODIES: [u32; 8] = [12, 30, 49, 59, 60, 61, 62, 106];
 /// The Classic people layout's walk and run (unarmed).
 const CLASSIC_PEOPLE_WALK: u16 = 0;
 const CLASSIC_PEOPLE_RUN: u16 = 2;
+/// The Classic animal and monster layouts' walk, the animals' run and the monsters' flight.
+const CLASSIC_ACTION_WALK: u16 = 0;
+const CLASSIC_ACTION_ANIMAL_RUN: u16 = 1;
+const CLASSIC_ACTION_FLY: u16 = 19;
 /// The Enhanced humans' peace walk and run, and their war walk.
 const ENHANCED_HUMAN_WALK: u16 = 1;
 const ENHANCED_HUMAN_RUN: u16 = 3;
 const ENHANCED_HUMAN_WAR_WALK: u16 = 15;
+/// The Enhanced creatures' peace run, and a ridden kirin's run.
+const ENHANCED_ACTION_RUN: u16 = 24;
+const ENHANCED_ACTION_MOUNTED_RUN: u16 = 30;
 
-/// A stride measured by hand: `tiles` a cycle for `action` of each of `bodies` from `source`.
-struct HandStride {
+/// A clip's hand-configured pace: `pace` for `action` of each of `bodies` from `source`, and why the measurement is
+/// not trusted for it.
+struct CuratedStride {
     source: AnimSource,
     bodies: &'static [u32],
     action: u16,
-    tiles: f32,
+    pace: CuratedPace,
+    reason: &'static str,
 }
 
-/// The stride measured by hand for `action` of `body` from `source`, if there is one.
-fn hand_stride(source: AnimSource, body: u32, action: u16) -> Option<f32> {
-    HAND_STRIDES.iter()
-        .find(|hand| hand.source == source && hand.action == action && hand.bodies.contains(&body))
-        .map(|hand| hand.tiles)
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CuratedPace {
+    /// The stride, in side tiles.
+    Tiles(f32),
+    /// The clip keeps the clients' timing: it covers no ground to match.
+    ClientTiming,
+}
+
+/// The curated entry for `action` of `body` from `source`, if there is one.
+fn curated_stride(source: AnimSource, body: u32, action: u16) -> Option<&'static CuratedStride> {
+    CURATED_STRIDES.iter()
+        .find(|curated| curated.source == source && curated.action == action && curated.bodies.contains(&body))
 }
 
 /// The point of a mobile's cycle, in cycles, advanced by the time passing over the cycle's length then: a cycle that
@@ -165,6 +231,8 @@ enum StrideCheck {
     Matches(Stride),
     /// The frames are not those measured, or do not read: the clip keeps the clients' timing.
     Differs,
+    /// Curated to keep the clients' timing ([`CuratedPace::ClientTiming`]).
+    ClientTiming,
 }
 
 impl StrideCheck {
@@ -215,14 +283,23 @@ impl MobileStrides {
     }
 }
 
-/// The check of the stride for `action` of `body` from `source`, the one measured by hand or the one `package`
-/// has, its hashing started; none without the package's stride record.
+/// The check of the stride for `action` of `body` from `source`, the curated one or the one `package` has, its
+/// hashing started; none without the package's stride record. A clip curated to the clients' timing needs no check.
 fn start_check<P: MobileAnimClips + Send + Sync + 'static>(package: &Arc<P>, source: AnimSource, body: u32,
     action: u16) -> Option<StrideCheck> {
+    let curated = curated_stride(source, body, action);
+    if let Some(curated) = curated {
+        debug!("The {source:?} stride of action {action} of body {body} is curated, {:?}: {}", curated.pace,
+            curated.reason);
+    }
+    let curated = curated.map(|curated| curated.pace);
+    if curated == Some(CuratedPace::ClientTiming) {
+        return Some(StrideCheck::ClientTiming);
+    }
     let record = package.stride_record(body, action)?;
-    let stride = match hand_stride(source, body, action) {
-        Some(tiles) => Stride { tiles, by_hand: true },
-        None => Stride { tiles: record.stride_tiles?, by_hand: false },
+    let stride = match curated {
+        Some(CuratedPace::Tiles(tiles)) => Stride { tiles, by_hand: true },
+        _ => Stride { tiles: record.stride_tiles?, by_hand: false },
     };
     let package = package.clone();
     let task = background_pool().spawn(Priority::Visible, "mobile stride check", move || {
@@ -276,20 +353,61 @@ mod tests {
     }
 
     #[test]
-    fn the_human_walk_and_run_have_hand_strides_in_both_sources() {
-        for (source, body, action, tiles) in [
-            (AnimSource::Classic, 400, CLASSIC_PEOPLE_WALK, 1.3),
-            (AnimSource::Classic, 606, CLASSIC_PEOPLE_RUN, 2.15),
-            (AnimSource::Enhanced, 401, ENHANCED_HUMAN_WALK, 1.4),
-            (AnimSource::Enhanced, 402, ENHANCED_HUMAN_RUN, 1.75),
-            (AnimSource::Enhanced, 400, ENHANCED_HUMAN_WAR_WALK, 1.3),
+    fn the_curated_clips_have_their_hand_strides_in_both_sources() {
+        for (source, body, action, pace) in [
+            (AnimSource::Classic, 400, CLASSIC_PEOPLE_WALK, CuratedPace::Tiles(1.3)),
+            (AnimSource::Classic, 606, CLASSIC_PEOPLE_RUN, CuratedPace::Tiles(2.15)),
+            (AnimSource::Classic, 200, CLASSIC_ACTION_WALK, CuratedPace::Tiles(1.05)),
+            (AnimSource::Classic, 177, CLASSIC_ACTION_ANIMAL_RUN, CuratedPace::Tiles(2.25)),
+            (AnimSource::Classic, 225, CLASSIC_ACTION_WALK, CuratedPace::Tiles(0.7)),
+            (AnimSource::Classic, 217, CLASSIC_ACTION_WALK, CuratedPace::Tiles(0.52)),
+            (AnimSource::Classic, 12, CLASSIC_ACTION_FLY, CuratedPace::ClientTiming),
+            (AnimSource::Enhanced, 401, ENHANCED_HUMAN_WALK, CuratedPace::Tiles(1.4)),
+            (AnimSource::Enhanced, 402, ENHANCED_HUMAN_RUN, CuratedPace::Tiles(1.75)),
+            (AnimSource::Enhanced, 400, ENHANCED_HUMAN_WAR_WALK, CuratedPace::Tiles(1.3)),
+            (AnimSource::Enhanced, 10, ENHANCED_ACTION_RUN, CuratedPace::Tiles(6.8)),
+            (AnimSource::Enhanced, 132, ENHANCED_ACTION_MOUNTED_RUN, CuratedPace::Tiles(6.9)),
+            (AnimSource::Enhanced, 219, ENHANCED_ACTION_RUN, CuratedPace::Tiles(6.2)),
+            (AnimSource::Enhanced, 59, ENHANCED_ACTION_RUN, CuratedPace::ClientTiming),
         ] {
-            assert_eq!(hand_stride(source, body, action), Some(tiles), "{source:?} body {body} action {action}");
+            assert_eq!(curated_pace(source, body, action), Some(pace), "{source:?} body {body} action {action}");
         }
-        // Not another body, nor the other source's action numbers.
-        assert_eq!(hand_stride(AnimSource::Classic, 17, CLASSIC_PEOPLE_WALK), None);
-        assert_eq!(hand_stride(AnimSource::Enhanced, 400, CLASSIC_PEOPLE_RUN), None);
-        assert_eq!(hand_stride(AnimSource::Classic, 400, ENHANCED_HUMAN_WALK), None);
+        // Not another body, nor the other source's action numbers, nor a ridden ostard, which the tool follows.
+        assert_eq!(curated_pace(AnimSource::Classic, 17, CLASSIC_PEOPLE_WALK), None);
+        assert_eq!(curated_pace(AnimSource::Enhanced, 400, CLASSIC_PEOPLE_RUN), None);
+        assert_eq!(curated_pace(AnimSource::Classic, 400, ENHANCED_HUMAN_WALK), None);
+        assert_eq!(curated_pace(AnimSource::Enhanced, 210, ENHANCED_ACTION_MOUNTED_RUN), None);
+    }
+
+    fn curated_pace(source: AnimSource, body: u32, action: u16) -> Option<CuratedPace> {
+        curated_stride(source, body, action).map(|curated| curated.pace)
+    }
+
+    /// Every entry names its bodies, a reason and a stride, overlaps no other, and paces the cycle on the clamp-free
+    /// path: its stride's own seconds, outside the bounds a measured one would be held to.
+    #[test]
+    fn every_curated_stride_is_unique_explained_and_unclamped() {
+        const RUN_STEP_SECS: f32 = 0.2;
+        /// How far outside the clamp the clip's own cycle is put, on either side.
+        const OUTSIDE_THE_CLAMP: f32 = 2.0;
+        for (index, curated) in CURATED_STRIDES.iter().enumerate() {
+            let name = format!("{:?} action {} {:?}", curated.source, curated.action, curated.bodies);
+            assert!(!curated.bodies.is_empty() && !curated.reason.is_empty(), "{name}");
+            for other in &CURATED_STRIDES[index + 1..] {
+                assert!(other.source != curated.source || other.action != curated.action
+                    || !other.bodies.iter().any(|body| curated.bodies.contains(body)), "{name} overlaps");
+            }
+            let CuratedPace::Tiles(tiles) = curated.pace else { continue };
+            assert!(tiles > 0.0 && tiles.is_finite(), "{name}");
+            let stride = GroundStride { stride: Stride { tiles, by_hand: true }, step_secs: RUN_STEP_SECS,
+                step_tiles: 1.0 };
+            let secs = tiles * RUN_STEP_SECS;
+            // Own cycles whose bounds both lie above, then both below, the stride's seconds.
+            for own in [secs * MAX_OWN_CYCLE_FRACTION * OUTSIDE_THE_CLAMP,
+                secs * MIN_OWN_CYCLE_FRACTION / OUTSIDE_THE_CLAMP] {
+                assert!((stride.cycle_secs(own) - secs).abs() < 1e-6, "{name} own {own}");
+            }
+        }
     }
 
     #[test]

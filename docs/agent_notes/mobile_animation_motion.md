@@ -188,7 +188,7 @@ The flow measures short on most bodies, though by different amounts. Unchanged b
 side facing): Classic orc 17 walk 0.88 / 1.3 (legs 0.75 t/s ahead), ogre 1 1.92 / 2.25, daemon 9 2.79 / 2.8; Enhanced
 orc 17 1.55 / 2.4 (+1.37), wolf 225 1.04 / 1.55, ogre 1 1.83 / 2.55, daemon 9 2.73 / 3.13, horse 200 walk 1.44 / 1.36.
 The big bodies come close and the small and middle ones measure 0.6–0.8 of their stride. The humans' clips now take
-strides measured by hand (`HAND_STRIDES` in `render/mobiles/pace.rs`). The table covers the Classic walk and run and
+strides measured by hand (now `CURATED_STRIDES` in `render/mobiles/pace.rs`, [curated strides](#curated-strides-2026-11-22)). The table covers the Classic walk and run and
 the Enhanced walk, run and war walk of bodies 400–403, 605 and 606; the elves' flow numbers match the humans' to 1%,
 and so do their contacts. A hand stride replaces the package's stride for the clip, still checked against the package
 record's frame hash, and paces the cycle outside the clamp, which only bounds a measured number: the Enhanced
@@ -274,7 +274,7 @@ facings: they get no stride and keep the client timing, about right for their tw
 0.4–0.6 played them at the clamp's fastest.
 
 Decisions: planted foot is the default (packers, `udd-cli tool strides measure`, the inspector and the converter GUI);
-the human `HAND_STRIDES` stay, since the Enhanced run does not reproduce; the clamp is now a third to three times
+the human hand strides stay ([curated strides](#curated-strides-2026-11-22)), since the Enhanced run does not reproduce; the clamp is now a third to three times
 the clip's own speed (`MIN_OWN_CYCLE_FRACTION`, `MAX_OWN_CYCLE_FRACTION`): the planted foot only needs a guard
 against outliers, and a Classic monster runs its walk at the run's 0.2 s steps (the orc: 0.37 of its own cycle on a
 side facing), which half would hold back. Re-measured in place with `full`: `/home/claudio/test/uddp` (1339 of 1914
@@ -296,6 +296,77 @@ locks on the ground showing through the mask, so slip is computed from the measu
 Small creatures (wolf, dog) have too little colour for the silhouette period; their rates follow from the strides:
 the Classic wolf's walk from 4.8 cycles a second (the flow's 0.52 tiles at the clamp) to 1.9, its run from 5 to the
 clip's own 2.5.
+
+#### Re-measure (2026-11-22, evening)
+
+Every package set on the machine with stride records was looked for: `/home/claudio/test/uddp` and the BC7 atlas
+test packages (`/home/claudio/rust-target/uodynamapper-scratch/bc7-atlas/uddp`); the client folders hold none, and
+the other `.uddp` files are maps, art and the KR delta. Both sets were already in planted-foot units (Classic 400
+walk 1.34, against the flow's 0.78), and `udd-cli tool strides measure full` over them changed no record, so nothing
+was written. The stride TSVs before it are in
+`/home/claudio/test/uddp-backups/strides-before-curated-remeasure-*/`.
+
+#### Curated strides (2026-11-22)
+
+`CURATED_STRIDES` in `render/mobiles/pace.rs` (formerly `HAND_STRIDES`) holds the clips whose stride stays
+hand-configured because the tool does not follow them, each with its reason. An entry is a stride in side tiles,
+paced outside the clamp, or `ClientTiming`: the clip plays at its own frame time. Like a measured stride, a curated
+one needs the package's stride record and the frame hash; a client-timing entry needs neither.
+
+How the list was made: `udd-cli tool strides inspect PACKAGE --body B --action A` prints each side facing's pairs
+(travel, votes, band pixels) and the facing's stride; `--strip DIR` draws the frames side by side with the ground band
+blue, the voting pixels red and a bar the pair's travel long under each frame; `--facing F --pair P ...` counts the
+stride on chosen pairs alone. A survey ran it on about 70 common bodies in both sources (humans, elves, gargoyles,
+mounts, orc, ogre, troll, daemon, lich, skeleton, zombie, ettin, dragons, wolves, dog, cat, horses, llama, bears, deer,
+birds) and flagged a clip with few planted pairs (under half), a large spread across facings (over 0.5 of the
+median) or pairs, five frames, or a voting region off the feet. Each flagged clip's strip was looked at: the pairs
+whose red sits on one foot touching the band in both frames were counted with `--pair`, and the foot's x was read off
+an enlarged south-west strip with a 5 px ruler as the independent count (for the Classic dog and wolf also the
+silhouette's ground contacts, matched frame to frame). The value is the south-west count, the facing the human counts
+used; an entry is kept when it differs from the tool by more than a tenth, or the tool has no foot to follow.
+
+| Clip | Curated | Tool (S, SW, W → stride) | How it was counted, and why the tool is not trusted |
+|---|---|---|---|
+| Classic humans, elves walk (0) | 1.30 | 1.33 1.34 1.68 → 1.34 | Kept from the first hand count. |
+| Classic humans, elves run (2) | 2.15 | 1.96 2.10 2.43 → 2.10 | Kept; half the pairs lose the foot. |
+| Enhanced humans, elves walk (1) | 1.40 | 1.38 1.40 1.35 → 1.38 | Kept. |
+| Enhanced humans, elves run (3) | 1.75 | 1.74 2.14 1.83 → 1.83 | Kept; about half the pairs show no planted foot, theirs spread 3–12 px. |
+| Enhanced humans, elves war walk (15) | 1.30 | 1.20 1.21 1.17 → 1.20 | Kept. |
+| Classic horses 177, 200, 204, 226, 228 trot (0) | 1.05 | 1.08 1.38 1.73 → 1.38 | The leading hoof's contact x on SW: 30, 40, 49, 61, 67 px over frames 0–4, 9.25 px a frame (the old hand count, confirmed). The trot's diagonal hooves swap within a pair: three of five pairs match another hoof (26.7 and 17.2 px). |
+| Classic horses gallop (1) | 2.25 | 2.40 2.27 5.16 → 2.40 (4.11 on 226 and 177, and on 200 in the BC7 set) | SW pairs 0 and 1 (`--pair` 2.25), the front hoof at 24, 44, 64 px: 20 px a frame. The other pairs match another hoof (59.5 px), and the S facing's median of two pairs flips between 2.4 and 4.1 with the package. |
+| Classic wolves 23, 25, 27, 34, 98, 225 walk (0) | 0.70 | 1.11 0.69 0.93 → 0.93 | SW pairs 1–4 (`--pair` 0.69); the contacts' shifts sum to 31 px (0.70). Five frames, 3 px paws: pairs of four votes read 8 and 11 px. |
+| Classic dog 217 walk (0) | 0.52 | 0.64 0.52 0.64 → 0.64 | SW pairs 1–4 (`--pair` 0.52); the contacts' shifts sum to 24 px (0.55). 2 px paws: S and W find two and three of five pairs. The old hand count, 0.95, was wrong. |
+| Classic flying run (19): eagle 5, bird 6, daemons 9 and 10, dragons 12 and 59, harpy 30, wyrms 49 and 106, drakes 60 and 61, wyvern 62 | client timing | 10–16 tiles from one facing, or none | A flight: no foot touches the band, the votes sit on a wing tip. |
+| Enhanced daemons 9, 10 run (24) | 6.8 | 5.15 5.80 1.65 → 5.15 | Pairs 4 and 5 on every facing (S 6.54, SW 6.82, W 7.34), the planted foot's blob; the wings sweep through the band in pairs 1–3 and on the west facing. |
+| Enhanced kirin 132 run (24) and ridden run (30) | 6.9 | 5.86 4.22 7.76 → 5.86 | Pairs 1 and 6 (S 6.30, SW 6.88, W 7.76); the front hoof's heel on SW at 48 then 78 px, 30 px. The hoof touches down for one pair; the lift-off pairs read 2–8 px. |
+| Enhanced ostards 210, 218, 219 run (24) | 6.2 | 5.86 – 9.21 → 7.54 | SW pairs 7, 8 (6.18), S 6, 7 (6.28), W 7, 8 (6.84). Two of ten pairs on SW, so the stride was the mean of S and W. |
+| Enhanced flying run (24): dragons 12 and 59, harpy 30, wyrms 49 and 106, drakes 60 and 61, wyvern 62 | client timing | 0.43–5.1, or none | A flight, as above; the white wyrm hovers. |
+
+Looked at and left to the tool: the ridden ostards' run (30, 7.0: three pairs per facing, all agreeing within 0.2),
+the ostards' walk (22, 3.37: five steady pairs per facing), the Enhanced trolls' run (S 2.98 and W 3.10 agree with
+SW's two pairs, 3.11), the Enhanced bears' walk (0.75–0.79 on every facing), the Classic cat (walk 0.35, contacts
+0.34–0.45), the Enhanced horses' run (4.0, against the old hand count 3.8). Left with no stride, at the clients'
+timing, because no pair shows a clear planted foot: the five-frame Classic runs of the dog, cat and wolves, and the
+Enhanced runs of the skeletons (one 25 px pair on SW, the next lifting), wolves, dog, cat, cow and hind. Open: the
+Classic cow's walk (S 1.46, SW 0.53, W 3.49; 4 px hooves, the rear one holding its canvas x for three frames, so no
+count is credible), the Enhanced orc captain's run (1.9–7.1) and the Classic orc and lich walks, whose west facing
+reads about 0.6 tiles longer (the orc's walk was checked on recordings above). The Classic armed walk and run (1, 3)
+measure as the unarmed ones (1.34, 2.10) and the war walk (15) 0.68, but the renderer plays neither and the packages
+have no records for them: they would need records and the renderer's armed and war modes.
+
+Reproduce an entry with `inspect --strip` and the `--pair` lists in the table (frame numbers start at 0 and a pair
+is named by its first frame). The survey and the sheet, ruler and contact scripts were throwaway scratch.
+
+What changes in game, a cycle on a side facing at the steps of the movement (×√2 on a diagonal): the Classic horse's
+walk from 1.38 to 1.05 tiles a cycle, its run from 2.40 (4.11 on bodies 226 and 177) to 2.25, the Classic wolves'
+walk from 0.93 to 0.70 and the dog's from 0.64 to 0.52, the Enhanced daemon's run from 5.15 to 6.8, the kirin's from
+5.86 to 6.9 on foot and ridden, the ostards' run on foot from 7.54 to 6.2, and the flying runs now flap at the
+clients' frame time. Recorded headless through the control socket on the test packages, before and after, walking
+and running along a screen diagonal and along the screen's horizontal: Classic (horse, wolf, dog, dragon), Enhanced
+(daemon, kirin on foot and ridden, ostard, dragon), KR-like (ostard) and UOD-Painterly (daemon), side-by-side mp4s in
+`/home/claudio/rust-target/uodynamapper-scratch/strides-curated/`. The silhouette-period tracker (`video_pace.py`)
+locks on the recordings' six-frame repeats here, so the rates are the strides' rather than measured. The regression
+harness (quick tier, all four styles): 99 captures, 76 identical and 23 within tolerance, none changed.
 
 ## Upscaling when zoomed
 
