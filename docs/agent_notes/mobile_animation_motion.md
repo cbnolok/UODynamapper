@@ -723,6 +723,51 @@ The longest wait for a 2× frame set was 8 to 12 s with any budget (a large body
   The lever, if one is wanted, is a budget that follows the GPU's headroom (larger where the CPU sets the frame, as
   in Classic), not a larger constant.
 
+## RIFE on large frames (measured 2026-11-23)
+
+Every dispatch of `rife::tests::benchmark` timed (matrix units, Radeon 880M), the dev build of c82351c6 alternated
+with the changes over two rounds. At 576×512 one t's pixel steps took 5.6 ms of 13.1 (block inputs 2.8, upsamples
+1.3, merge 0.35, the split sums' reductions 0.9) and its convolutions 7.5; at 64² every dispatch is 0.003 to 0.016 ms,
+so small frames stay dispatch-bound and nothing below changes them.
+
+- **The downscaling blocks' input, a thread per corner.** A block input reads the four frame pixels each of its
+  pixels resizes from, and each read is 69 scalar loads (the warps of both frames' colour and features, the mask, the
+  state's features, the flow). One thread walking the four corners in turn waited on its loads, worst at the coarse
+  blocks, which have few pixels: block 3's input took 1.08 ms at 576×512, block 2's 0.62. Now the blocks of scale
+  16 to 2 run a thread per corner, and the four sums meet in workgroup memory, added in the corners' order as before
+  (`block_input_corners`); block 4, at scale 1, weighs one corner and keeps a thread per pixel. Block inputs 2.78 →
+  1.62 ms (block 3 1.08 → 0.45, block 2 0.62 → 0.26, block 1 0.29 → 0.12).
+- **The matrix units' split-K counts threads.** A layer with few tiles splits its sum until it makes about 96
+  workgroups, which on the matrix units, of 256 threads, was four times the shader cores' threads. Each split adds a
+  reduction, and at 576×512 the reductions came to 0.87 ms a t, 0.63 at 256². Now the matrix units aim for 24
+  workgroups (`MATRIX_TARGET_WORKGROUPS`): reductions 0.12 ms at 576×512, 0.22 at 256², with no slower convolution.
+  12 and 48 measured no better (one round on a loaded machine).
+- Tried and dropped: the frames' colour and the Head's features packed per pixel into two vectors of four, so a warp
+  tap reads two loads instead of seven planes (the Head's last convolution writing them interleaved): block inputs
+  2.88 → 1.65 ms with the corners, as without the packing, while the Head's last convolution slowed 0.45 → 0.65 ms
+  for its strided writes. The upsample of block 4 with one tap instead of four: 0.40 → 0.39 ms.
+
+One in-between, ms (encode + one t), and a pair of three in-betweens:
+
+| frame | before | after | pair of 3 t, before → after |
+|---|---:|---:|---:|
+| 64² | 1.04 | 1.03 | 2.96 → 2.93 |
+| 128² | 1.68 | 1.41 | 4.73 → 3.92 |
+| 256² | 4.23 | 3.16 | 11.8 → 8.6 |
+| 576×512 | 14.2 | 11.5 | 38.2 → 30.3 |
+
+The shader cores (devices without matrix units) gain the block inputs alone: 576×512 17.0 → 16.0 ms, 256² 4.8 → 4.6.
+The largest single dispatches at 576×512 are now block 4's last convolution (0.90 ms), block 4's input (0.77) and
+the Head's last convolution (0.46 a frame), all within the 2 ms budget, so a frame needs no slicing to keep it.
+Error against PyTorch stays within the reference test's tolerances and where it was (flow at most 0.017 px, mask
+logit 0.034, merged frame 1.1/255, against 0.018, 0.034 and 1.2/255 before): the corners' sums are added in the
+order they were, and only the matrix units' fewer split ranges move the rounding.
+
+dynamapper's cost model for a RIFE step now counts the pixel steps and reductions by their threads (1.0 ms per
+million) and the convolutions' multiply-adds at the rate of the units they run on (1.85 ms per GMAC on the shader
+cores, 1.15 on the matrix units), fitted to every dispatch of the benchmark; it used to count the multiply-adds alone
+at the shader cores' rate, so a 576×512 block input, 0.8 ms, was estimated at 0.009.
+
 ## Sharpening
 
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU

@@ -40,12 +40,14 @@ use uot_gpu_compute::{ConvUnits, SourceRect};
 use super::super::compute_warm_up::{ComputeWarmUp, Warm};
 use super::{InBetweenJob, InBetweenPair, MobileInBetweens};
 
-/// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to uot-gpu-compute's
-/// rife::tests::benchmark on the Radeon 880M with the convolutions on the shader cores (one t: 1.31 ms at 64x64,
-/// 0.079 GMAC, 121 dispatches; 14.97 ms at 576x512, 5.66 GMAC, 97); on its matrix units one t takes 0.75 to 0.85 of
-/// that, which the timed cost scale learns.
+/// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds on the units they run on, or, for the
+/// per-pixel steps and the split sums' reductions, its threads. Fitted to every dispatch of uot-gpu-compute's
+/// rife::tests::benchmark on the Radeon 880M (one t on the matrix units: 0.94 ms at 64x64, 9.2 ms at 576x512, of which
+/// 3.3 ms per-pixel steps); the timed cost scale learns the rest.
 const DISPATCH_MS: f64 = 0.009;
-const MS_PER_GIGA_MULTIPLY_ADD: f64 = 2.5;
+const MS_PER_GIGA_MULTIPLY_ADD: f64 = 1.85;
+const MATRIX_MS_PER_GIGA_MULTIPLY_ADD: f64 = 1.15;
+const MS_PER_MEGA_INVOCATION: f64 = 1.0;
 /// An atlas step's estimated cost per million pixels it runs on, besides the fixed part.
 const ATLAS_STEP_MS_PER_MEGAPIXEL: f64 = 0.5;
 /// The bytes of a BC7 block.
@@ -236,7 +238,7 @@ fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f
         PairStep::Store(_) => pair.card.x * pair.card.y,
         _ => 0,
     };
-    let multiply_adds = rife_dispatch(workspace, step).map_or(0, RifeDispatch::multiply_adds);
+    let rife = rife_dispatch(workspace, step).map_or(0.0, rife_dispatch_ms);
     let encode = match step {
         PairStep::Store(generated) if pair.targets[generated + 1].format == AtlasFormat::Bc7 => {
             let (width, height) = pair.targets[generated + 1].padded_size();
@@ -244,12 +246,16 @@ fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f
         }
         _ => 0.0,
     };
-    dispatch_ms(multiply_adds, pixels) + encode
+    DISPATCH_MS + rife + pixels as f64 / MEGA * ATLAS_STEP_MS_PER_MEGAPIXEL + encode
 }
 
-fn dispatch_ms(multiply_adds: u64, atlas_pixels: u32) -> f64 {
-    DISPATCH_MS + multiply_adds as f64 / GIGA * MS_PER_GIGA_MULTIPLY_ADD
-        + atlas_pixels as f64 / MEGA * ATLAS_STEP_MS_PER_MEGAPIXEL
+/// A RIFE dispatch's estimated cost besides the fixed part.
+fn rife_dispatch_ms(dispatch: &RifeDispatch) -> f64 {
+    if dispatch.multiply_adds() == 0 {
+        return dispatch.invocations() as f64 / MEGA * MS_PER_MEGA_INVOCATION;
+    }
+    let rate = if dispatch.on_matrix_units() { MATRIX_MS_PER_GIGA_MULTIPLY_ADD } else { MS_PER_GIGA_MULTIPLY_ADD };
+    dispatch.multiply_adds() as f64 / GIGA * rate
 }
 
 fn padded_size(size: UVec2) -> UVec2 {

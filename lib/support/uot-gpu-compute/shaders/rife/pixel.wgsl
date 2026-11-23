@@ -157,31 +157,73 @@ fn add_block_source(sums: ptr<function, array<f32, BLOCK_CHANNELS>>, x: u32, y: 
     }
 }
 
+// Adds one of the four frame pixels a block pixel resizes from (F.interpolate, bilinear) to its input, unless its
+// weight is zero.
+fn add_corner(sums: ptr<function, array<f32, BLOCK_CHANNELS>>, block_pixel: u32, corner: u32) {
+    let along_x = resize_taps(block_pixel % pixel.block_width, pixel.width, pixel.scale);
+    let along_y = resize_taps(block_pixel / pixel.block_width, pixel.height, pixel.scale);
+    let second_x = (corner & 1u) != 0u;
+    let second_y = (corner & 2u) != 0u;
+    let weight = select(1.0 - along_x.weight, along_x.weight, second_x)
+        * select(1.0 - along_y.weight, along_y.weight, second_y);
+    if (weight == 0.0) {
+        return;
+    }
+    add_block_source(sums, select(along_x.first, along_x.second, second_x),
+        select(along_y.first, along_y.second, second_y), weight);
+}
+
+// A block's input, one thread per block pixel and its corners in turn: block 4's, whose scale of 1 weighs one corner.
 @compute @workgroup_size(THREADS)
 fn block_input(@builtin(global_invocation_id) id: vec3<u32>) {
     let block_plane = pixel.block_width * pixel.block_height;
     if (id.x >= block_plane) {
         return;
     }
-    let bx = id.x % pixel.block_width;
-    let by = id.x / pixel.block_width;
-    let along_x = resize_taps(bx, pixel.width, pixel.scale);
-    let along_y = resize_taps(by, pixel.height, pixel.scale);
     var sums: array<f32, BLOCK_CHANNELS>;
     for (var corner = 0u; corner < CORNERS; corner++) {
-        let second_x = (corner & 1u) != 0u;
-        let second_y = (corner & 2u) != 0u;
-        let weight = select(1.0 - along_x.weight, along_x.weight, second_x)
-            * select(1.0 - along_y.weight, along_y.weight, second_y);
-        if (weight == 0.0) {
-            continue;
-        }
-        add_block_source(&sums, select(along_x.first, along_x.second, second_x),
-            select(along_y.first, along_y.second, second_y), weight);
+        add_corner(&sums, id.x, corner);
     }
     let channels = select(BLOCK_CHANNELS, FIRST_BLOCK_CHANNELS, pixel.first_block != 0u);
     for (var c = 0u; c < channels; c++) {
         block[c * block_plane + id.x] = sums[c];
+    }
+}
+
+// A block's input, one thread per corner of a block pixel: the blocks that downscale, where all four corners weigh and
+// a thread per block pixel walking them in turn leaves the GPU waiting on its loads (the coarse blocks have few
+// pixels). The four threads' sums meet in workgroup memory and are added in the corners' order, each thread writing
+// CORNER_OUTPUTS of the workgroup's channels by pixels (28 channels by 16 pixels: 7 each).
+const CORNER_PIXELS: u32 = THREADS / CORNERS;
+const CORNER_OUTPUTS: u32 = BLOCK_CHANNELS * CORNER_PIXELS / THREADS;
+var<workgroup> corner_sums: array<f32, BLOCK_CHANNELS * THREADS>;
+
+@compute @workgroup_size(THREADS)
+fn block_input_corners(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
+    let block_plane = pixel.block_width * pixel.block_height;
+    let first = group.x * CORNER_PIXELS;
+    let block_pixel = first + thread / CORNERS;
+    var sums: array<f32, BLOCK_CHANNELS>;
+    if (block_pixel < block_plane) {
+        add_corner(&sums, block_pixel, thread % CORNERS);
+    }
+    for (var c = 0u; c < BLOCK_CHANNELS; c++) {
+        corner_sums[c * THREADS + thread] = sums[c];
+    }
+    workgroupBarrier();
+    let channels = select(BLOCK_CHANNELS, FIRST_BLOCK_CHANNELS, pixel.first_block != 0u);
+    for (var output = 0u; output < CORNER_OUTPUTS; output++) {
+        let index = thread + output * THREADS;
+        let c = index / CORNER_PIXELS;
+        let at = index % CORNER_PIXELS;
+        if (c >= channels || first + at >= block_plane) {
+            continue;
+        }
+        var sum = 0.0;
+        for (var corner = 0u; corner < CORNERS; corner++) {
+            sum += corner_sums[c * THREADS + at * CORNERS + corner];
+        }
+        block[c * block_plane + first + at] = sum;
     }
 }
 

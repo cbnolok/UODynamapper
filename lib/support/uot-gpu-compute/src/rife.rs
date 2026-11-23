@@ -54,6 +54,9 @@ const HEAD_INPUT_CHANNELS: u32 = 3;
 const HEAD_CHANNELS: u32 = 16;
 const FEATURE_CHANNELS: u32 = 4;
 const HEAD_CONVS: usize = 3;
+/// The frame pixels a block that downscales reads for each pixel of its input, each read by a thread of its own
+/// (pixel.wgsl's block_input_corners). Matches CORNERS in pixel.wgsl.
+const RESIZE_CORNERS: u32 = 4;
 /// A 3x3 convolution of stride 2 halves each side; a transposed one doubles it.
 const STRIDE_2: u32 = 2;
 const CONV_TAPS: u32 = 9;
@@ -106,6 +109,9 @@ enum ConvTile {
 /// A layer whose tiles make fewer workgroups than this has its sum split into ranges (see conv.wgsl) until it makes
 /// about this many, each range keeping at least [`MIN_SPLIT_STEPS`] steps of the tile's `k` rows.
 const TARGET_WORKGROUPS: u32 = 96;
+/// The same on the matrix units, whose workgroups are of [`MATRIX_THREADS`]: as many threads as on the shader cores.
+/// Splitting further cost more in reductions than it gained (0.9 ms of them in one t at 576x512, against 0.12).
+const MATRIX_TARGET_WORKGROUPS: u32 = TARGET_WORKGROUPS * CONV_THREADS / MATRIX_THREADS;
 const MIN_SPLIT_STEPS: u32 = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -139,16 +145,19 @@ const CONV_VARIANTS: [(ConvKind, Epilogue); 5] = [
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PixelStep {
     BlockInput,
+    BlockInputCorners,
     Upsample,
     Merge,
 }
 
-const PIXEL_STEPS: [PixelStep; 3] = [PixelStep::BlockInput, PixelStep::Upsample, PixelStep::Merge];
+const PIXEL_STEPS: [PixelStep; 4] =
+    [PixelStep::BlockInput, PixelStep::BlockInputCorners, PixelStep::Upsample, PixelStep::Merge];
 
 impl PixelStep {
     fn entry_point(self) -> &'static str {
         match self {
             PixelStep::BlockInput => "block_input",
+            PixelStep::BlockInputCorners => "block_input_corners",
             PixelStep::Upsample => "upsample",
             PixelStep::Merge => "merge",
         }
@@ -449,6 +458,8 @@ pub struct RifeDispatch {
     bind_group: wgpu::BindGroup,
     workgroups: [u32; 3],
     multiply_adds: u64,
+    invocations: u64,
+    matrix_units: bool,
     name: String,
 }
 
@@ -462,6 +473,18 @@ impl RifeDispatch {
     /// The convolution's multiply-adds (zero for the per-pixel steps), as a measure of its cost.
     pub fn multiply_adds(&self) -> u64 {
         self.multiply_adds
+    }
+
+    /// The threads it runs: a measure of the cost of the per-pixel steps and the split sums' reductions, which have no
+    /// multiply-adds.
+    pub fn invocations(&self) -> u64 {
+        self.invocations
+    }
+
+    /// Whether its multiply-adds run on the matrix units ([`ConvUnits::Matrix`]): on those, but for the layers kept in
+    /// f32, as the Head's.
+    pub fn on_matrix_units(&self) -> bool {
+        self.matrix_units
     }
 
     pub fn workgroups(&self) -> [u32; 3] {
@@ -520,6 +543,8 @@ struct PendingDispatch {
     binding: Binding,
     workgroups: [u32; 3],
     multiply_adds: u64,
+    invocations: u64,
+    matrix_units: bool,
     name: String,
 }
 
@@ -548,15 +573,19 @@ impl Planner<'_> {
             (out_width, out_width * out_height, 1, CONV_TAPS)
         };
         let tile = self.model.tile(layer.kind, layer.epilogue, layer.out_channels, grid_pixels, layer.f32);
-        let (tile_m, tile_n, tile_k) = match tile {
-            ConvTile::ShaderCores(tile) => (tile.m, tile.n, tile.k),
-            ConvTile::Matrix { n_matrices } =>
-                (self.model.matrix_tile_m.expect("on the matrix units"), n_matrices * MATRIX_SIDE, MATRIX_TILE_K),
+        let (tile_m, tile_n, tile_k, tile_threads) = match tile {
+            ConvTile::ShaderCores(tile) => (tile.m, tile.n, tile.k, CONV_THREADS),
+            ConvTile::Matrix { n_matrices } => (self.model.matrix_tile_m.expect("on the matrix units"),
+                n_matrices * MATRIX_SIDE, MATRIX_TILE_K, MATRIX_THREADS),
         };
         let workgroups = [grid_pixels.div_ceil(tile_m), layer.out_channels.div_ceil(tile_n), phases];
         let steps = (layer.in_channels * taps).div_ceil(tile_k);
         let tiles = workgroups.iter().product::<u32>();
-        let wanted = if tiles >= TARGET_WORKGROUPS { 1 } else { TARGET_WORKGROUPS.div_ceil(tiles) };
+        let target = match tile {
+            ConvTile::ShaderCores(_) => TARGET_WORKGROUPS,
+            ConvTile::Matrix { .. } => MATRIX_TARGET_WORKGROUPS,
+        };
+        let wanted = if tiles >= target { 1 } else { target.div_ceil(tiles) };
         let split_steps = steps.div_ceil(wanted.min(steps / MIN_SPLIT_STEPS).max(1));
         let splits = steps.div_ceil(split_steps);
         let packed = &self.model.packed;
@@ -575,7 +604,9 @@ impl Planner<'_> {
         self.pending.push(PendingDispatch {
             pipeline: tiled.clone(), uniform: bytemuck::bytes_of(&uniform).to_vec(), binding: binding(),
             workgroups: [workgroups[0], workgroups[1], workgroups[2] * splits],
-            multiply_adds: outputs as u64 * (layer.in_channels * taps) as u64, name: layer.name.clone(),
+            multiply_adds: outputs as u64 * (layer.in_channels * taps) as u64,
+            invocations: (tiles * splits) as u64 * tile_threads as u64,
+            matrix_units: matches!(tile, ConvTile::Matrix { .. }), name: layer.name.clone(),
         });
         list.push(self.pending.len() - 1);
         if splits > 1 {
@@ -583,6 +614,7 @@ impl Planner<'_> {
             self.pending.push(PendingDispatch {
                 pipeline: reduce.clone(), uniform: bytemuck::bytes_of(&uniform).to_vec(), binding: binding(),
                 workgroups: [outputs.div_ceil(CONV_THREADS), 1, 1], multiply_adds: 0,
+                invocations: (outputs.div_ceil(CONV_THREADS) * CONV_THREADS) as u64, matrix_units: false,
                 name: format!("{} reduce", layer.name),
             });
             list.push(self.pending.len() - 1);
@@ -593,7 +625,8 @@ impl Planner<'_> {
     fn pixel(&mut self, step: PixelStep, uniform: PixelUniform, threads: u32, name: String) -> usize {
         self.pending.push(PendingDispatch {
             pipeline: self.model.pixel_pipeline(step).clone(), uniform: bytemuck::bytes_of(&uniform).to_vec(),
-            binding: Binding::Pixel, workgroups: [threads.div_ceil(PIXEL_THREADS), 1, 1], multiply_adds: 0, name,
+            binding: Binding::Pixel, workgroups: [threads.div_ceil(PIXEL_THREADS), 1, 1], multiply_adds: 0,
+            invocations: (threads.div_ceil(PIXEL_THREADS) * PIXEL_THREADS) as u64, matrix_units: false, name,
         });
         self.pending.len() - 1
     }
@@ -676,9 +709,15 @@ impl RifeWorkspace {
         for block in 0..RIFE_BLOCKS {
             let scale = BLOCK_SCALES[block];
             let block_size = (width / scale, height / scale);
+            // A block that downscales reads four frame pixels for each of its own, a thread each.
+            let (input_step, input_threads) = if scale > 1 {
+                (PixelStep::BlockInputCorners, RESIZE_CORNERS * block_size.0 * block_size.1)
+            } else {
+                (PixelStep::BlockInput, block_size.0 * block_size.1)
+            };
             for (slot, inputs) in block_inputs.iter_mut().enumerate() {
-                inputs[block] = planner.pixel(PixelStep::BlockInput, pixel_uniform(block, default_timestep(slot)),
-                    block_size.0 * block_size.1, format!("block{block} input"));
+                inputs[block] = planner.pixel(input_step, pixel_uniform(block, default_timestep(slot)), input_threads,
+                    format!("block{block} input"));
             }
             let channels = BLOCK_WIDTHS[block];
             let mut layers = Vec::new();
@@ -774,7 +813,8 @@ impl RifeWorkspace {
             };
             RifeDispatch {
                 pipeline: dispatch.pipeline, bind_group, workgroups: dispatch.workgroups,
-                multiply_adds: dispatch.multiply_adds, name: dispatch.name,
+                multiply_adds: dispatch.multiply_adds, invocations: dispatch.invocations,
+                matrix_units: dispatch.matrix_units, name: dispatch.name,
             }
         }).collect();
 
