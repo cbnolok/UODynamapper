@@ -5,7 +5,7 @@ use crate::logic::tasks::{
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, ComputeDevice, GumpsEcSharing, HueRamp,
-    StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
+    MobilePrescale, StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
 use crate::ui::layout::{card_title, draw_card_grid, page_heading, section_heading, CardGrid};
@@ -187,6 +187,7 @@ impl UddConvApp {
         );
         ui.add_enabled_ui(!is_busy, |ui| {
             draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_cc);
+            draw_prescale(ui, &mut self.settings.prescale_mobile_anim_cc);
         });
         if clicked { self.convert_mobile_anim_cc(); }
         if stop_clicked { self.request_cancel_conversion(); }
@@ -310,6 +311,7 @@ impl UddConvApp {
         );
         ui.add_enabled_ui(!is_busy, |ui| {
             draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_ec);
+            draw_prescale(ui, &mut self.settings.prescale_mobile_anim_ec);
         });
         if clicked { self.convert_mobile_anim_ec(); }
         if stop_clicked { self.request_cancel_conversion(); }
@@ -719,6 +721,38 @@ keeps the strides of the clips whose frames did not change and takes the others 
 (MobileStrides.tsv) where their client frames were measured before, every clip of an unmodified client; Changed \
 clips measures the clips still without one, All clips every clip again. Stop cancels the measurement and leaves the \
 package as packed.";
+
+const PRESCALE_CELL_WIDTH: f32 = 300.0;
+/// The largest stored frame side the prescale field offers first, and its range.
+const PRESCALE_DEFAULT_MAX_SIDE: u16 = 64;
+const PRESCALE_MAX_SIDE_RANGE: std::ops::RangeInclusive<u16> = 1..=512;
+const PRESCALE_TOOLTIP: &str = "Not recommended: also pack 2x frames made ahead of time beside the frames, which \
+Dynamapper then draws instead of upscaling them at run time. Dynamapper makes the same 2x frames at run time; packed, \
+they grow the package a lot (the Classic bodies of at most 48 pixels a side add 127 % to the Classic package). On, the bodies MobilePrescale.kdl lists as \
+always; with Max side, also each body whose largest frame is at most that many pixels wide and high (the smallest \
+Classic bodies), but those listed as never.";
+
+/// The prescale step of a mobile animation card: off by default, with its warning.
+fn draw_prescale(ui: &mut egui::Ui, prescale: &mut MobilePrescale) {
+    draw_control_cell(ui, "Prescale 2x (not recommended)", PRESCALE_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut prescale.enabled, "On").on_hover_text(PRESCALE_TOOLTIP);
+            ui.add_enabled_ui(prescale.enabled, |ui| {
+                let mut by_size = prescale.max_side.is_some();
+                if ui.checkbox(&mut by_size, "Max side").on_hover_text(PRESCALE_TOOLTIP).changed() {
+                    prescale.max_side = by_size.then_some(PRESCALE_DEFAULT_MAX_SIDE);
+                }
+                if let Some(max_side) = &mut prescale.max_side {
+                    ui.add(egui::DragValue::new(max_side).range(PRESCALE_MAX_SIDE_RANGE).suffix(" px"));
+                }
+            });
+        });
+        if prescale.enabled {
+            ui.label(egui::RichText::new("Grows the package; the run-time upscale makes the same frames.")
+                .size(11.0).color(NOTICE_COLOUR));
+        }
+    });
+}
 
 /// The stride measurement step of a mobile animation card.
 fn draw_stride_measurement(ui: &mut egui::Ui, measurement: &mut StrideMeasurement) {

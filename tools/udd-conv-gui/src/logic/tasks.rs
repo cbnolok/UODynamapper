@@ -79,9 +79,10 @@ use udd_conv_cli::{
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
 use udd_conv::conversion_tables::{
-    EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, MOBILE_FRAME_FILTERS_KDL, MOBILE_STRIDES_TSV,
-    TERRAIN_TRANSCODE_KDL,
+    EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, MOBILE_FRAME_FILTERS_KDL, MOBILE_PRESCALE_KDL,
+    MOBILE_STRIDES_TSV, TERRAIN_TRANSCODE_KDL,
 };
+use udd_conv::animation::mobile_prescale::PrescaleOptions;
 use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
 use udd_conv::animation::mobile_strides::{
@@ -89,7 +90,7 @@ use udd_conv::animation::mobile_strides::{
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, GumpsEcSharing, LogLevel,
-    LogMessage, StrideMeasurement, TextureOptimization,
+    LogMessage, MobilePrescale, StrideMeasurement, TextureOptimization,
 };
 
 struct ConvertingFlagReset {
@@ -344,6 +345,18 @@ fn stride_cache_table(settings: &AppSettings) -> eyre::Result<PathBuf> {
     let given = settings.dynamapper_routing_dir.as_deref().map(|dir| MOBILE_STRIDES_TSV.in_dir(dir))
         .filter(|path| path.is_file());
     bundled_files::resolve(given.as_deref(), MOBILE_STRIDES_TSV)
+}
+
+/// The prescale options of a mobile animation job: MobilePrescale.kdl from the routing folder, as the other tables.
+fn prescale_options(settings: &AppSettings, prescale: MobilePrescale) -> eyre::Result<PrescaleOptions> {
+    if !prescale.enabled {
+        return Ok(PrescaleOptions::default());
+    }
+    Ok(PrescaleOptions {
+        enabled: true,
+        max_side: prescale.max_side,
+        table_path: Some(conversion_table(settings, MOBILE_PRESCALE_KDL)?),
+    })
 }
 
 fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
@@ -1129,6 +1142,7 @@ fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetPr
             upscale_profile,
             frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
             stride_cache_path: Some(stride_cache_table(settings)?),
+            prescale: prescale_options(settings, settings.prescale_mobile_anim_cc)?,
         },
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
         |build_progress| progress.build_progress(build_progress),
@@ -1188,6 +1202,7 @@ fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetPr
             allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
             frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
             stride_cache_path: Some(stride_cache_table(settings)?),
+            prescale: prescale_options(settings, settings.prescale_mobile_anim_ec)?,
         },
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
         |build_progress| progress.build_progress(build_progress),

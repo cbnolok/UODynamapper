@@ -28,6 +28,7 @@ use uocf::enhanced::mobile_body::{MobileBodyDefinition, MobileBodyMap};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use super::animation_sequences::{load_animation_sequences, move_actions};
+use super::mobile_prescale::{prescale_package, PrescaleEncoding, PrescaleOptions};
 use super::frame_filter_table::{load_mobile_frame_filters, FramePackage, ResolvedFrameFilters};
 use super::frame_filters::{apply_frame_filter, FrameFilter};
 use crate::atlas::bc_encode_device::on_bc7_devices;
@@ -196,6 +197,8 @@ pub struct MobileAnimEcAtlasOptions {
     /// The stride cache (MobileStrides.tsv) to fill the clips from; when unset, the copy shipped with the tools
     /// ([`crate::conversion_tables::MOBILE_STRIDES_TSV`]).
     pub stride_cache_path: Option<PathBuf>,
+    /// The 2x frames made ahead of time and packed beside the frames ([`super::mobile_prescale`]); off by default.
+    pub prescale: PrescaleOptions,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -214,6 +217,7 @@ impl Default for MobileAnimEcAtlasOptions {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: PrescaleOptions::default(),
         }
     }
 }
@@ -558,6 +562,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     finish_streaming_package_with_progress(package, &mut package_progress)?;
     super::mobile_strides::keep_repacked_strides(out_file, &client_dir,
         |path| udd_assets::MobileAnimEcPackage::load(path), &previous_strides, &stride_cache)?;
+    prescale_package(out_file, out_file, &options.prescale, &PrescaleEncoding { compression: options.compression,
+        bc7_rdo_lambda: options.bc7_rdo_lambda, bc7_rdo_lookback_blocks: options.bc7_rdo_lookback_blocks }, false)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "EC mobile animation package build and write completed in {:.3}s",
@@ -3760,6 +3766,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -3789,6 +3796,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 5, 5)], &options).unwrap();
@@ -3823,6 +3831,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![sparse_frame(42, 0)], &options).unwrap();
@@ -3853,6 +3862,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
@@ -4255,6 +4265,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut frames_by_body = sample_sequence_frames();
         frames_by_body.insert(NO_SEQUENCE_BODY, vec![source(0, 0, 1)]);
@@ -4383,6 +4394,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let (_, placements) = pack_frames_into_pages(source_frames, &options).unwrap();
         let layout = build_animation_layout(
@@ -4527,6 +4539,7 @@ mod tests {
             allow_missing_metadata: false,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let (pages, placements) = pack_frames_into_pages(vec![half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
         let page = &pages[0];

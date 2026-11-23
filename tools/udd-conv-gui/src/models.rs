@@ -40,6 +40,16 @@ pub enum StrideMeasurement {
     Full,
 }
 
+/// Whether a mobile animation job also packs 2x frames made ahead of time (`--prescale`, `--prescale-max-side`): off
+/// by default and not recommended, the renderer making the same 2x frames at run time. On, the bodies
+/// MobilePrescale.kdl lists as "always", and with `max_side` each body whose largest stored frame is at most that
+/// many pixels wide and high, but those listed as "never".
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct MobilePrescale {
+    pub enabled: bool,
+    pub max_side: Option<u16>,
+}
+
 /// What the Enhanced gumps job does with the Classic gumps Interface.uop repeats.
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GumpsEcSharing {
@@ -232,6 +242,9 @@ pub struct AppSettings {
     /// The stride measurement after packing each mobile animation package.
     pub measure_strides_mobile_anim_cc: StrideMeasurement,
     pub measure_strides_mobile_anim_ec: StrideMeasurement,
+    /// The 2x frames made ahead of time of each mobile animation package.
+    pub prescale_mobile_anim_cc: MobilePrescale,
+    pub prescale_mobile_anim_ec: MobilePrescale,
 }
 
 impl Default for AppSettings {
@@ -314,6 +327,8 @@ impl Default for AppSettings {
             validate_after_packing: false,
             measure_strides_mobile_anim_cc: StrideMeasurement::Off,
             measure_strides_mobile_anim_ec: StrideMeasurement::Off,
+            prescale_mobile_anim_cc: MobilePrescale::default(),
+            prescale_mobile_anim_ec: MobilePrescale::default(),
         }
     }
 }

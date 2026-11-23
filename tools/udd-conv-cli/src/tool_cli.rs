@@ -36,6 +36,7 @@ use crate::extract;
 use crate::package_edit;
 use crate::package_info;
 use crate::package_validate;
+use crate::prescale_cli;
 use crate::strides_cli;
 
 /// Inspect and edit UODynamapper package files.
@@ -129,6 +130,10 @@ enum Commands {
         #[command(subcommand)]
         command: strides_cli::StridesCommand,
     },
+    /// Packs 2x frames made ahead of time into a mobile_anim_cc.uddp or mobile_anim_ec.uddp, beside its frames,
+    /// replacing those it had. Not recommended: the renderer makes the same 2x frames at run time, and the package
+    /// grows by about 1.3 times the size of the frames chosen; meant for the smallest Classic bodies alone.
+    PrescaleMobileAnims(prescale_cli::PrescaleToolArgs),
     /// Compare two packages or two metadata CSV files.
     Diff {
         left: PathBuf,
@@ -329,6 +334,7 @@ where
         Commands::Diff { left, right, kind } => diff_paths(&left, &right, kind)?,
         Commands::Validate { paths } => package_validate::run_validate(&paths)?,
         Commands::Strides { command } => strides_cli::run(command)?,
+        Commands::PrescaleMobileAnims(args) => prescale_cli::run_tool(args)?,
     }
 
     Ok(())

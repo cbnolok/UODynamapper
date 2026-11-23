@@ -11,6 +11,7 @@ pub use uddp::{
     BuildProgressFile,
     BuildProgressPhase,
     Codec,
+    CompressedEntry,
     CompressionSummary,
     CompressionFlag,
     StripsWorth,

@@ -28,6 +28,9 @@ pub const EC_MOBILE_ANIMATIONS_KDL: BundledFile = conversion_table("EcMobileAnim
 /// The cleanup filter of each body's mobile animation frames (`crate::animation::frame_filter_table`).
 pub const MOBILE_FRAME_FILTERS_KDL: BundledFile =
     conversion_table(crate::animation::frame_filter_table::MOBILE_FRAME_FILTERS_FILE_NAME);
+/// The bodies whose mobile animation frames the packers upscale to 2x ahead of time (`crate::animation::prescale_table`).
+pub const MOBILE_PRESCALE_KDL: BundledFile =
+    conversion_table(crate::animation::prescale_table::MOBILE_PRESCALE_FILE_NAME);
 /// Reviewed corrections to the Enhanced tile data of `tilemeta.uddp` (`udd_assets::tilemeta_overrides`).
 pub const TILEMETA_OVERRIDES_KDL: BundledFile =
     conversion_table(udd_assets::tilemeta_overrides::TILEMETA_OVERRIDES_FILE_NAME);
@@ -39,8 +42,8 @@ pub const MOBILE_STRIDES_TSV: BundledFile =
 
 /// Every table above, for the checks that the source checkout holds them.
 pub const ALL_CONVERSION_TABLES: &[BundledFile] = &[TERRAIN_TRANSCODE_KDL, EC_TERRAIN_OVERRIDES_KDL,
-    EC_SURFACE_OVERRIDES_KDL, EC_MOBILE_ANIMATIONS_KDL, MOBILE_FRAME_FILTERS_KDL, TILEMETA_OVERRIDES_KDL,
-    MOBILE_STRIDES_TSV];
+    EC_SURFACE_OVERRIDES_KDL, EC_MOBILE_ANIMATIONS_KDL, MOBILE_FRAME_FILTERS_KDL, MOBILE_PRESCALE_KDL,
+    TILEMETA_OVERRIDES_KDL, MOBILE_STRIDES_TSV];
 
 #[cfg(test)]
 mod tests {

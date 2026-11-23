@@ -78,6 +78,32 @@ impl BuiltFile {
     }
 }
 
+/// A path-addressed entry for [`UddpBuilder::write_with_compressed_entries`], compressed by its own
+/// [`CompressionFlag`] as `add_file` compresses it, its raw bytes dropped: a caller making many entries holds only
+/// their stored bytes until the write.
+#[derive(Debug, Clone)]
+pub struct CompressedEntry(BuiltFile);
+
+impl CompressedEntry {
+    /// Compresses `entry`. A flag that needs a type dictionary is refused, since the package written to keeps the
+    /// dictionaries of its base, trained without the new entries.
+    pub fn new(entry: AddOwnedFileRequest) -> Result<Self, BuildError> {
+        if entry.compression == CompressionFlag::ZstdDict {
+            return Err(BuildError::MissingDictionaryForType(entry.data_type));
+        }
+        let mut next_dense_id = 0;
+        let pending = make_pending_file(LookupMode::VirtualPathHash, &mut next_dense_id, entry.data_type,
+            entry.compression, entry.width, entry.height, entry.virtual_path.as_deref(), entry.path_hash64, entry.id,
+            entry.data)?;
+        compress_file_owned(pending, &HashMap::new()).map(Self)
+    }
+
+    /// The bytes the entry takes stored.
+    pub fn stored_len(&self) -> usize {
+        self.0.encoded_payload.len()
+    }
+}
+
 /// Key, encoding and sizes of one stored payload: what the package head needs to locate it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FileLayout {
@@ -444,24 +470,12 @@ impl UddpBuilder {
         Self::write_merged(base, &built, |_| false, path)
     }
 
-    /// [`Self::write_with_entries`] with each entry compressed by its own [`CompressionFlag`], as `add_file` compresses
-    /// it, in parallel, and without the entries of `base` whose path hash `dropped` names: what a package rewritten
-    /// with a section of its own replaced keeps. A flag that needs a type dictionary is refused, since `base`'s
-    /// dictionaries were trained without the new entries.
-    pub fn write_with_compressed_entries(base: &UddpReader, entries: Vec<AddOwnedFileRequest>,
+    /// [`Self::write_with_entries`] with entries compressed ahead ([`CompressedEntry`]) and without the entries of
+    /// `base` whose path hash `dropped` names: what a package rewritten with a section of its own replaced keeps.
+    pub fn write_with_compressed_entries(base: &UddpReader, entries: &[CompressedEntry],
         dropped: impl Fn(u64) -> bool, path: impl AsRef<Path>) -> Result<(), BuildError> {
-        let mut next_dense_id = 0;
-        let pending = entries.into_iter().map(|entry| {
-            if entry.compression == CompressionFlag::ZstdDict {
-                return Err(BuildError::MissingDictionaryForType(entry.data_type));
-            }
-            make_pending_file(LookupMode::VirtualPathHash, &mut next_dense_id, entry.data_type, entry.compression,
-                entry.width, entry.height, entry.virtual_path.as_deref(), entry.path_hash64, entry.id, entry.data)
-        }).collect::<Result<Vec<_>, BuildError>>()?;
-        let no_dictionaries = HashMap::new();
-        let built = pending.par_iter().map(|file| compress_file(file, &no_dictionaries))
-            .collect::<Result<Vec<_>, BuildError>>()?;
-        let built = built.iter().map(|file| (file.layout(), file.encoded_payload.as_slice())).collect::<Vec<_>>();
+        let built = entries.iter().map(|entry| (entry.0.layout(), entry.0.encoded_payload.as_slice()))
+            .collect::<Vec<_>>();
         Self::write_merged(base, &built, dropped, path)
     }
 

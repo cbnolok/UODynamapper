@@ -32,6 +32,7 @@ use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::utils::path::find_file_ignoring_case;
 
 use super::animation_sequences::{load_animation_sequences, move_actions};
+use super::mobile_prescale::{prescale_package, PrescaleEncoding, PrescaleOptions};
 use super::frame_filter_table::{load_mobile_frame_filters, FramePackage, ResolvedFrameFilters};
 use super::stride_cache::load_packer_stride_cache;
 use super::frame_filters::{apply_frame_filter, FrameFilter};
@@ -124,6 +125,8 @@ pub struct MobileAnimCcAtlasOptions {
     /// The stride cache (MobileStrides.tsv) to fill the clips from; when unset, the copy shipped with the tools
     /// ([`crate::conversion_tables::MOBILE_STRIDES_TSV`]).
     pub stride_cache_path: Option<PathBuf>,
+    /// The 2x frames made ahead of time and packed beside the frames ([`super::mobile_prescale`]); off by default.
+    pub prescale: PrescaleOptions,
 }
 
 impl Default for MobileAnimCcAtlasOptions {
@@ -140,6 +143,7 @@ impl Default for MobileAnimCcAtlasOptions {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: PrescaleOptions::default(),
         }
     }
 }
@@ -470,6 +474,8 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
     super::mobile_strides::keep_repacked_strides(out_file, &client_dir,
         |path| udd_assets::MobileAnimCcPackage::load(path), &previous_strides, &stride_cache)?;
+    prescale_package(out_file, out_file, &options.prescale, &PrescaleEncoding { compression: options.compression,
+        bc7_rdo_lambda: options.bc7_rdo_lambda, bc7_rdo_lookback_blocks: options.bc7_rdo_lookback_blocks }, false)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "CC mobile animation package build and write completed in {:.3}s",
@@ -3192,6 +3198,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let pages: Vec<BuiltMobileAnimPage> = (0..PARALLEL_TEST_PAGES)
             .map(|page_index| BuiltMobileAnimPage {
@@ -3377,6 +3384,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut records = vec![
             MobileAnimCcFrameRecord {
@@ -3429,6 +3437,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3473,6 +3482,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3512,6 +3522,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3547,6 +3558,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3584,6 +3596,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -3667,6 +3680,89 @@ mod tests {
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
     }
 
+    /// A package of one UOP body's one frame ([`sparse_frame`], stored cropped to its opaque texels), written to `path`.
+    fn write_one_frame_package(path: &Path) {
+        let options = MobileAnimCcAtlasOptions {
+            atlas_width: 64,
+            atlas_height: 64,
+            gutter: 0,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            ..Default::default()
+        };
+        let mut frame_records = vec![MobileAnimCcFrameRecord {
+            animation_index: 0, frame_index: 0, page_index: MISSING_PAGE_INDEX,
+            page_frame_index: MISSING_PAGE_FRAME_INDEX, x: 0, y: 0, width: 6, height: 6, center_x: 2, center_y: 3,
+        }];
+        let pages = pack_frames_into_pages(vec![sparse_frame(0)], &mut frame_records, &options).unwrap();
+        let animations = vec![MobileAnimCcAnimationRecord {
+            body_id: 1, action_id: 2, direction: 3, file_index: 0, source_index: 13, frame_start: 0, frame_count: 1,
+            flags: MOBILE_ANIM_CC_FLAG_UOP_SOURCE, fps: 0.0,
+        }];
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
+        for (path, data, data_type) in [
+            (PAGE_MANIFEST_ENTRY_PATH, serialize_page_manifest(&pages, &options).unwrap(), DataType::Metadata),
+            (ANIMATION_MANIFEST_ENTRY_PATH, serialize_animation_manifest(&animations).unwrap(), DataType::Metadata),
+            (FRAME_MANIFEST_ENTRY_PATH, serialize_frame_manifest(&frame_records).unwrap(), DataType::Metadata),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, serialize_body_resolve_manifest(&[]).unwrap(), DataType::Metadata),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, serialize_body_type_manifest(&[]).unwrap(), DataType::Metadata),
+            (page_path.as_str(), pages[0].pixels.clone(), DataType::Texture),
+        ] {
+            builder.add_file(AddFileRequest { data_type: data_type as u8, compression: CompressionFlag::None,
+                width: 0, height: 0, virtual_path: Some(path), path_hash64: None, id: None, data: &data }).unwrap();
+        }
+        std::fs::write(path, builder.build().unwrap()).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GPU adapter; run explicitly for prescale changes"]
+    fn prescaled_frames_are_the_upscale_of_the_stored_frames_and_go_when_none_is_chosen() {
+        use udd_assets::animation::mobile_strides::{MobileAnimClips, StoredFramePixels};
+        use uot_gpu_compute::frame_upscales::{upscale_workspace_canvas, FrameUpscaler};
+        let dir = temp_dir("prescale");
+        let path = dir.join("mobile_anim_cc.uddp");
+        write_one_frame_package(&path);
+        let (width, height) = {
+            let package = MobileAnimCcPackage::load(&path).unwrap();
+            (package.frames()[0].width, package.frames()[0].height)
+        };
+        let side = width.max(height);
+        let encoding = PrescaleEncoding { compression: CompressionFlag::ZstdNoDict, bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS };
+        let chosen = PrescaleOptions { enabled: true, max_side: Some(side), table_path: None };
+        let summary = prescale_package(&path, &path, &chosen, &encoding, true).unwrap();
+        assert_eq!((summary.frame_sets, summary.frames, summary.pages), (1, 1, 1));
+        assert_eq!(summary.comparison.unwrap().canvas_differing, 0, "one frame: its canvas is its clip's");
+
+        let package = MobileAnimCcPackage::load(&path).unwrap();
+        let stored = package.read_frame_rgba(&package.frames()[0]).unwrap();
+        let frame = uot_gpu_compute::strides::StrideFrame { width, height, anchor_x: 0, anchor_y: 0, rgba: &stored };
+        let canvas = upscale_workspace_canvas(u32::from(width), u32::from(height));
+        let expected = FrameUpscaler::new(u32::from(side)).unwrap().upscale_on(&frame, true, canvas).unwrap();
+        assert_eq!(package.read_upscaled_frame_rgba(0).unwrap().unwrap(), expected.rgba);
+        // The server direction drawing the stored one unmirrored.
+        let direction = (0..u8::MAX).find(|&direction| {
+            package.stored_clip(1, 2, direction).unwrap().is_some_and(|clip| !clip.mirrored)
+        }).expect("a direction draws the stored one");
+        let clip = package.upscaled_stored_clip(1, 2, direction).unwrap().expect("the clip has its 2x frames");
+        let one_x = package.stored_clip(1, 2, direction).unwrap().unwrap();
+        assert_eq!((u32::from(clip.frames[0].width), u32::from(clip.frames[0].height)),
+            (expected.width, expected.height));
+        assert_eq!(clip.frames[0].anchor_x, (one_x.frames[0].anchor_x + 2) * 2);
+        assert!(matches!(&clip.frames[0].pixels, StoredFramePixels::Rgba8(pixels) if *pixels == expected.rgba));
+        drop(package);
+
+        let none = PrescaleOptions { enabled: true, max_side: Some(side - 1), table_path: None };
+        let summary = prescale_package(&path, &path, &none, &encoding, false).unwrap();
+        assert_eq!(summary.frames, 0);
+        let package = MobileAnimCcPackage::load(&path).unwrap();
+        assert!(package.upscaled_frames().is_none());
+        assert!(!package.has_upscaled_clip(1, 2, direction));
+        drop(package);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn streaming_packer_writes_package_pages_without_retaining_page_pixels() {
         let options = MobileAnimCcAtlasOptions {
@@ -3681,6 +3777,7 @@ mod tests {
             upscale_profile: None,
             frame_filters_path: None,
             stride_cache_path: None,
+            prescale: Default::default(),
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,

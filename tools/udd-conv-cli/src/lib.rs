@@ -4,6 +4,7 @@ pub mod pack_cli;
 pub mod package_edit;
 pub mod package_info;
 pub mod package_validate;
+pub mod prescale_cli;
 pub mod strides_cli;
 pub mod tool_cli;
 pub mod upscale_profile_config;

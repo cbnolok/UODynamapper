@@ -940,8 +940,9 @@ fn a_package_written_with_compressed_entries_drops_the_named_and_compresses_the_
     let dir = streaming_test_dir("write-with-compressed-entries");
     let path = dir.join("written.uddp");
     let dropped = xxh64_virtual_path(DROPPED_PATH);
-    UddpBuilder::write_with_compressed_entries(&base,
-        vec![request(ADDED_PATH, CompressionFlag::ZstdNoDict, added.clone())], |hash| hash == dropped, &path).unwrap();
+    let entry = CompressedEntry::new(request(ADDED_PATH, CompressionFlag::ZstdNoDict, added.clone())).unwrap();
+    assert!(entry.stored_len() < added.len(), "compressed");
+    UddpBuilder::write_with_compressed_entries(&base, &[entry], |hash| hash == dropped, &path).unwrap();
     let written = UddpReader::load(&path).unwrap();
     assert_eq!(written.computed_package_hash64(), written.stored_package_hash64());
     assert_eq!(written.records().len(), 2);
@@ -950,9 +951,8 @@ fn a_package_written_with_compressed_entries_drops_the_named_and_compresses_the_
     let new = written.find_by_path_hash(xxh64_virtual_path(ADDED_PATH)).unwrap();
     assert!((new.stored_size as usize) < added.len(), "compressed");
     assert_eq!(written.read_file_by_path_hash(xxh64_virtual_path(ADDED_PATH)).unwrap(), added);
-    let refused = UddpBuilder::write_with_compressed_entries(&base,
-        vec![request(ADDED_PATH, CompressionFlag::ZstdDict, added)], |_| false, dir.join("refused.uddp"));
-    assert!(refused.is_err(), "a dictionary flag is refused");
+    assert!(CompressedEntry::new(request(ADDED_PATH, CompressionFlag::ZstdDict, added)).is_err(),
+        "a dictionary flag is refused");
     drop(written);
     std::fs::remove_dir_all(&dir).unwrap();
 }

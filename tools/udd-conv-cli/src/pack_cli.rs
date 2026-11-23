@@ -1067,6 +1067,8 @@ enum Commands {
         strides_from: Option<PathBuf>,
         #[arg(long = "stride-cache", help = STRIDE_CACHE_HELP)]
         stride_cache: Option<PathBuf>,
+        #[command(flatten)]
+        prescale: crate::prescale_cli::PrescaleArgs,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
@@ -1107,6 +1109,8 @@ enum Commands {
         strides_from: Option<PathBuf>,
         #[arg(long = "stride-cache", help = STRIDE_CACHE_HELP)]
         stride_cache: Option<PathBuf>,
+        #[command(flatten)]
+        prescale: crate::prescale_cli::PrescaleArgs,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
     /// art and land pages are lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too. Each holds its Kingdom
@@ -1749,6 +1753,7 @@ where
             frame_filters_kdl,
             strides_from,
             stride_cache,
+            prescale,
         } => {
             // The Classic package holds only the Classic client's animations, never the Enhanced folder's.
             let paths = collect_cc_source_dirs(&source_dir_args)?;
@@ -1778,6 +1783,7 @@ where
                     upscale_profile,
                     frame_filters_path: frame_filters_kdl,
                     stride_cache_path: stride_cache,
+                    prescale: prescale.into(),
                 },
             )?;
             if let Some(strides_from) = strides_from {
@@ -1828,6 +1834,7 @@ where
             upscale_profile,
             strides_from,
             stride_cache,
+            prescale,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
@@ -1858,6 +1865,7 @@ where
                     metadata_path: Some(resolve_ec_mobile_animations_kdl(ec_mobile_animations_kdl, tables)?),
                     allow_missing_metadata: false,
                     stride_cache_path: stride_cache,
+                    prescale: prescale.into(),
                 },
             )?;
             if let Some(strides_from) = strides_from {

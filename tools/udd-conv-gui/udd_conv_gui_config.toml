@@ -84,3 +84,9 @@ filter = "FsrEasu2x"
 [upscale_tex_land_ec_512]
 target_size = 512
 filter = "None"
+
+[prescale_mobile_anim_cc]
+enabled = false
+
+[prescale_mobile_anim_ec]
+enabled = false

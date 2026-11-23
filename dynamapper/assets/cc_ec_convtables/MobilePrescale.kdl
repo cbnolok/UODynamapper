@@ -1,0 +1,27 @@
+// The bodies whose mobile animation frames the packers upscale to 2x ahead of time, when asked to (udd-cli
+// pack-mobile-anims and pack-ec-mobile-anims with --prescale or --prescale-max-side, the converter GUI's "Prescale"
+// option, or udd-cli tool prescale-mobile-anims on a package already packed). Off by default, and not recommended:
+// Dynamapper makes the same 2x frames at run time (Preferences, Mobile upscale) from the 1x frames, which the package
+// keeps; the 2x frames packed beside them take 4 times the texels and more for their border, so the package grows a
+// lot (the Classic bodies of at most 48 pixels a side already add 127 % to the Classic package), and a
+// prescale suits only the smallest bodies, whose run-time upscale would show for a moment on screen. The renderer
+// draws a body's packed 2x frames at once in place of its run-time upscale, under the same mode and magnification
+// rules (Off shows 1x; Balanced's `upscale="never"` in Upscale.kdl still keeps the body at 1x); RIFE in-betweens are
+// still made from the 1x frames and upscaled at run time. A change here needs a repack, or a run of the tool, of the
+// package it names.
+//
+// Syntax (KDL, read strictly: an unknown node, property or value is an error naming its line):
+//
+//   body 12 package="cc" prescale="always"   // one body of one package, at most once per package
+//
+// - package: "cc" (mobile_anim_cc.uddp, the Classic frames) or "ec" (mobile_anim_ec.uddp, the Enhanced frames).
+// - body: the in-game (server) body id. The packer follows it to the stored frames the client draws for it, as
+//   MobileFrameFilters.kdl does, and upscales those frames, so every body sharing them gets them at 2x. Two bodies
+//   sharing their frames must ask for the same choice, else packing fails. A body the package has no frames for is a
+//   warning.
+// - prescale:
+//   - "always": the body's frames at 2x whatever their size (the largest upscale in tiles, as at run time).
+//   - "never": the body stays at 1x in the package even when the size rule (--prescale-max-side <pixels>: each body
+//     whose largest frame is at most that many pixels wide and high) would choose it.
+//
+// No body is listed: with --prescale-max-side alone, the size rule chooses.
