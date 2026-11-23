@@ -1,0 +1,341 @@
+diff --git a/lib/support/uot-gpu-compute/shaders/block_encode/bc7.wgsl b/lib/support/uot-gpu-compute/shaders/block_encode/bc7.wgsl
+index 81ebf29e..ff2c78c6 100644
+--- a/lib/support/uot-gpu-compute/shaders/block_encode/bc7.wgsl
++++ b/lib/support/uot-gpu-compute/shaders/block_encode/bc7.wgsl
+@@ -35,6 +35,16 @@
+ //   off its blocks. Its modes 6 and 7 keep their p-bits 1, so its alpha decodes 255, as the CPU's mode 6 does,
+ //   rather than 254 (252 in mode 7) where a p-bit of 0 fits the colour better.
+ //
++// And with the alpha encoded, the colour of a texel of alpha 0 is "don't care" (2026-11-23): no renderer tap, SPAN
++// or RIFE shows it, so it costs the block's other texels nothing (`colour_care`, set in `compress_bc7`):
++//
++// - A block whose every alpha is 0 is the solid block of transparent black.
++// - In a block with alpha 0 and other alphas, the texels of alpha 0 take the mean colour of the others, so the
++//   endpoints' first fit (`block_segment`) does not see them in colour; their colour counts in neither the error, the
++//   choice of their indices (`block_quant`: alpha alone, or index 0 where a mode's indices hold no alpha) nor the
++//   least-squares refinement (`opt_endpoints`). Their alpha counts as before. Modes 4 and 5 rotating a colour channel
++//   into the scalar plane (Basic and Slow) still count that channel's mean value there.
++//
+ // Every other block is the crate's byte for byte (block_encode/tests.rs checks it).
+ //
+ // block_encode.rs compiles this kernel without bounds checks (twice as fast), so every index must stay in range by
+@@ -83,6 +93,9 @@ struct Mode45Parameters {
+ 
+ // Whether every alpha of the block is 255 with the alpha encoded (see the top).
+ var<private> opaque_block: bool;
++// The texels whose colour counts, one bit each (texel k at bit k): all but those of alpha 0 with the alpha encoded
++// (see the top), every texel otherwise.
++var<private> colour_care: u32;
+ 
+ // The colour and alpha weights of the CPU's solid block: every weight 1, the anchor's one bit included.
+ const SOLID_WEIGHTS = 0x2aaaaaabu;
+@@ -97,6 +110,10 @@ const PARTITIONS = 64u;
+ const PARTITION_TABLE_MASK = 127u;
+ // The largest value of a channel byte.
+ const CHANNEL_MAX = 255.0;
++// Every texel of a block, as a `colour_care` mask.
++const ALL_TEXELS = 0xFFFFu;
++// The channel of a block that holds alpha.
++const ALPHA_CHANNEL = 3u;
+ 
+ // The channels encoded: 4 with alpha, 3 opaque (the settings' `channels`), never more than a block holds.
+ fn settings_channels() -> u32 {
+@@ -567,7 +584,14 @@ fn ep_quant_dequant(qep: ptr<function, array<i32, 24>>, ep: ptr<function, array<
+     ep_dequant(ep, qep, mode);
+ }
+ 
+-fn block_quant(qblock: ptr<function, vec2<u32>>, block: ptr<function, array<f32, 64>>, bits: u32, ep: ptr<function, array<f32, 24>>, pattern: u32, channels: u32) -> f32 {
++// Whether texel k's colour counts (see the top).
++fn colour_counts(k: u32) -> bool {
++    return ((colour_care >> k) & 1u) != 0u;
++}
++
++// The indices and their error. `alpha_channel` is the channel of `block` that holds alpha, none if not below
++// `channels`: of a texel of alpha 0, it alone counts (see the top).
++fn block_quant(qblock: ptr<function, vec2<u32>>, block: ptr<function, array<f32, 64>>, bits: u32, ep: ptr<function, array<f32, 24>>, pattern: u32, channels: u32, alpha_channel: u32) -> f32 {
+     var total_err = 0.0;
+     let levels = 1u << bits;
+ 
+@@ -578,17 +602,26 @@ fn block_quant(qblock: ptr<function, vec2<u32>>, block: ptr<function, array<f32,
+     for (var k = 0u; k < 16u; k++) {
+         let j = pattern_shifted & 3u;
+         pattern_shifted = pattern_shifted >> 2u;
++        let counted = colour_counts(k);
++        // Each channel's weight: 1 where it counts, 0 for the colour of a texel of alpha 0. A weight of 1 leaves the
++        // arithmetic as it was, bit for bit.
++        let colour_weight = select(0.0, 1.0, counted);
+ 
+         var proj = 0.0;
+         var div = 0.0;
+         for (var p = 0u; p < channels; p++) {
++            let weight = select(colour_weight, 1.0, p == alpha_channel);
+             let ep_a = (*ep)[8u * j + 0u + p];
+             let ep_b = (*ep)[8u * j + 4u + p];
+-            proj += ((*block)[k + p * 16u] - ep_a) * (ep_b - ep_a);
+-            div += sq(ep_b - ep_a);
++            proj += (weight * ((*block)[k + p * 16u] - ep_a)) * (ep_b - ep_a);
++            div += sq(weight * (ep_b - ep_a));
+         }
+ 
+         proj = proj / div;
++        // A texel of alpha 0 between equal alpha endpoints, or with no channel counted: any index fits it.
++        if (!counted && div == 0.0) {
++            proj = 0.0;
++        }
+ 
+         let q1 = i32(proj * f32(levels) + 0.5);
+         let q1_clamped = clamp(q1, 1, i32(levels) - 1);
+@@ -599,17 +632,19 @@ fn block_quant(qblock: ptr<function, vec2<u32>>, block: ptr<function, array<f32,
+         let w1 = get_unquant_value(bits, q1_clamped);
+ 
+         for (var p = 0u; p < channels; p++) {
++            let weight = select(colour_weight, 1.0, p == alpha_channel);
+             let ep_a = (*ep)[8u * j + 0u + p];
+             let ep_b = (*ep)[8u * j + 4u + p];
+             let dec_v0 = f32(((64 - w0) * i32(ep_a) + w0 * i32(ep_b) + 32) / 64);
+             let dec_v1 = f32(((64 - w1) * i32(ep_a) + w1 * i32(ep_b) + 32) / 64);
+-            err0 += sq(dec_v0 - (*block)[k + p * 16u]);
+-            err1 += sq(dec_v1 - (*block)[k + p * 16u]);
++            err0 += sq(weight * (dec_v0 - (*block)[k + p * 16u]));
++            err1 += sq(weight * (dec_v1 - (*block)[k + p * 16u]));
+         }
+ 
+         var best_err = err1;
+         var best_q = q1_clamped;
+-        if (err0 < err1) {
++        // A tie goes to the lower index for a texel of alpha 0: index 0 where no channel of it counts.
++        if (err0 < err1 || (!counted && err0 == err1)) {
+             best_err = err0;
+             best_q = q1_clamped - 1;
+         }
+@@ -821,7 +856,24 @@ fn data_shl_1bit_from(state: ptr<function, State>, from_bits: u32) {
+     }
+ }
+ 
+-fn opt_endpoints(ep: ptr<function, array<f32, 24>>, offset: u32, block: ptr<function, array<f32, 64>>, bits: u32, qblock: vec2<u32>, mask: u32, channels: u32) {
++// The least-squares endpoints of the texels of `mask` for the indices `qblock`. `alpha_channel` as in `block_quant`:
++// where the subset holds texels of alpha 0, its colour channels are fitted to the other texels alone and its alpha
++// channel to them all (see the top).
++fn opt_endpoints(ep: ptr<function, array<f32, 24>>, offset: u32, block: ptr<function, array<f32, 64>>, bits: u32, qblock: vec2<u32>, mask: u32, channels: u32, alpha_channel: u32) {
++    let colour_mask = mask & colour_care;
++    // Every texel's colour counts, or none's: the fit of them all.
++    if ((mask & ALL_TEXELS & ~colour_care) == 0u || colour_mask == 0u) {
++        opt_endpoints_of(ep, offset, block, bits, qblock, mask, 0u, channels);
++        return;
++    }
++    opt_endpoints_of(ep, offset, block, bits, qblock, colour_mask, 0u, channels);
++    if (alpha_channel < channels) {
++        opt_endpoints_of(ep, offset, block, bits, qblock, mask, alpha_channel, alpha_channel + 1u);
++    }
++}
++
++// The least-squares endpoints of the channels `first` to `channels` of the texels of `mask` for the indices `qblock`.
++fn opt_endpoints_of(ep: ptr<function, array<f32, 24>>, offset: u32, block: ptr<function, array<f32, 64>>, bits: u32, qblock: vec2<u32>, mask: u32, first: u32, channels: u32) {
+     let levels = i32(1u << bits);
+ 
+     var Atb1: vec4<f32>;
+@@ -848,7 +900,7 @@ fn opt_endpoints(ep: ptr<function, array<f32, 24>>, offset: u32, block: ptr<func
+             sum_qq += q * q;
+ 
+             sum[4] += 1.0;
+-            for (var p = 0u; p < channels; p++) {
++            for (var p = first; p < channels; p++) {
+                 sum[p] += (*block)[k + p * 16u];
+                 Atb1[p] += x * (*block)[k + p * 16u];
+             }
+@@ -856,7 +908,7 @@ fn opt_endpoints(ep: ptr<function, array<f32, 24>>, offset: u32, block: ptr<func
+     }
+ 
+     var Atb2: vec4<f32>;
+-    for (var p = 0u; p < channels; p++) {
++    for (var p = first; p < channels; p++) {
+         Atb2[p] = f32(levels - 1) * sum[p] - Atb1[p];
+     }
+ 
+@@ -865,14 +917,14 @@ fn opt_endpoints(ep: ptr<function, array<f32, 24>>, offset: u32, block: ptr<func
+     let Cxy = f32(levels - 1) * sum_q - sum_qq;
+     let scale = f32(levels - 1) / (Cxx * Cyy - Cxy * Cxy);
+ 
+-    for (var p = 0u; p < channels; p++) {
++    for (var p = first; p < channels; p++) {
+         (*ep)[offset + 0u + p] = (Atb1[p] * Cyy - Atb2[p] * Cxy) * scale;
+         (*ep)[offset + 4u + p] = (Atb2[p] * Cxx - Atb1[p] * Cxy) * scale;
+     }
+ 
+     if (abs(Cxx * Cyy - Cxy * Cxy) < 0.001) {
+         // flatten
+-        for (var p = 0u; p < channels; p++) {
++        for (var p = first; p < channels; p++) {
+             (*ep)[offset + 0u + p] = sum[p] / sum[4];
+             (*ep)[offset + 4u + p] = (*ep)[offset + 0u + p];
+         }
+@@ -1128,7 +1180,7 @@ fn bc7_enc_mode01237_part_fast(qep: ptr<function, array<i32, 24>>, qblock: ptr<f
+ 
+     ep_quant_dequant(qep, &ep, mode, channels);
+ 
+-    return block_quant(qblock, block, bits, &ep, pattern, channels);
++    return block_quant(qblock, block, bits, &ep, pattern, channels, ALPHA_CHANNEL);
+ }
+ 
+ fn bc7_enc_mode01237(state: ptr<function, State>, block: ptr<function, array<f32, 64>>, mode: u32, part_list: array<i32, 64>, part_count: u32) {
+@@ -1172,7 +1224,7 @@ fn bc7_enc_mode01237(state: ptr<function, State>, block: ptr<function, array<f32
+         var ep: array<f32, 24>;
+         for (var j = 0u; j < pairs; j++) {
+             let mask = get_pattern_mask(best_part_id, j);
+-            opt_endpoints(&ep, j * 8, block, bits, best_qblock, mask, channels);
++            opt_endpoints(&ep, j * 8, block, bits, best_qblock, mask, channels, ALPHA_CHANNEL);
+         }
+ 
+         var qep: array<i32, 24>;
+@@ -1181,7 +1233,7 @@ fn bc7_enc_mode01237(state: ptr<function, State>, block: ptr<function, array<f32
+         ep_quant_dequant(&qep, &ep, mode, channels);
+ 
+         let pattern = get_pattern(best_part_id);
+-        let err = block_quant(&qblock, block, bits, &ep, pattern, channels);
++        let err = block_quant(&qblock, block, bits, &ep, pattern, channels, ALPHA_CHANNEL);
+ 
+         if (err < best_err) {
+             for (var i = 0u; i < 8u * pairs; i++) {
+@@ -1274,6 +1326,9 @@ fn bc7_enc_mode45_candidate(best_candidate: ptr<function, Mode45Parameters>, bes
+         }
+     }
+ 
++    // The channel of the colour endpoints that holds alpha: the rotated one, none without the rotation.
++    let alpha_channel = select(MAX_CHANNELS, rotation, rotation < 3u && settings.channels == 4u);
++
+     var ep: array<f32, 24>;
+     block_segment(&ep, 0u, &candidate_block, 0xFFFFFFFFu, 3u);
+ 
+@@ -1281,14 +1336,14 @@ fn bc7_enc_mode45_candidate(best_candidate: ptr<function, Mode45Parameters>, bes
+     ep_quant_dequant(&qep, &ep, mode, 3u);
+ 
+     var qblock: vec2<u32>;
+-    var err = block_quant(&qblock, &candidate_block, bits, &ep, 0u, 3u);
++    var err = block_quant(&qblock, &candidate_block, bits, &ep, 0u, 3u, alpha_channel);
+ 
+     // Refine
+     let refine_iterations = settings.refine_iterations[mode];
+     for (var i = 0u; i < refine_iterations; i++) {
+-        opt_endpoints(&ep, 0u, &candidate_block, bits, qblock, 0xFFFFFFFFu, 3u);
++        opt_endpoints(&ep, 0u, &candidate_block, bits, qblock, 0xFFFFFFFFu, 3u, alpha_channel);
+         ep_quant_dequant(&qep, &ep, mode, 3u);
+-        err = block_quant(&qblock, &candidate_block, bits, &ep, 0u, 3u);
++        err = block_quant(&qblock, &candidate_block, bits, &ep, 0u, 3u, alpha_channel);
+     }
+ 
+     var channel_data: array<f32, 16>;
+@@ -1362,13 +1417,13 @@ fn bc7_enc_mode6(state: ptr<function, State>, block: ptr<function, array<f32, 64
+     ep_quant_dequant(&qep, &ep, mode, channels);
+ 
+     var qblock: vec2<u32>;
+-    var err = block_quant(&qblock, block, bits, &ep, 0u, channels);
++    var err = block_quant(&qblock, block, bits, &ep, 0u, channels, ALPHA_CHANNEL);
+ 
+     let refine_iterations = settings.refine_iterations[mode];
+     for (var i = 0u; i < refine_iterations; i++) {
+-        opt_endpoints(&ep, 0u, block, bits, qblock, 0xFFFFFFFFu, channels);
++        opt_endpoints(&ep, 0u, block, bits, qblock, 0xFFFFFFFFu, channels, ALPHA_CHANNEL);
+         ep_quant_dequant(&qep, &ep, mode, channels);
+-        err = block_quant(&qblock, block, bits, &ep, 0u, channels);
++        err = block_quant(&qblock, block, bits, &ep, 0u, channels, ALPHA_CHANNEL);
+     }
+ 
+     if (err < (*state).best_err) {
+@@ -1426,6 +1481,31 @@ fn compute_opaque_err(block: ptr<function, array<f32, 64>>) -> f32 {
+     }
+ }
+ 
++// The texels of alpha 0 of a block with its alpha encoded: their colour is "don't care" (see the top), each takes
++// the mean colour of the others, transparent black where there are none, and `colour_care` leaves them out.
++fn ignore_transparent_colour(block: ptr<function, array<f32, 64>>) {
++    var care = 0u;
++    var sum = vec3<f32>(0.0);
++    for (var k = 0u; k < BLOCK_TEXELS; k++) {
++        if ((*block)[ALPHA_CHANNEL * BLOCK_TEXELS + k] != 0.0) {
++            care |= 1u << k;
++            sum += vec3<f32>((*block)[k], (*block)[BLOCK_TEXELS + k], (*block)[2u * BLOCK_TEXELS + k]);
++        }
++    }
++    colour_care = care;
++    if (care == ALL_TEXELS) {
++        return;
++    }
++    let fill = select(vec3<f32>(0.0), sum / f32(countOneBits(care)), care != 0u);
++    for (var k = 0u; k < BLOCK_TEXELS; k++) {
++        if (((care >> k) & 1u) == 0u) {
++            for (var p = 0u; p < 3u; p++) {
++                (*block)[p * BLOCK_TEXELS + k] = fill[p];
++            }
++        }
++    }
++}
++
+ // Whether the block's 16 texels are one colour.
+ fn block_is_uniform(block: ptr<function, array<f32, 64>>) -> bool {
+     for (var k = 1u; k < BLOCK_TEXELS; k++) {
+@@ -1477,6 +1557,10 @@ fn compress_bc7(@builtin(global_invocation_id) global_id: vec3<u32>) {
+     var block: array<f32, 64>;
+ 
+     load_block_interleaved_rgba(&block, xx, yy);
++    colour_care = ALL_TEXELS;
++    if (settings.channels == 4u) {
++        ignore_transparent_colour(&block);
++    }
+ 
+     var state: State;
+     if (block_is_uniform(&block)) {
+diff --git a/lib/support/uot-gpu-compute/src/page_encode.rs b/lib/support/uot-gpu-compute/src/page_encode.rs
+index b40cddaf..84c84d7c 100644
+--- a/lib/support/uot-gpu-compute/src/page_encode.rs
++++ b/lib/support/uot-gpu-compute/src/page_encode.rs
+@@ -188,7 +188,8 @@ impl Page<'_> {
+ }
+ 
+ /// The CPU encoder's block for `texels` (a block's, row by row) when they are all one colour and `format` is BC7: its
+-/// solid block, which bc7.wgsl gives such a block too, with alpha 255 for BC7 without alpha.
++/// solid block, which bc7.wgsl gives such a block too, with alpha 255 for BC7 without alpha. With alpha, a block whose
++/// every alpha is 0 is the solid block of transparent black, as bc7.wgsl gives it: the colour of alpha 0 is not shown.
+ fn solid_block(format: MobileBlockFormat, texels: &[u8; BLOCK_TEXEL_BYTES]) -> Option<[u8; BC7_BLOCK_BYTES]> {
+     let opaque = match format {
+         MobileBlockFormat::Bc7(_) => false,
+@@ -196,7 +197,9 @@ impl Page<'_> {
+         MobileBlockFormat::Bc1 => return None,
+     };
+     let mut texel: [u8; TEXEL_BYTES] = texels[..TEXEL_BYTES].try_into().expect("a texel");
+-    if texels.chunks_exact(TEXEL_BYTES).any(|other| other != texel) {
++    if !opaque && texels.chunks_exact(TEXEL_BYTES).all(|other| other[ALPHA] == 0) {
++        texel = [0; TEXEL_BYTES];
++    } else if texels.chunks_exact(TEXEL_BYTES).any(|other| other != texel) {
+         return None;
+     }
+     if opaque {
+@@ -301,6 +304,11 @@ fn a_block_of_one_colour_is_the_cpu_encoders() {
+         let mut two_colours = texels;
+         two_colours[0] ^= 1;
+         assert!(solid_block(format, &two_colours).is_none());
++        // Every alpha 0, each texel a colour of its own: transparent black with alpha, a block of colours without.
++        let clear: [u8; BLOCK_TEXEL_BYTES] = std::array::from_fn(|byte| if byte % TEXEL_BYTES == ALPHA { 0 }
++            else { byte as u8 });
++        assert_eq!(solid_block(format, &clear).unwrap().to_vec(), cpu(&[0; BLOCK_TEXEL_BYTES]));
++        assert!(solid_block(MobileBlockFormat::Bc7Opaque(Bc7Quality::UltraFast), &clear).is_none());
+     }
+ 
+     /// A page of several bands, with partial blocks and blocks of one colour, encodes to BC7 blocks that decode close
+@@ -336,8 +344,15 @@ fn a_page_of_several_bands_encodes_close_to_its_texels() {
+         assert!(on_the_gpu > MAX_BAND_BLOCKS, "{on_the_gpu} blocks on the GPU, one band");
+         assert_eq!(blocks.len(), extent.blocks_wide() as usize * extent.blocks_high() as usize);
+         let decoded = decode_bc7_to_rgba8888(blocks.as_flattened(), extent).unwrap();
+-        let error: f64 = rgba.iter().zip(&decoded).map(|(&a, &b)| f64::from(a.abs_diff(b))).sum();
+-        let mean = error / rgba.len() as f64;
++        // The colour of a texel of alpha 0 is not encoded: its alpha alone counts.
++        let error: f64 = rgba.chunks_exact(TEXEL_BYTES).zip(decoded.chunks_exact(TEXEL_BYTES))
++            .flat_map(|(source, texel)| {
++                let first = if source[ALPHA] == 0 { ALPHA } else { 0 };
++                (first..TEXEL_BYTES).map(move |channel| f64::from(source[channel].abs_diff(texel[channel])))
++            }).sum();
++        let counted = rgba.chunks_exact(TEXEL_BYTES).map(|texel| if texel[ALPHA] == 0 { 1 } else { TEXEL_BYTES })
++            .sum::<usize>();
++        let mean = error / counted as f64;
+         assert!(mean < MAX_MEAN_ERROR, "mean error {mean}");
+         let start = std::time::Instant::now();
+         assert_eq!(encoder.encode(&rgba, WIDTH, HEIGHT, Bc7Quality::UltraFast).unwrap(), blocks);

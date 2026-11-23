@@ -1017,9 +1017,119 @@ Verdict, by eye on the two states side by side (the stills of the flicker videos
 - The edge bleed came from the straight tap, not the format. Since 2026-11-22 the sprite taps under the client filter
   (`client_filtered_rect`, `mobile_frame_client_filtered`) blend premultiplied and return straight alpha, which removes
   the dark fringe for every format at no size cost, where filling the texels would cost 5 %. With it, a "don't care"
-  encode of the transparent texels would be safe.
+  encode of the transparent texels would be safe. The next section measures one: it costs 3.4 to 4.7 % on the
+  packages, so it was not adopted.
 - Use BC1 only where half the size matters more than 3.5 dB (it is what the Classic gumps use), and BC2 or BC3 never
   for these pages.
+
+### A "don't care" colour for the transparent texels
+
+This section measures BC7 that ignores the colour of the texels of alpha 0 (2026-11-23, Radeon 880M). The premultiplied
+taps never show that colour: KR-like's client filter, SPAN and RIFE. Yet the kernel spends its endpoints and indices
+on the black that the packers store there, and the edge blocks' colour line runs from black to the sprite's colour.
+
+One tap does show it. The Enhanced style's hardware bilinear (`pixel_art_atlas_uv_iq`, straight; art_alpha_passes.md)
+blends that colour into the fringe. There the packages hold black today, and the "don't care" encode gives one of the
+block's own colours instead. `classic_formats` measures that tap: on the Classic mobile pages, its straight bilinear
+edges move from 22.29 to 26.32 dB against the premultiplied tap and from 37.77 to 27.09 dB against the lossless
+page's straight tap. The dark fringe lightens towards the premultiplied result, a change of look in that style.
+
+The kernel tried ([`dont_care.patch`](atlas_page_compression/dont_care.patch), against bc7.wgsl and page_encode.rs
+of 4e2add68) works like this:
+
+- With the alpha encoded, a texel of alpha 0 counts in alpha alone:
+  - its colour leaves the error and the choice of its index (`block_quant`; index 0 where a mode's indices hold no
+    alpha);
+  - its colour also leaves the least-squares refinement (`opt_endpoints`: the colour channels are fitted to the other
+    texels, the alpha to all of them).
+- It takes the mean colour of the block's other texels, so the first fit (`block_segment`) does not see it in colour.
+- A block whose every alpha is 0 is the solid block of transparent black, made on the CPU by page_encode, as the
+  kernel would make it.
+- Blocks without a texel of alpha 0 keep their arithmetic. Two encodes give the same blocks.
+
+On binary alpha, "alpha 0" and "below the 0.5 cutoff" are the same texels.
+
+`--bin classic_formats`, 20 pages each, UltraFast unless named. Sizes are Zstd 19, with the change against UltraFast.
+PSNR is RGB over the texels of alpha 255, then over those of the blocks that also hold a texel of alpha 0 (the edge
+blocks). Ghosts are texels of alpha 0 that decode with some alpha, shown with the most alpha one of them decodes.
+"Dilated" gives the transparent texels of the edge blocks their nearest opaque colour before encoding; "block mean"
+gives them the mean of their block's opaque texels. Both run on the kernel without the change.
+
+| Pages | Variant | Zstd 9 | Zstd 19 | Opaque PSNR | Edge blocks' PSNR | Ghosts (most alpha) | Cutoff flips |
+|---|---|---|---|---|---|---|---|
+| Classic mobile | UltraFast | 13.66 MiB | 13.15 MiB | 33.31 dB | 31.50 dB | 60 (6) | 0 |
+| | don't care | 14.05 | 13.60 (+3.4 %) | 33.98 | 33.25 | 0 | 0 |
+| | don't care, filled black | 13.94 | 13.47 (+2.4 %) | 33.54 | 32.05 | 552 (5) | 0 |
+| | dilated | 14.77 | 14.31 (+8.8 %) | 33.87 | 32.91 | 1 (1) | 0 |
+| | block mean | 14.30 | 13.82 (+5.1 %) | 33.91 | 33.03 | 0 | 0 |
+| | VeryFast | 14.14 | 13.66 (+3.9 %) | 34.93 | 32.57 | 771 (81) | 0 |
+| Classic art | UltraFast | 4.16 | 4.04 | 33.13 | 30.83 | 333 (6) | 0 |
+| | don't care | 4.33 | 4.23 (+4.7 %) | 34.19 | 33.45 | 0 | 0 |
+| | dilated | 4.51 | 4.39 (+8.7 %) | 34.05 | 33.07 | 1 (2) | 0 |
+| | block mean | 4.41 | 4.29 (+6.2 %) | 34.14 | 33.30 | 0 | 0 |
+| Enhanced mobile | UltraFast | 13.80 | 13.42 | 32.11 | 29.13 | 698,461 (40) | 43,538 |
+| | don't care | 14.34 | 13.98 (+4.2 %) | 32.57 | 31.21 | 671,370 (36) | 42,539 |
+| | dilated | 14.27 | 13.89 (+3.5 %) | 32.68 | 31.69 | 636,914 (36) | 39,073 |
+| | block mean | 14.09 | 13.70 (+2.1 %) | 32.74 | 32.00 | 708,777 (36) | 37,253 |
+
+(The Enhanced fills change the colour of every texel below one half; the "don't care" frees only those of alpha 0. The
+opaque PSNR does not see the colour the fills change, so the two are not compared like for like.)
+
+- **The quality gain is real.** On the Classic pages the "don't care" encode gains 0.7 to 1.1 dB over all opaque
+  texels and 1.75 to 2.6 dB on the edge blocks, more than dilating or the block mean, and leaves no ghost. Every
+  transparent texel decodes alpha 0, and no texel crosses the cutoff.
+- **The size cost is too high.** It costs 3.4 to 4.7 % at Zstd 19, against the threshold set for adoption: under
+  1 %.
+  - `bc7_gpu stats` puts the whole cost on the edge blocks (17 % of the Classic mobile blocks). Their endpoints no
+    longer start from black, which Zstd found in nearly every one, and mode 5 doubles (14 to 28 % of them) against
+    mode 4.
+  - Filling the transparent texels with black instead of the mean keeps part of the endpoints' black. It costs
+    2.4 %, gains a third as much, and brings the ghosts back.
+  - VeryFast costs about as much (+3.9 %) for more on the whole frame (+1.6 dB), less on the edges (+1.1 dB), and 81
+    levels of ghost.
+- **SPAN and RIFE gain from it.** On the same 200 frames as "BC7 frames as they show", and on 115 RIFE in-betweens
+  (factor 2, Classic alpha snapped) of the first four frame pairs of 30 animations, `--bin classic_span rife`. The
+  "don't care" applies to the package and to the game's own UltraFast encode of the 2x frame and the in-between:
+
+| Measure | UltraFast | Don't care | Dilated, old kernel |
+|---|---|---|---|
+| 1x vs lossless (flips) | 33.14 dB (0) | 33.81 dB (0) | 33.71 dB (0) |
+| SPAN 2x vs SPAN of lossless | 32.35 dB | 32.86 dB | 32.77 dB |
+| game's 2x vs SPAN of lossless | 31.36 dB | 32.39 dB | 31.67 dB |
+| game's 2x from the lossless package (the runtime encode alone) | 35.86 dB | 37.93 dB | — |
+| game's 2x per frame: p10, worst | 26.3, 23.7 dB | 28.3, 25.4 dB | 26.8, 24.1 dB |
+| RIFE in-between vs from lossless (flips) | 26.30 dB (846) | 27.63 dB (667) | 27.52 dB (691) |
+| game's in-between vs from lossless | 26.07 dB | 27.90 dB | 27.12 dB |
+| game's in-between from lossless (the runtime encode alone) | 33.77 dB | 34.58 dB | — |
+| game's in-between per in-between: median, p10, worst | 28.1, 17.3, 10.6 dB | 30.4, 23.1, 16.5 dB | 28.4, 21.8, 14.2 dB |
+
+  SPAN still scales the 1x error by 1.25 in MSE, as before. RIFE gains the most. Its worst in-betweens rise by 6 dB,
+  and its flips drop by a fifth: the flow and the blend follow the sprite's edge colours more closely when the edge
+  blocks do. VeryFast's six SPAN flips disappear.
+- **Kernel time rises by a fifth.** `bc7_gpu profile ultrafast packed`, two rounds, timed under the benchmark marker:
+  - kernel: 0.080 to 0.084 s → 0.098 to 0.102 s on the Classic mobile pages, 0.037 to 0.038 → 0.045 to 0.047 s on
+    the art (+18 to +28 %, +20 % with branch-free weights in `block_quant`, as in the patch);
+  - page encode, wall: +4 to 6 %, since making the texels on the CPU dominates it.
+- **It would also cost the crate's blocks.** The opaque profiles take no new arithmetic, yet VeryFast to Slow opaque
+  came out different from block_compression in 9 to 34 of 89,087 blocks (`our_kernels_encode_as_block_compression`).
+  The compiler handles the changed functions' floating point differently. Adopting the change would need the alpha
+  path in functions of its own, so that those blocks return to the crate's.
+
+**Decision: not adopted.** The packages keep the current kernel: +3.4 to 4.7 % is above the 1 % threshold, and dilation
+(+8.8 %) costs more for less. The CPU encoder (analytical.rs) stays as it is, matching the GPU's rule. Two options are
+left for the user:
+
+- The packages, for quality: +3.4 to 4.7 % on disk buys +0.7 to 1.1 dB, +1.75 to 2.6 dB on the edge blocks, no
+  ghosts, and RIFE in-betweens 1.8 dB closer to those from lossless (their worst by 6 dB). VeryFast costs as much for
+  a different gain.
+- The renderer's runtime encodes alone: the SPAN 2x frames and the RIFE in-betweens. They live in VRAM at a fixed
+  8 bits per texel, with nothing on disk. The runtime encode gains 2.1 dB on SPAN's frames and 0.8 dB on RIFE's, for
+  a fifth more time in that kernel. This would need:
+  - a BC7 pipeline of its own for those encodes (a `Bc7Profile` flag, say), so that the packers keep today's blocks;
+  - the opaque profiles' drift fixed;
+  - the tests' rule extended to the blocks with texels of alpha 0.
+
+  The in-betweens' gain from a runtime-only change, on today's package, was not measured apart.
 
 ## Atmosphere maps and light textures
 
@@ -1187,7 +1297,11 @@ every GPU format's blocks on the pages, to compare two builds of the kernels. `-
 <pages> [variant,...]` measures the formats of "Formats for the Classic pages" on a lossless package's pages, `texels`
 their alpha and transparent texels, `palettes <dir> <pages>` the Classic animations' palettes and the pages as indices,
 and `split` the GPU's UltraFast against the two dispatches. `--bin classic_span psnr <dir> <pages> <frames>` gives
-"BC7 frames as they show" on frames sampled from an RGBA8888 `mobile_anim_cc.uddp`, and `--bin classic_span frames
+"BC7 frames as they show" on frames sampled from an RGBA8888 `mobile_anim_cc.uddp` (with the dilated UltraFast input
+since 2026-11-23), `--bin classic_span rife <dir> <animations> <pairs>` the RIFE in-betweens of the first `pairs` frame
+pairs of `animations` animations from each input against those from lossless, raw and after the game's encode, and `--bin classic_span frames
 <dir> <out dir> <name>=<body>:<action>:<direction>:<frame> ...` writes each named frame lossless, BC7 UltraFast,
 VeryFast and BC1, and SPAN 2x of the lossless and the UltraFast frame, as raw RGBA (`<name>_<variant>_<w>x<h>.rgba`);
-`python3 -I -B classic_span_sheets.py <out dir> <sheets dir>` draws their sheets and the flicker pictures.
+`python3 -I -B classic_span_sheets.py <out dir> <sheets dir>` draws their sheets and the flicker pictures. For the
+"don't care" kernel, `git apply docs/agent_notes/atlas_page_compression/dont_care.patch` and rebuild the bench (it
+takes uot-gpu-compute by path); `git apply -R` restores the production kernel.

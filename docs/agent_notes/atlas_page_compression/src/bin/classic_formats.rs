@@ -2,9 +2,11 @@
 //! atlas_page_compression.md, "Formats for the Classic pages"), with the Enhanced mobile pages for contrast. Every
 //! variant encodes the same lossless pages sampled as `bc7_gpu` samples them and is measured on:
 //! - the blocks' (or texels') size after Zstd 9 and 19, each page compressed alone;
-//! - RGB PSNR over the opaque texels (alpha 255) only;
+//! - RGB PSNR over the opaque texels (alpha 255) only, and over those of the edge blocks (the blocks with transparent
+//!   and opaque texels) alone;
 //! - the texels whose alpha lands on the other side of one half (the renderer's cutoff), the transparent texels
-//!   decoded with some alpha (the blended pass draws them), and the opaque ones decoded below 255;
+//!   decoded with some alpha (the blended pass draws them) and the most alpha one of them decodes, and the opaque
+//!   ones decoded below 255;
 //! - the edges under the renderer's straight-alpha bilinear tap (client_bilinear_rect): every 2x2 window with a
 //!   transparent texel whose source alpha averages at least one half, its RGB against the lossless page's tap and
 //!   against the premultiplied tap (sum of alpha x RGB over sum of alpha), which a transparent texel lends no colour.
@@ -302,8 +304,11 @@ struct Measure {
     raw: usize,
     opaque_squared: f64,
     opaque_count: f64,
+    edge_block_squared: f64,
+    edge_block_count: f64,
     cutoff_flips: usize,
     ghosts: usize,
+    ghost_max_alpha: u8,
     dimmed: usize,
     edge_squared_lossless: f64,
     edge_squared_premultiplied: f64,
@@ -317,8 +322,11 @@ impl Measure {
         self.raw += other.raw;
         self.opaque_squared += other.opaque_squared;
         self.opaque_count += other.opaque_count;
+        self.edge_block_squared += other.edge_block_squared;
+        self.edge_block_count += other.edge_block_count;
         self.cutoff_flips += other.cutoff_flips;
         self.ghosts += other.ghosts;
+        self.ghost_max_alpha = self.ghost_max_alpha.max(other.ghost_max_alpha);
         self.dimmed += other.dimmed;
         self.edge_squared_lossless += other.edge_squared_lossless;
         self.edge_squared_premultiplied += other.edge_squared_premultiplied;
@@ -351,9 +359,27 @@ fn measure(page: &Page, encoded: &[u8], decoded: &[u8]) -> Measure {
             if d[3] < OPAQUE { m.dimmed += 1; }
         }
         if (s[3] >= CUTOFF) != (d[3] >= CUTOFF) { m.cutoff_flips += 1; }
-        if s[3] == 0 && d[3] > 0 { m.ghosts += 1; }
+        if s[3] == 0 && d[3] > 0 {
+            m.ghosts += 1;
+            m.ghost_max_alpha = m.ghost_max_alpha.max(d[3]);
+        }
     }
     let (width, height) = (page.width as usize, page.height as usize);
+    // The edge blocks' opaque texels (within the page: a partial block's repeated texels are not counted).
+    for by in (0..height).step_by(BLOCK_EDGE) {
+        for bx in (0..width).step_by(BLOCK_EDGE) {
+            let texels: Vec<usize> = (by..(by + BLOCK_EDGE).min(height))
+                .flat_map(|y| (bx..(bx + BLOCK_EDGE).min(width)).map(move |x| y * width + x)).collect();
+            let transparent = texels.iter().any(|&i| page.rgba[i * 4 + 3] == 0);
+            if !transparent { continue; }
+            for &i in texels.iter().filter(|&&i| page.rgba[i * 4 + 3] == OPAQUE) {
+                for c in 0..3 {
+                    m.edge_block_squared += (f64::from(page.rgba[i * 4 + c]) - f64::from(decoded[i * 4 + c])).powi(2);
+                }
+                m.edge_block_count += 3.0;
+            }
+        }
+    }
     for y in 0..height.saturating_sub(1) {
         for x in 0..width.saturating_sub(1) {
             let window = |rgba: &[u8]| [texel(rgba, width, x, y), texel(rgba, width, x + 1, y),
@@ -384,8 +410,8 @@ fn variants_rows(dir: &str, set: &str, count: usize, names: Vec<String>) {
     let texels: f64 = pages.iter().map(|page| f64::from(page.width) * f64::from(page.height)).sum();
     println!("{set}: {} pages, {:.1} Mpx", pages.len(), texels / 1e6);
     let gpu = PageEncoderGpu::new().unwrap();
-    println!("| Variant | Zstd 9 | Zstd 19 | bpp (raw) | Opaque RGB PSNR | Cutoff flips | Ghosts | Dimmed | \
-        Edge vs lossless | Edge vs premultiplied | Edge flips | Wall |");
+    println!("| Variant | Zstd 9 | Zstd 19 | bpp (raw) | Opaque RGB PSNR | Edge blocks' opaque PSNR | Cutoff flips | \
+        Ghosts (most alpha) | Dimmed | Edge vs lossless | Edge vs premultiplied | Edge flips | Wall |");
     let mut lossless_zstd = None;
     for name in names {
         // A first run compiles the GPU's pipelines; the second is timed.
@@ -400,9 +426,11 @@ fn variants_rows(dir: &str, set: &str, count: usize, names: Vec<String>) {
         let base = *lossless_zstd.get_or_insert(m.zstd);
         let versus = |k: usize| format!("{:.2} MiB ({:.1} %)", m.zstd[k] as f64 / MIB,
             m.zstd[k] as f64 / base[k] as f64 * 100.0);
-        println!("| {name} | {} | {} | {:.1} | {:.2} dB | {} | {} | {} | {:.2} dB | {:.2} dB | {} | {wall:.2} s |",
+        println!("| {name} | {} | {} | {:.1} | {:.2} dB | {:.2} dB | {} | {} ({}) | {} | {:.2} dB | {:.2} dB | {} | \
+            {wall:.2} s |",
             versus(0), versus(1), m.raw as f64 * 8.0 / texels, psnr(m.opaque_squared, m.opaque_count),
-            m.cutoff_flips, m.ghosts, m.dimmed, psnr(m.edge_squared_lossless, m.edge_count),
+            psnr(m.edge_block_squared, m.edge_block_count), m.cutoff_flips, m.ghosts, m.ghost_max_alpha, m.dimmed,
+            psnr(m.edge_squared_lossless, m.edge_count),
             psnr(m.edge_squared_premultiplied, m.edge_count), m.edge_flips);
     }
 }
