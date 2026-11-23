@@ -89,6 +89,8 @@ pub struct ClassicFileViews {
 }
 
 const HELP_MARK: &str = "(?)";
+const HOME_LOG_MIN_HEIGHT: f32 = 64.0;
+const HOME_LOG_RESIZE_MARGIN: f32 = 24.0;
 
 /// Hint shown wherever a `.uop` package is saved.
 pub(crate) const UOP_PATCHER_NOTE: &str = "The official patcher re-downloads edited entries and deletes added ones: \
@@ -983,17 +985,16 @@ pub fn draw_ui(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) 
 
     match app.view_mode {
         crate::app::ViewMode::Home => {
-            egui::CentralPanel::default().show(ui, |ui| {
-                ui.heading("Logs");
-                ui.separator();
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for log in &app.logs {
-                            ui.label(log);
-                        }
-                    });
-            });
+            let max_height = (ui.available_height() - HOME_LOG_RESIZE_MARGIN).max(HOME_LOG_MIN_HEIGHT);
+            egui::Panel::top("home_log_panel")
+                .resizable(true)
+                .default_size(max_height)
+                .size_range(HOME_LOG_MIN_HEIGHT..=max_height)
+                .show(ui, |ui| {
+                    ui.heading("Logs");
+                    ui.separator();
+                    uot_gui::show_log_text(ui, "logs", app.logs.iter().map(|line| (line.as_str(), None)), egui::TextStyle::Body);
+                });
         }
         crate::app::ViewMode::UopExplorer => {
             uop_browser::ui_uop_browser(app, ctx, ui);

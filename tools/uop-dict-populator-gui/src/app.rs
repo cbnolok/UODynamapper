@@ -7,6 +7,10 @@ use eframe::egui;
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use crate::core::{PopulatorConfig, TaskProgress, UopDictionary, PopulatorTask};
 
+const LOG_PANEL_DEFAULT_HEIGHT: f32 = 300.0;
+const LOG_PANEL_MIN_HEIGHT: f32 = 60.0;
+const CONTROLS_MIN_HEIGHT: f32 = 160.0;
+
 enum Message {
     Log(String),
     Progress(f32, String),
@@ -193,7 +197,23 @@ impl eframe::App for UopPopulatorApp {
             }
         }
 
-        egui::CentralPanel::default().show(ui, |ui| {
+        let log_max_height = (ui.available_height() - CONTROLS_MIN_HEIGHT).max(LOG_PANEL_MIN_HEIGHT);
+        egui::Panel::bottom("log_panel")
+            .resizable(true)
+            .default_size(LOG_PANEL_DEFAULT_HEIGHT)
+            .min_size(LOG_PANEL_MIN_HEIGHT)
+            .max_size(log_max_height)
+            .show(ui, |ui| {
+                ui.label("Log");
+                uot_gui::show_log_text(
+                    ui,
+                    "logs",
+                    self.log.iter().map(|line| (line.as_str(), None)),
+                    egui::TextStyle::Body,
+                );
+            });
+
+        let controls = |ui: &mut egui::Ui| {
             ui.vertical_centered(|ui| {
                 ui.heading("UOP Dictionary Populator");
                 ui.add_space(8.0);
@@ -292,18 +312,9 @@ impl eframe::App for UopPopulatorApp {
                     ui.add(egui::ProgressBar::new(self.progress).show_percentage().animate(true));
                 });
             }
-
-            ui.add_space(8.0);
-
-            ui.group(|ui| {
-                ui.label("Log");
-                let log_height = ui.available_height();
-                egui::ScrollArea::vertical().max_height(log_height).stick_to_bottom(true).show(ui, |ui| {
-                    for line in &self.log {
-                        ui.label(line);
-                    }
-                });
-            });
+        };
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("controls").show(ui, controls);
         });
 
         if self.is_running {

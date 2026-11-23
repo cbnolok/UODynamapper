@@ -17,15 +17,15 @@ pub fn ui_log_panel(ui: &mut egui::Ui, logs: &Logs) {
         }
     });
     ui.separator();
-    egui::ScrollArea::vertical().id_salt("logs").auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-        for message in logs.snapshot() {
-            let color = match message.level {
-                LogLevel::Info => INFO_COLOR,
-                LogLevel::Success => SUCCESS_COLOR,
-                LogLevel::Warning => WARNING_COLOR,
-                LogLevel::Error => ERROR_COLOR,
-            };
-            ui.add(egui::Label::new(egui::RichText::new(message.text).color(color).monospace()).wrap());
-        }
+    let messages = logs.snapshot();
+    let lines = messages.iter().map(|message| {
+        let color = match message.level {
+            LogLevel::Info => INFO_COLOR,
+            LogLevel::Success => SUCCESS_COLOR,
+            LogLevel::Warning => WARNING_COLOR,
+            LogLevel::Error => ERROR_COLOR,
+        };
+        (message.text.as_str(), Some(color))
     });
+    uot_gui::show_log_text(ui, "logs", lines, egui::TextStyle::Monospace);
 }

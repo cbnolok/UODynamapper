@@ -322,6 +322,7 @@ fn default_mobile_anim_optimization() -> TextureOptimization {
 }
 
 
+#[derive(Clone)]
 pub struct LogMessage {
     pub text: String,
     pub level: LogLevel,

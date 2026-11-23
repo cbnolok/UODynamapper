@@ -1,6 +1,6 @@
 use eframe::egui;
 use color_eyre::eyre;
-use uot_gui::{run_native_with_setup, NativeWindow};
+use uot_gui::{run_native_with_setup, show_log_text, NativeWindow};
 
 mod app;
 mod models;
@@ -15,14 +15,9 @@ const APP_VIEWPORT_WIDTH: f32 = 1100.0;
 const APP_VIEWPORT_HEIGHT: f32 = 800.0;
 const APP_MIN_VIEWPORT_WIDTH: f32 = 900.0;
 const APP_MIN_VIEWPORT_HEIGHT: f32 = 700.0;
-/// The least height the log panel keeps below a long tab; below a shorter one it takes the rest of the window.
-const LOG_PANEL_MIN_HEIGHT: f32 = 200.0;
-/// The least height of a tab's content, however short the window.
+const LOG_PANEL_DEFAULT_HEIGHT: f32 = 250.0;
+const LOG_PANEL_MIN_HEIGHT: f32 = 80.0;
 const MIN_CONTENT_HEIGHT: f32 = 160.0;
-/// The space above and below the separator between a tab's content and the log panel.
-const LOG_SEPARATOR_SPACE: f32 = 8.0;
-/// The height the separator line between a tab's content and the log panel takes.
-const LOG_SEPARATOR_LINE_SPACE: f32 = 6.0;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -53,102 +48,63 @@ impl eframe::App for UddConvApp {
         self.ui_preview_window(&ctx);
         self.ui_upscale_preview_window(&ctx);
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.add_space(5.0);
-                ui.heading("UODynamapper Asset Converter");
-                ui.add_space(15.0);
+        egui::Panel::top("navigation").show(ui, |ui| {
+            ui.add_space(5.0);
+            ui.heading("UODynamapper Asset Converter");
+            ui.add_space(15.0);
 
-                // Tab navigation
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.current_tab, Tab::QuickConvert, "Quick Convert");
-                    ui.selectable_value(&mut self.current_tab, Tab::Sources, "📁 Sources");
-                    ui.selectable_value(&mut self.current_tab, Tab::Assets, "🎨 Assets");
-                    ui.selectable_value(&mut self.current_tab, Tab::World, "🌍 World");
-                    ui.selectable_value(&mut self.current_tab, Tab::Tools, "🛠 Tools");
-                });
-
-                ui.add_space(5.0);
-                ui.separator();
-                ui.add_space(15.0);
-
-                // The tab takes the height its content needs, up to what leaves the log panel its least height; the log
-                // panel takes the rest, down to the bottom of the window.
-                let item_spacing = ui.spacing().item_spacing.y;
-                let separator_height = item_spacing
-                    + LOG_SEPARATOR_SPACE
-                    + LOG_SEPARATOR_LINE_SPACE
-                    + item_spacing
-                    + LOG_SEPARATOR_SPACE;
-                let content_height =
-                    (ui.available_height() - separator_height - LOG_PANEL_MIN_HEIGHT).max(MIN_CONTENT_HEIGHT);
-
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), content_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("main_scroll")
-                            .show(ui, |ui| match self.current_tab {
-                                Tab::QuickConvert => self.ui_quick_convert(ui),
-                                Tab::Sources => self.ui_sources(ui),
-                                Tab::Assets => self.ui_assets(ui),
-                                Tab::World => self.ui_world(ui),
-                                Tab::Tools => self.ui_tools(ui),
-                            });
-                    },
-                );
-
-                ui.add_space(LOG_SEPARATOR_SPACE);
-                ui.add(egui::Separator::default().spacing(LOG_SEPARATOR_LINE_SPACE));
-                ui.add_space(LOG_SEPARATOR_SPACE);
-
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), ui.available_height()),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(section_heading("Logs"));
-                            if ui.button("Clear").clicked() {
-                                if let Ok(mut logs) = self.logs.lock() {
-                                    logs.clear();
-                                }
-                            }
-                            if self.is_busy() {
-                                ui.spinner();
-                                ui.label("Processing...");
-                            }
-                        });
-
-                        ui.add_space(5.0);
-                        let log_scroll_height = ui.available_height();
-                        let text_edit_id = ui.make_persistent_id("log_view");
-                        egui::ScrollArea::vertical()
-                            .id_salt(text_edit_id)
-                            .max_height(log_scroll_height)
-                            .auto_shrink([false, false])
-                            .stick_to_bottom(true)
-                            .show(ui, |ui| {
-                                ui.set_min_width(ui.available_width());
-
-                                let Ok(logs) = self.logs.lock() else {
-                                    return;
-                                };
-
-                                for log in logs.iter() {
-                                    let color = match log.level {
-                                        LogLevel::Info => egui::Color32::from_gray(200),
-                                        LogLevel::Success => egui::Color32::from_rgb(100, 255, 100),
-                                        LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),
-                                        LogLevel::Error => egui::Color32::from_rgb(255, 100, 100),
-                                    };
-                                    ui.colored_label(color, &log.text);
-                                }
-                                ui.add_space(6.0);
-                            });
-                    },
-                );
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.current_tab, Tab::QuickConvert, "Quick Convert");
+                ui.selectable_value(&mut self.current_tab, Tab::Sources, "📁 Sources");
+                ui.selectable_value(&mut self.current_tab, Tab::Assets, "🎨 Assets");
+                ui.selectable_value(&mut self.current_tab, Tab::World, "🌍 World");
+                ui.selectable_value(&mut self.current_tab, Tab::Tools, "🛠 Tools");
             });
+        });
+
+        egui::Panel::bottom("log_panel")
+            .resizable(true)
+            .default_size(LOG_PANEL_DEFAULT_HEIGHT)
+            .min_size(LOG_PANEL_MIN_HEIGHT)
+            .max_size((ui.available_height() - MIN_CONTENT_HEIGHT).max(LOG_PANEL_MIN_HEIGHT))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(section_heading("Logs"));
+                    if ui.button("Clear").clicked() {
+                        if let Ok(mut logs) = self.logs.lock() {
+                            logs.clear();
+                        }
+                    }
+                    if self.is_busy() {
+                        ui.spinner();
+                        ui.label("Processing...");
+                    }
+                });
+                ui.add_space(5.0);
+
+                let logs = self.logs.lock().map(|logs| logs.clone()).unwrap_or_default();
+                let lines = logs.iter().map(|log| {
+                    let color = match log.level {
+                        LogLevel::Info => egui::Color32::from_gray(200),
+                        LogLevel::Success => egui::Color32::from_rgb(100, 255, 100),
+                        LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),
+                        LogLevel::Error => egui::Color32::from_rgb(255, 100, 100),
+                    };
+                    (log.text.as_str(), Some(color))
+                });
+                show_log_text(ui, "logs", lines, egui::TextStyle::Body);
+            });
+
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("main_scroll")
+                .show(ui, |ui| match self.current_tab {
+                    Tab::QuickConvert => self.ui_quick_convert(ui),
+                    Tab::Sources => self.ui_sources(ui),
+                    Tab::Assets => self.ui_assets(ui),
+                    Tab::World => self.ui_world(ui),
+                    Tab::Tools => self.ui_tools(ui),
+                });
         });
 
         // Keep repainting while a background task is running

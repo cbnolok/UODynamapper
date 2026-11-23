@@ -21,6 +21,7 @@ pub const ITEM_SPACING: f32 = 4.0;
 const GRID_SPACING: [f32; 2] = [12.0, 4.0];
 const LOG_PANEL_DEFAULT_HEIGHT: f32 = 150.0;
 const LOG_PANEL_MIN_HEIGHT: f32 = 60.0;
+const SECTIONS_MIN_HEIGHT: f32 = 120.0;
 
 pub fn error_label(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.add(egui::Label::new(egui::RichText::new(text.into()).color(ERROR_COLOR)).wrap());
@@ -65,6 +66,7 @@ impl PatcherApp {
             .resizable(true)
             .default_size(LOG_PANEL_DEFAULT_HEIGHT)
             .min_size(LOG_PANEL_MIN_HEIGHT)
+            .max_size((ui.available_height() - SECTIONS_MIN_HEIGHT).max(LOG_PANEL_MIN_HEIGHT))
             .show(ui, |ui| log_panel::ui_log_panel(ui, &self.logs));
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().id_salt("sections").auto_shrink([false, false]).show(ui, |ui| {
