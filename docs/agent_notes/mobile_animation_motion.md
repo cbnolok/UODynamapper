@@ -517,6 +517,113 @@ of the prototype; RIFE adds its warps, transposed convolutions, flow and mask me
 atlas and BC7-encoded there, and a scheduler sharing jobs between the two. For at most a third more throughput,
 which a larger GPU budget gives too, it is not worth that.
 
+## RIFE on the matrix units, and the compute budget (measured 2026-11-22)
+
+**Shipped: RIFE's block convolutions on the matrix units** (`shaders/rife/conv_matrix.wgsl`, the parts shared with the
+shader-core kernel in `conv_layer.wgsl`). SPAN's implicit GEMM (above) carried over: 256 threads, 16 rows (input
+channel × tap) a step staged as fp16 in workgroup memory, the next step loaded while the current one multiplies; a
+tile is 16 × subgroups pixels (64 on wave64) by 16 to 64 output channels (one to four 16×16 matrices), the narrowest
+that covers the layer's outputs. Strided, residual and the last pixel-shuffled transposed convolutions run there, with
+the split-K of the shader-core kernel and its reduction. `ConvUnits::of` decides per device, as for SPAN, and the
+shader-core kernels serve devices without matrix units. These stay in f32 on the shader cores on every device:
+
+- *The Head* (the encoder of both frames, whose features every block reads): in fp16 the merged frame moved up to
+  2.35/255 from PyTorch, past the 2/255 tolerance, and the Head ran no faster (16 output channels: gather-bound).
+- *Grids under 8 pixels* (block 0 of 64² and 128² frames, 1 to 4 pixels by 192 channels): 0.021 ms on the shader
+  cores, 0.028 on the matrix units.
+- The strides (`strides.rs`) keep the shader cores too, so a measured stride does not depend on the device.
+
+Error against PyTorch's fp32 on the reference frames (dog, wyrm, t = ¼, ½, ¾): flow at most 0.018 px (tolerance
+0.05), merged frame at most 1.17/255 (2/255), mask logit at most 0.034, which the reference test allows up to 0.05 on
+the matrix units (0.01 on the shader cores): through the sigmoid, at most 0.0125 of the blend's weight.
+
+One in-between (the Head's encode included), ms, `rife::tests::benchmark` on the Radeon 880M; the quieter of two
+alternated rounds:
+
+| frame | dev 5c1b85d7 | shader cores now | matrix units | pair of 3 t, shader cores → matrix |
+|---|---:|---:|---:|---:|
+| 64² | 1.42 | 1.41 | 1.06 (1.33×) | 4.08 → 3.02 |
+| 128² | 2.05 | 2.01 | 1.73 (1.17×) | 5.74 → 4.88 |
+| 256² | 4.96 | 4.82 | 4.31 (1.12×) | 13.6 → 12.1 |
+| 576×512 | 17.72 | 17.49 | 14.57 (1.20×) | 48.0 → 39.3 |
+
+- At 576×512 the five blocks take 0.79 / 1.35 / 2.09 / 3.55 / 4.10 ms against 0.87 / 1.38 / 2.44 / 4.55 / 5.61; the
+  convolutions as a whole 8.3 ms against 12.2. The ResConvs run at 1.1 to 1.4 TMAC/s, SPAN's matrix rate; the
+  pixel-shuffled last convolution at 0.5 (its writes are strided).
+- What is left is not convolution: the pixel steps (warps, the blocks' input resampling: 1.25 ms for block 3's, 0.82
+  for block 4's, 0.71 for block 2's at 576×512, the upsamples, the merge 0.38) and the Head (2.3 ms at 576×512). They
+  are the next lever for large frames; small frames stay dispatch-bound (about 120 dispatches an in-between).
+- 32 rows a step instead of 16: no faster at 576×512, slower at 64² and 128². Not kept.
+- dynamapper's cost model is unchanged: in game the timed cost scale settled at 0.94 to 0.98 with the matrix units
+  against 1.03 to 1.27 with the shader cores forced, so the estimates stay within a few percent and the budget holds
+  (timed median 1.93 to 2.01 ms a frame, either units).
+
+Time to a RIFE ×2 sequence in game (dev build with the timings logged at info, 1900×1000, zoom 1, RGBA8888 packages,
+the same build with the shader cores forced alternated with it, one round; seconds from the clip's first frame drawn to
+its sequence made; Classic dog 217 and horse 200 in Classic art, Enhanced daemon 9 and stygian 826 in Enhanced art,
+each walking then standing):
+
+| style | units | dog | horse | daemon | stygian |
+|---|---|---|---|---|---|
+| Classic (6.2 ms a frame) | matrix | 0.04 | 0.05 0.29 0.44 | 0.14 0.29 | 0.68 0.28 |
+| | shader cores | 0.04 | 0.05 0.30 0.43 | 0.17 0.32 | 0.92 0.32 |
+| Enhanced (17 ms) | matrix | 0.08 | 0.10 0.46 0.60 | 0.36 0.71 | 1.88 0.70 |
+| | shader cores | 0.09 | 0.13 0.52 0.70 | 0.42 0.80 | 2.13 0.81 |
+| KR-like (20 ms) | matrix | 0.10 | 0.12 0.55 0.74 | 0.44 0.87 | 2.64 0.85 |
+| | shader cores | 0.10 | 0.14 0.63 0.85 | 0.51 0.96 | 2.24 0.85 |
+| UOD-Painterly (36–42 ms) | matrix | 0.20 | 0.21 0.89 1.22 | 0.70 1.39 | 1.24 |
+| | shader cores | 0.21 | 0.34 1.43 | 2.02 1.13 | 2.19 2.23 |
+
+The sequences come 10 to 20 % sooner on the matrix units in most cells, which is the in-between's own gain at these
+sizes: the budget, not the network, paces them (2 ms a frame), so the wait is the frames it takes and grows with the
+style's frame time. One KR-like stygian walk came later (2.64 s against 2.24); the Painterly rows scatter by more
+than the units explain (one round on a shared machine). Frame times matched within 3 % with either units, except
+Painterly's (36 against 42 ms median, as noisy as its waits).
+The regression harness (quick tier, 99 captures, against dev 5c1b85d7's baseline): 72 identical, 26 within tolerance,
+1 changed, the wide Painterly shoreline at 0.013 % (a few water pixels), which the alpha-weighted taps' run against
+the same baseline shows too.
+
+**The compute budget stays at 2 ms a frame** (`MOBILE_COMPUTE_FRAME_BUDGET_MS`). Evaluated: 2.5 and 2.25 ms, in a
+busy scene, with the matrix units. The player is the only mobile so far, so the scene makes the work: RIFE ×2 and
+SPAN 2× on, zoom 0.4, 1900×1000, RGBA8888 packages, the player turned into 35 bodies one after the other (Classic art in
+the Classic style, Enhanced in the others), each walking east 1.5 s and west 1.5 s, about 75 to 135 sequences and 50
+to 120 upscales wanted in two minutes. The same measurement build took the budget from the environment, and the
+budgets alternated, three rounds (2.25 two). The frame time is each frame's own, over the busy two minutes; "over
+idle" is its median less the idle 20 s after it. Means of the rounds' figures, ms (Classic without one 2.5 run that
+the machine's load slowed throughout, idle included):
+
+| style | budget | median | p95 | p99 | over idle | RIFE made, median wait | 2× made, median wait |
+|---|---|---:|---:|---:|---:|---|---|
+| Classic | 2.0 | 6.29 | 8.48 | 9.92 | +0.41 | 74, 0.08 s | 117, 0.18 s |
+| | 2.25 | 6.22 | 8.62 | 9.92 | +0.33 | 75, 0.08 s | 120, 0.20 s |
+| | 2.5 | 6.35 | 8.68 | 10.03 | +0.45 | 75, 0.08 s | 118, 0.17 s |
+| Enhanced | 2.0 | 13.88 | 16.29 | 18.31 | +1.37 | 124, 0.17 s | 89, 1.0 s |
+| | 2.25 | 14.17 | 16.81 | 19.06 | +2.02 | 124, 0.15 s | 98, 0.77 s |
+| | 2.5 | 14.57 | 17.27 | 19.48 | +1.95 | 128, 0.14 s | 98, 0.75 s |
+| KR-like | 2.0 | 14.12 | 16.81 | 18.86 | +1.03 | 124, 0.17 s | 90, 0.94 s |
+| | 2.25 | 14.49 | 17.48 | 19.83 | +1.21 | 122, 0.16 s | 88, 0.9 s |
+| | 2.5 | 14.59 | 17.42 | 19.52 | +1.05 | 126, 0.14 s | 95, 0.86 s |
+| UOD-Painterly | 2.0 | 23.37 | 26.32 | 28.04 | +0.70 | 127, 0.30 s | 53, 1.30 s |
+| | 2.25 | 23.02 | 26.20 | 28.37 | +0.92 | 129, 0.26 s | 61, 1.22 s |
+| | 2.5 | 23.54 | 26.67 | 28.84 | +1.46 | 131, 0.24 s | 69, 1.21 s |
+
+The longest wait for a 2× frame set was 8 to 12 s with any budget (a large body's walk, queued behind the others).
+
+- The threshold for raising it was the median unchanged and the p99 within the run-to-run noise, round by round.
+  2.5 ms fails it in Enhanced and KR-like, where the GPU sets the frame: the median rose in every round (Enhanced
+  +0.56 to +0.86 ms, 4 to 6 %, about 72 to 69 fps; KR-like +0.40 to +0.61, 3 to 4 %), while the 2.0 runs agreed
+  within 0.3 ms (Enhanced) and 0.8 ms (KR-like), and the p99 rose by 0.7 to 1.2 ms. That is the extra half
+  millisecond of compute on the frames that run it. 2.25 ms costs about half as much (+0.3 to +0.4 ms median).
+- What it buys is less: about 10 % more 2× sets made in the two minutes in Enhanced and KR-like (30 % in Painterly,
+  which makes the fewest), a 2× wait of 0.75 instead of 1.0 s in Enhanced, RIFE's waits 0.03 to 0.06 s shorter.
+- Classic runs at 155 to 165 fps with the CPU setting the frame, and nothing changes there: the work keeps up at
+  2 ms already. Painterly's frame time is the noisiest (the 2.0 runs spread over 2 ms) and shows no clear change.
+- So the constant stays. The step cost estimates need no retuning: with the matrix units RIFE's timed scale settles
+  at 0.93 to 1.00 and SPAN's at 0.77 to 1.19, and the timed work at 1.96 to 1.99 ms a frame (median) with a 2.0
+  budget, 2.21 to 2.23 at 2.25, 2.44 to 2.47 at 2.5.
+  The lever, if one is wanted, is a budget that follows the GPU's headroom (larger where the CPU sets the frame, as
+  in Classic), not a larger constant.
+
 ## Sharpening
 
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU
