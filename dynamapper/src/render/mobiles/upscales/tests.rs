@@ -384,3 +384,64 @@ fn a_body_whose_rife_cards_are_too_large_upscales_only_without_in_betweens() {
     clip.frames[1].anchor_x = 0;
     assert_eq!(body_fits(vec![clip]), [true, true]);
 }
+
+/// The 2x frames a package would hold of `frames` frames: canvases of `canvas` texels a side.
+fn packed(frames: usize, canvas: u32) -> PackedFrames {
+    let pixels = Arc::<[u8]>::from(vec![0; AtlasFormat::Rgba8.frame_bytes(canvas, canvas)]);
+    PackedFrames::Read((0..frames).map(|_| (canvas, canvas, pixels.clone())).collect())
+}
+
+/// A 40-pixel frame's 2x canvas: 44 with the border, at 2x.
+const PACKED_CANVAS: u32 = 88;
+
+#[test]
+fn a_clip_the_package_holds_at_2x_is_ready_without_a_job() {
+    let clip = clip(3, 40, 1);
+    let key = upscale_key(clip_key(2), &clip, 1);
+    let mut upscales = MobileUpscales::default();
+    let mut atlas = atlas();
+    upscales.want(key, clip_key(2), near(0.0), NOW);
+    upscales.entries.get_mut(&key).unwrap().packed = packed(3, PACKED_CANVAS);
+    upscales.schedule(&mut atlas, |_, _| Some(&clip), true, NOW);
+    assert!(upscales.jobs.is_empty());
+    let parts = upscales.ready(&key).expect("ready from the package");
+    // Placed as the run time's: the frames grown by the border, at 2 texels a pixel.
+    assert_eq!(parts[0].texel_scale, UPSCALE_OUTPUT_SCALE);
+    assert_eq!((parts[0].frames[0].placement.width, parts[0].frames[0].placement.anchor_x), (44.0, 22.0));
+    assert!(parts[0].frames.iter().all(|frame| frame.rect.layer >= MOBILE_ATLAS_PAGES));
+}
+
+#[test]
+fn a_rife_sequence_upscales_its_in_betweens_alone_beside_the_packed_frames() {
+    // The sequence of a clip of 2 frames at RIFE x2: frame, in-between, frame, in-between.
+    const FACTOR: u32 = 2;
+    let sequence = clip(4, 40, 1);
+    let key = InBetweenKey { frames: 2, ..upscale_key(clip_key(2), &sequence, FACTOR) };
+    let mut upscales = MobileUpscales::default();
+    let mut atlas = atlas();
+    upscales.want(key, clip_key(2), near(0.0), NOW);
+    upscales.entries.get_mut(&key).unwrap().packed = packed(2, PACKED_CANVAS);
+    upscales.schedule(&mut atlas, |_, _| Some(&sequence), true, NOW);
+    assert_eq!(upscales.jobs.len(), 1);
+    let sources = upscales.jobs[0].frames.iter().map(|frame| frame.source).collect::<Vec<_>>();
+    assert_eq!(sources, vec![sequence.frames[1].rect, sequence.frames[3].rect]);
+    let id = upscales.jobs[0].id;
+    upscales.finished.lock().push(id);
+    upscales.schedule(&mut atlas, |_, _| Some(&sequence), true, NOW + 0.1);
+    assert_eq!(upscales.ready(&key).expect("made")[0].frames.len(), 4);
+}
+
+#[test]
+fn packed_frames_that_are_not_the_canvases_are_left_to_the_run_time() {
+    let clip = clip(3, 40, 1);
+    let key = upscale_key(clip_key(2), &clip, 1);
+    for wrong in [packed(2, PACKED_CANVAS), packed(3, PACKED_CANVAS - 4)] {
+        let mut upscales = MobileUpscales::default();
+        let mut atlas = atlas();
+        upscales.want(key, clip_key(2), near(0.0), NOW);
+        upscales.entries.get_mut(&key).unwrap().packed = wrong;
+        upscales.schedule(&mut atlas, |_, _| Some(&clip), true, NOW);
+        assert_eq!(upscales.jobs.len(), 1);
+        assert_eq!(upscales.jobs[0].frames.len(), 3);
+    }
+}

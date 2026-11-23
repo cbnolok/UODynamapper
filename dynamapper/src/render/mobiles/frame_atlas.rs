@@ -301,6 +301,11 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
         Some((rects, evicted))
     }
 
+    /// Stages the upload of `pixels` (`FrameUpload::pixels`) into `rect`, room `reserve` gave.
+    pub fn upload(&mut self, rect: AtlasRect, pixels: Arc<[u8]>) {
+        self.staged.push(FrameUpload { rect, pixels });
+    }
+
     /// Makes room in the atlas of `format` for the frames of `entry`, `(width, height)` each, for pixels the GPU
     /// writes there itself: on the first page with room for all, the fullest first; when none has, in pieces, each
     /// frame on the page of the one before while it has room, else on the first page with room for it. Pages are

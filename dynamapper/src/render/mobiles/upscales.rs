@@ -7,9 +7,9 @@
 //!
 //! A body upscales whole or not at all (`MobileUpscales::body_upscales`), so its sharpness does not change from one
 //! action to the next: Always upscales every body; Balanced those runtime_specs/mobiles/Upscale.kdl lists as
-//! `always` (spec.rs), none it lists as `never`, and of the rest only a body each of whose sequences, the clip of every
-//! action and direction, or in a RIFE mode its RIFE sequence, fits the file's largest canvas (`max_canvas`, at most
-//! `UPSCALE_MAX_CANVAS_SIDE`). At 260, a larger body (the dragons, the daemons, the great UOP bodies) plays at 1x at
+//! `always` (spec.rs), none it lists as `never`, and of the rest a body its package holds 2x frames of and one each of
+//! whose sequences, the clip of every action and direction, or in a RIFE mode its RIFE sequence, fits the file's
+//! largest canvas (`max_canvas`, at most `UPSCALE_MAX_CANVAS_SIDE`). At 260, a larger body (the dragons, the daemons, the great UOP bodies) plays at 1x at
 //! any zoom in Balanced; its RIFE in-betweens, which have no size limit, are made as for any body. A rider and its
 //! mount are each a body of their own.
 //!
@@ -25,6 +25,11 @@
 //! 506 pixels wide: the largest dragons, wyrms and great UOP bodies) is stored in parts side by side, split at the same
 //! columns from the anchor in every frame, and drawn as a card per part; a frame taller than a page at 2x (none is)
 //! plays at 1x with a warning.
+//!
+//! A package may hold 2x frames made ahead of time (the converter's `--prescale`, udd_assets mobile_upscaled.rs): the
+//! same SPAN output on the same canvas. A clip's sequence whose frames the package holds reads them on the background
+//! pool (`PackedFrames`) and writes them into its room instead of upscaling them: a clip's sequence is ready without a
+//! job, a RIFE sequence's job upscales its in-betweens alone. A sequence stored in parts upscales as any.
 //!
 //! The main world takes the atlas room and lists the jobs each frame, those of the sequences drawn first, nearest the
 //! player first, then the largest on screen, then those started of sequences drawn lately (`UPSCALE_RESUME_SECS`);
@@ -42,9 +47,10 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use udd_assets::animation::mobile_strides::{MobileAnimClips, MobileClip, MobileClipFrameExtent};
+use udd_assets::animation::mobile_strides::{MobileAnimClips, MobileClip, MobileClipFrameExtent, StoredFramePixels};
 use uot_gpu_compute::upscale::tiles::{upscale_tiles, TileSpan};
 use uot_gpu_compute::upscale::{upscale_canvas_size, UPSCALE_BORDER, UPSCALE_OUTPUT_SCALE};
+use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use crate::render::view::camera::RenderZoom;
 use crate::settings::Settings;
 use crate::world::mobile_motion::DIRECTION_COUNT;
@@ -287,15 +293,31 @@ enum UpscaleState {
     /// Drawn, without room in the atlas yet.
     Wanted,
     /// The 2x frames have their room, and the render world fills them as `job`; none while not queued. The sequence
-    /// comes in one part, or in several side by side (`UpscalePlan`).
-    Generating { parts: Vec<Clip>, job: Option<u64> },
+    /// comes in one part, or in several side by side (`UpscalePlan`). The frames `packed` (by index, none when empty)
+    /// came from the package and are not upscaled.
+    Generating { parts: Vec<Clip>, job: Option<u64>, packed: Vec<bool> },
     Ready(Vec<Clip>),
     /// The sequence does not fit the upscaled pages, or a frame is taller than a page at 2x.
     Missing,
 }
 
+/// The 2x frames of a sequence's clip its package holds: the clip's frames in order, `(width, height, pixels)` as
+/// the atlas takes them (`FrameUpload::pixels`).
+type PackedClip = Vec<(u32, u32, Arc<[u8]>)>;
+
+/// Where the 2x frames a package holds of a sequence wanted stand (`MobileUpscales::read_packed`).
+enum PackedFrames {
+    /// Not looked for: upscaled at run time.
+    Unasked,
+    Reading(Task<Option<PackedClip>>),
+    Read(PackedClip),
+    /// The package holds none, or they were written into the sequence's room.
+    Absent,
+}
+
 struct UpscaleEntry {
     state: UpscaleState,
+    packed: PackedFrames,
     /// The clip drawn last showing the sequence.
     source: ClipKey,
     first_drawn: f64,
@@ -339,6 +361,8 @@ pub struct MobileUpscales {
     entries: HashMap<InBetweenKey, UpscaleEntry>,
     /// The canvases of each body drawn (`body_upscales`), by source and body.
     bodies: HashMap<(AnimSource, u32), BodyCanvases>,
+    /// Whether the package holds the 2x frames of every clip of each body asked (`body_packed`).
+    packed_bodies: HashMap<(AnimSource, u32), bool>,
     next_job: u64,
     jobs: Vec<UpscaleJob>,
     /// Whether the upscales are on: the render world loads the network then.
@@ -353,20 +377,35 @@ impl MobileUpscales {
 
     /// Whether the sequences of `key`'s body upscale in `mode`, the RIFE sequences when `rife`, else the clips: all of
     /// them or none (`body_choice`). The size rule's canvases over every action and direction (`body_canvases`) come
-    /// from its package's frame records, found once per body when the rule is asked.
+    /// from its package's frame records, found once per body when the rule is asked; a body whose package holds its
+    /// 2x frames (`body_packed`) passes it.
     pub fn body_upscales(&mut self, key: ClipKey, packages: &AnimPackages, rife: bool, mode: MobileUpscale) -> bool {
         let max_pixels = self.spec.max_canvas_pixels();
         let listed = self.spec.body(key.source, key.body);
-        body_choice(mode, listed, || canvas_within(self.body_canvases(key, packages, max_pixels).of(rife), max_pixels))
+        body_choice(mode, listed, || self.body_packed(key, packages)
+            || canvas_within(self.body_canvases(key, packages, max_pixels).of(rife), max_pixels))
+    }
+
+    /// Whether `key`'s package holds the 2x frames of every clip of its body, found once.
+    fn body_packed(&mut self, key: ClipKey, packages: &AnimPackages) -> bool {
+        *self.packed_bodies.entry((key.source, key.body)).or_insert_with(|| {
+            let Some(package) = package_of(packages, key.source) else { return false };
+            let clips = package.body_actions(key.body).into_iter().flat_map(|action| (0..DIRECTION_COUNT)
+                .filter(move |&direction| package.clip_extents(key.body, action, direction).is_some())
+                .map(move |direction| (action, direction))).collect::<Vec<_>>();
+            let packed = !clips.is_empty() && clips.iter()
+                .all(|&(action, direction)| package.has_upscaled_clip(key.body, action, direction));
+            if packed {
+                debug!("Mobile upscales: {:?} body {} comes with its 2x frames.", key.source, key.body);
+            }
+            packed
+        })
     }
 
     /// The largest canvases of `key`'s body, found once; logged when past `max_pixels`.
     fn body_canvases(&mut self, key: ClipKey, packages: &AnimPackages, max_pixels: u32) -> BodyCanvases {
         *self.bodies.entry((key.source, key.body)).or_insert_with(|| {
-            let package: Option<&dyn MobileAnimClips> = match key.source {
-                AnimSource::Classic => packages.classic.as_deref().map(|package| package as _),
-                AnimSource::Enhanced => packages.enhanced.as_deref().map(|package| package as _),
-            };
+            let package = package_of(packages, key.source);
             let canvases = body_canvases(package.into_iter().flat_map(|package| {
                 package.body_actions(key.body).into_iter().flat_map(move |action| (0..DIRECTION_COUNT)
                     .filter_map(move |direction| package.clip_extents(key.body, action, direction)))
@@ -383,8 +422,9 @@ impl MobileUpscales {
 
     /// Asks for the 2x frames of the sequence of `key`, shown by clip `source`, drawn at `now` with `priority`.
     pub fn want(&mut self, key: InBetweenKey, source: ClipKey, priority: UpscalePriority, now: f64) {
-        let entry = self.entries.entry(key).or_insert(UpscaleEntry {
-            state: UpscaleState::Wanted, source, first_drawn: now, last_drawn: now, priority,
+        let entry = self.entries.entry(key).or_insert_with(|| UpscaleEntry {
+            state: UpscaleState::Wanted, packed: PackedFrames::Unasked, source, first_drawn: now, last_drawn: now,
+            priority,
         });
         if !entry.queued(now) {
             entry.first_drawn = now;
@@ -415,7 +455,35 @@ impl MobileUpscales {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.bodies.clear();
+        self.packed_bodies.clear();
         self.jobs.clear();
+    }
+
+    /// Reads, on the background pool, the 2x frames the package holds of the clip of each sequence wanted and queued
+    /// that has none in the atlas yet, and takes those read.
+    fn read_packed(&mut self, packages: &AnimPackages, now: f64) {
+        for entry in self.entries.values_mut() {
+            if !matches!(entry.state, UpscaleState::Wanted) || !entry.queued(now) {
+                continue;
+            }
+            entry.packed = match std::mem::replace(&mut entry.packed, PackedFrames::Absent) {
+                PackedFrames::Unasked => match package_of(packages, entry.source.source) {
+                    Some(package) if package.has_upscaled_clip(entry.source.body, entry.source.action,
+                        entry.source.direction) => {
+                        let (packages, source) = (packages.clone(), entry.source);
+                        PackedFrames::Reading(background_pool().spawn(Priority::Visible, "mobile 2x frames read",
+                            move || read_packed_clip(&packages, source)))
+                    }
+                    _ => PackedFrames::Absent,
+                },
+                PackedFrames::Reading(mut task) => match task.poll() {
+                    TaskPoll::Pending => PackedFrames::Reading(task),
+                    TaskPoll::Ready(Some(frames)) => PackedFrames::Read(frames),
+                    TaskPoll::Ready(None) | TaskPoll::Failed => PackedFrames::Absent,
+                },
+                packed => packed,
+            };
+        }
     }
 
     /// Takes the jobs the render world finished, makes room for the sequences drawn, and lists the jobs to run, the
@@ -455,6 +523,14 @@ impl MobileUpscales {
                     continue;
                 }
             };
+            // The 2x frames the package holds go in as they are; it waits for them while they are read.
+            let packed = match &entry.packed {
+                PackedFrames::Reading(_) => continue,
+                PackedFrames::Read(frames) => packed_slots(&plan, clip, key.factor, frames)
+                    .map_err(|error| warn!("The packed 2x frames of mobile clip {:?} are left out: {error}.",
+                        entry.source)).ok(),
+                PackedFrames::Unasked | PackedFrames::Absent => None,
+            };
             // The parts one after another, each its frames in order.
             let frames = (0..plan.parts()).flat_map(|part| clip.frames.iter().map(move |frame| (part, frame)))
                 .collect::<Vec<_>>();
@@ -470,6 +546,15 @@ impl MobileUpscales {
                         plan.canvas.x, plan.canvas.y, plan.parts(),
                         frames.iter().map(|&(part, frame)| plan.passes(frame, part).len()).sum::<usize>(),
                         clip.frames.len());
+                    // A packed sequence comes in one part: its frames' rooms are the first.
+                    let packed = packed.map_or_else(Vec::new, |slots| {
+                        for (rect, pixels) in rects.iter().zip(&slots) {
+                            if let Some(pixels) = pixels {
+                                atlas.upload(*rect, pixels.clone());
+                            }
+                        }
+                        slots.iter().map(Option::is_some).collect()
+                    });
                     let mut rects = rects.into_iter();
                     let parts = (0..plan.parts()).map(|part| Clip {
                         frames: clip.frames.iter().zip(rects.by_ref())
@@ -479,7 +564,12 @@ impl MobileUpscales {
                         stored: clip.stored,
                         texel_scale: UPSCALE_OUTPUT_SCALE,
                     }).collect();
-                    UpscaleState::Generating { parts, job: None }
+                    if !packed.is_empty() && packed.iter().all(|&packed| packed) {
+                        debug!("Mobile upscales: {key:?} at 2x from its package in {:.2} s.", now - entry.first_drawn);
+                        UpscaleState::Ready(parts)
+                    } else {
+                        UpscaleState::Generating { parts, job: None, packed }
+                    }
                 }
                 None => {
                     warn!("The 2x frames of mobile clip {:?} do not fit the frame atlas, so it plays at 1x.",
@@ -487,6 +577,7 @@ impl MobileUpscales {
                     UpscaleState::Missing
                 }
             };
+            entry.packed = PackedFrames::Absent;
         }
         self.forget(&evicted);
 
@@ -502,7 +593,7 @@ impl MobileUpscales {
                 _ => false,
             };
             let clip = base(key, entry.source).filter(|_| listed);
-            let UpscaleState::Generating { parts, job } = &mut entry.state else { continue };
+            let UpscaleState::Generating { parts, job, packed } = &mut entry.state else { continue };
             let plan = clip.and_then(|clip| UpscalePlan::of(clip, clip.frames.first()?.rect.format).ok());
             let (Some(clip), Some(plan)) = (clip, plan) else {
                 *job = None;
@@ -516,10 +607,14 @@ impl MobileUpscales {
             for part in parts.iter() {
                 part.touch_pages(atlas, now);
             }
-            // A frame's parts one after another; a part the frame does not reach has nothing to make.
-            let frames = clip.frames.iter().enumerate().flat_map(|(index, frame)| {
-                parts.iter().enumerate().map(move |(part, upscaled)| (part, frame, upscaled.frames[index].rect))
-            });
+            // A frame's parts one after another; a part the frame does not reach has nothing to make, nor a frame the
+            // package gave.
+            let packed = &*packed;
+            let frames = clip.frames.iter().enumerate()
+                .filter(|(index, _)| !packed.get(*index).copied().unwrap_or(false))
+                .flat_map(|(index, frame)| {
+                    parts.iter().enumerate().map(move |(part, upscaled)| (part, frame, upscaled.frames[index].rect))
+                });
             self.jobs.push(UpscaleJob {
                 id,
                 snap_alpha: key.source == AnimSource::Classic,
@@ -546,6 +641,50 @@ fn upscaled_placement(rect: AtlasRect, placement: FramePlacement) -> FramePlacem
     }
 }
 
+/// The package of `source`'s clips, as clips.
+fn package_of(packages: &AnimPackages, source: AnimSource) -> Option<&dyn MobileAnimClips> {
+    match source {
+        AnimSource::Classic => packages.classic.as_deref().map(|package| package as _),
+        AnimSource::Enhanced => packages.enhanced.as_deref().map(|package| package as _),
+    }
+}
+
+/// The 2x frames the package holds of the clip of `key`, as the atlas takes them.
+fn read_packed_clip(packages: &AnimPackages, key: ClipKey) -> Option<PackedClip> {
+    let clip = package_of(packages, key.source)?.upscaled_stored_clip(key.body, key.action, key.direction)
+        .map_err(|error| warn!("The packed 2x frames of mobile clip {key:?}: {error:#}")).ok()??;
+    Some(clip.frames.into_iter().map(|frame| (u32::from(frame.width), u32::from(frame.height), Arc::from(
+        match frame.pixels {
+            StoredFramePixels::Rgba8(rgba) => rgba,
+            StoredFramePixels::Bc7Blocks(blocks) => blocks,
+        }))).collect())
+}
+
+/// The packed 2x frames of a sequence's frames by index: a clip's for each of its frames, a RIFE sequence's for each
+/// of the clip's frames in it (every `factor`th, the in-betweens after it upscaled at run time). An error when the
+/// sequence comes in parts or the frames are not the sequence's 2x canvases.
+fn packed_slots(plan: &UpscalePlan, sequence: &Clip, factor: u32, frames: &PackedClip)
+    -> Result<Vec<Option<Arc<[u8]>>>, String> {
+    if plan.parts() != 1 {
+        return Err(format!("the sequence is stored in {} parts", plan.parts()));
+    }
+    let factor = factor.max(1) as usize;
+    if frames.len() * factor != sequence.frames.len() {
+        return Err(format!("{} frames for a sequence of {} at {factor} a frame", frames.len(), sequence.frames.len()));
+    }
+    let mut slots = vec![None; sequence.frames.len()];
+    for (index, (width, height, pixels)) in frames.iter().enumerate() {
+        let frame = &sequence.frames[index * factor];
+        let size = plan.size(frame, 0);
+        if size != (*width, *height) || pixels.len() != frame.rect.format.frame_bytes(*width, *height) {
+            return Err(format!("frame {index} is {width}x{height} in {} bytes, its canvas {}x{}", pixels.len(),
+                size.0, size.1));
+        }
+        slots[index * factor] = Some(pixels.clone());
+    }
+    Ok(slots)
+}
+
 /// The canvas of frames up to `largest` on each side: with the border, rounded up to `UPSCALE_CANVAS_MULTIPLE`.
 fn canvas_for(largest: UVec2) -> UVec2 {
     let (width, height) = upscale_canvas_size(largest.x, largest.y);
@@ -561,9 +700,8 @@ fn canvas_within(canvas: UVec2, max_pixels: u32) -> bool {
     canvas.x * canvas.y <= max_pixels
 }
 
-/// Whether a body upscales in `mode`, given its entry in the spec (`listed`) and whether it `fits` the size rule,
-/// asked only when needed: the one place the choice is made. (A package that comes with a body's 2x frames would answer
-/// before it.)
+/// Whether a body upscales in `mode`, given its entry in the spec (`listed`) and whether it `fits` the size rule or its
+/// package holds its 2x frames, asked only when needed: the one place the choice is made.
 fn body_choice(mode: MobileUpscale, listed: Option<BodyUpscale>, fits: impl FnOnce() -> bool) -> bool {
     match (mode, listed) {
         (MobileUpscale::Off, _) => false,
@@ -667,9 +805,14 @@ pub fn sys_schedule_mobile_upscales(
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     clips: Res<MobileClips>,
     in_betweens: Res<MobileInBetweens>,
+    packages: Res<super::MobileAnimPackages>,
 ) {
     let Some(mut atlas) = atlas else { return };
     let active = settings.world_rendering.mobile_upscale != MobileUpscale::Off && atlas.upscaled_pages() > 0;
+    let now = time.elapsed_secs_f64();
+    if active {
+        upscales.read_packed(&packages.0, now);
+    }
     let base = |key: &InBetweenKey, source: ClipKey| -> Option<&Clip> {
         if key.factor > 1 {
             return in_betweens.ready(key);
@@ -677,7 +820,7 @@ pub fn sys_schedule_mobile_upscales(
         clips.resident(source).filter(|clip| upscale_key(source, clip, 1) == *key)
     };
     // Only upscaled entries empty for upscaled ones, and they are forgotten here.
-    let _ = upscales.schedule(&mut atlas, base, active, time.elapsed_secs_f64());
+    let _ = upscales.schedule(&mut atlas, base, active, now);
 }
 
 /// The upscaled pages the setting gives the atlases (`MobileFrameAtlas::set_upscaled_pages`).
