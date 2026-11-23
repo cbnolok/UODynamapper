@@ -1,4 +1,7 @@
 #![allow(unused)]
+// The shared BC7 RDO GPU cache needs a deeper auto-trait check through wgpu's resource types.
+#![recursion_limit = "256"]
+
 // Category modules own the source files; re-exports preserve existing import paths.
 pub mod animation;
 pub mod atlas;

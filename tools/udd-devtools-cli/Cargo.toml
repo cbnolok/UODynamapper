@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 autobins = false
 
+[lints]
+workspace = true
+
 [features]
 dev-tool-tests = []
 gpu-bench = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:wesl", "dep:dds"]
