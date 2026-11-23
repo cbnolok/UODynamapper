@@ -274,7 +274,9 @@ Reading the table:
 - **Strides.** A repack keeps a stride only where the clip's frames hash the same, and filtered clips hash
   differently: 1928 of the 4125 strides were dropped. The filter does not move a foot, so the old strides were put
   back on the new hashes (`udd-cli tool strides status --list` gives them, `strides import` stores them); the
-  exported tables before and after are equal apart from the hashes.
+  exported tables before and after are equal apart from the hashes. The packages now record the client frames each
+  clip was made from (`metadata/stride_sources.bin`), and a repack carries a stride over to new frames of the same
+  client frames, so a filter change keeps the strides.
 
 ## Visuals
 

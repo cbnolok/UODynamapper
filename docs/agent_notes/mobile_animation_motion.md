@@ -125,7 +125,15 @@ what it measured, unchanged, changed, new, removed and rejected. By hand, `udd-c
 writes a package's strides as a tab-separated table (`source body action south south-west west stride hash`), imports
 one (rows whose hash no longer matches the frames are skipped; rows without a hash need `--trust-unhashed`), and lists
 the stale ones. A repack with `udd-cli pack-mobile-anims` / `pack-ec-mobile-anims` keeps the strides of the package it
-replaces (or of `--strides-from`) whose frames still hash the same; changed and new clips get none until measured.
+replaces (or of `--strides-from`) whose frames still hash the same, or are made from the same client frames: the
+packers record each clip's hash next to the hash of the client frames it was made from, decoded before the frame filter,
+trim, scale or encode (`metadata/stride_sources.bin`, UDDP_FORMATS.md §3.1), so a filter change in
+`MobileFrameFilters.kdl` carries the strides over to the new hashes. Clips whose client frames changed, and new clips,
+get none until measured. `udd-cli tool strides sources FILE... --ccdir|--ecdir` records the entry in a package packed
+before it existed (3 s for the Classic test package, 16 s plus 9 s writing for the Enhanced one). The test set got it
+so on 2026-11-23, its exported strides unchanged; a repack of copies with other filters on a few bodies (Classic 1, 9,
+200 median or highlight; Enhanced dragon 12/59 back to highlight, 1 none, 200 median) kept all 1914 and 4125 strides,
+18 and 14 of them carried to new hashes, the exported values equal.
 The first strides, measured into the table that was bundled in the binary until 2026-11-21, were moved into the
 packages with `strides import --trust-unhashed` from the measurement report, hashed on the packages they were measured
 on, without measuring again. The stride is the median of the side facings that measured (at least two), even when they
