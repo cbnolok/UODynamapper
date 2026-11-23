@@ -1,6 +1,7 @@
 mod gumps;
 mod package_compare;
 mod paperdoll;
+mod video_pace;
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre;
@@ -20,6 +21,8 @@ enum Command {
     Gumps(gumps::Arguments),
     /// Compare baked paperdolls with archived pre-bake composition baselines.
     PaperdollCompare(paperdoll::Arguments),
+    /// The ground speed and the walker's cycle rate in a walking recording, decoded through ffmpeg.
+    VideoPace(video_pace::Arguments),
 }
 
 fn main() -> eyre::Result<()> {
@@ -28,5 +31,6 @@ fn main() -> eyre::Result<()> {
         Command::PackageCompare(args) => package_compare::run(args),
         Command::Gumps(args) => gumps::run(args),
         Command::PaperdollCompare(args) => paperdoll::run(args),
+        Command::VideoPace(args) => video_pace::run(args),
     }
 }

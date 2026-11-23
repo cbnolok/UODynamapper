@@ -365,7 +365,14 @@ clients' frame time. Recorded headless through the control socket on the test pa
 and running along a screen diagonal and along the screen's horizontal: Classic (horse, wolf, dog, dragon), Enhanced
 (daemon, kirin on foot and ridden, ostard, dragon), KR-like (ostard) and UOD-Painterly (daemon), side-by-side mp4s in
 `/home/claudio/rust-target/uodynamapper-scratch/strides-curated/`. The silhouette-period tracker (`video_pace.py`)
-locks on the recordings' six-frame repeats here, so the rates are the strides' rather than measured. The regression
+locks on the recordings' six-frame repeats here, so the rates are the strides' rather than measured.
+
+The tracker is now `udd-devtools-cli video-pace <video> --half N` (`--halves`, `--shifts <tsv>`), the script ported
+to Rust: an `ffmpeg` pipe of raw frames, the frames, pairs, match offsets and autocorrelation lags in parallel. On
+the Enhanced ostard recording it prints the script's numbers to the digit; on the daemon's the ground matches and
+two near-flat autocorrelations (0.01 to 0.13) settle on another peak, its sums in f64 against the script's f32. It
+measures a view of 1941 frames in about 75 s against the script's six minutes, and gives a stretch too short for a
+period none instead of failing, as the script did on the ridden kirin. The regression
 harness (quick tier, all four styles): 99 captures, 76 identical and 23 within tolerance, none changed.
 
 ## Upscaling when zoomed
