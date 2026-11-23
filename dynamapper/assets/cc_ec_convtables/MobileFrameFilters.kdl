@@ -28,3 +28,32 @@
 
 default package="ec" filter="highlight"
 default package="cc" filter="none"
+
+// Enhanced bodies whose highlights clip the most (docs/agent_notes/ec_frame_quantization.md), chosen by eye on sheets
+// of source, highlight and median. "median" where the skin is smooth and the specks remain after "highlight"; the
+// others keep "highlight", the default, listed to record that they were looked at: "median" flattens their scales,
+// feathers, rings or patterns.
+body 12 package="ec" filter="median" // Dragon (frames of body 59)
+body 59 package="ec" filter="median" // Dragon
+body 286 package="ec" filter="median" // Rotworm (Young)
+
+body 197 package="ec" filter="highlight" // Chaos Dragon
+body 198 package="ec" filter="highlight" // Order Dragon
+body 49 package="ec" filter="highlight" // White Wyrm (frames of body 180)
+body 180 package="ec" filter="highlight" // White Wyrm
+body 60 package="ec" filter="highlight" // Drake
+body 61 package="ec" filter="highlight" // Drake (frames of body 60)
+body 103 package="ec" filter="highlight" // Serpentine Dragon
+body 797 package="ec" filter="highlight" // Rikktor
+body 131 package="ec" filter="highlight" // Efreet
+body 161 package="ec" filter="highlight" // Ice Elemental
+body 163 package="ec" filter="highlight" // Snow Elemental
+body 832 package="ec" filter="highlight" // Pheonix
+body 123 package="ec" filter="highlight" // Ethereal Warrior
+body 175 package="ec" filter="highlight" // Ethereal Warrior (frames of body 123)
+body 287 package="ec" filter="highlight" // Bloodworm
+body 20 package="ec" filter="highlight" // Frost Spider
+body 742 package="ec" filter="highlight" // Tunnel Spirit
+body 256 package="ec" filter="highlight" // Chief Paroxysmus
+body 312 package="ec" filter="highlight" // Abyssmal Horror
+body 1246 package="ec" filter="highlight" // Killer Pumpkin Demon
