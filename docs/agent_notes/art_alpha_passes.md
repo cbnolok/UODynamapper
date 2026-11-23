@@ -13,9 +13,32 @@ materials built in `render/statics/statics_draw.rs`:
 
 Each texel lands in exactly one pass. Item surfaces, blend surfaces, filtered wide water and explicitly translucent
 art (instance opacity below one, `classic_static_translucency.md`) raise the cutoff to 0.9999, so everything not fully
-opaque blends. The fractional alpha the transparent pass sees at ordinary sprite edges comes from the texture filter:
-Enhanced's `pixel_art_atlas_uv_iq` through the hardware bilinear sampler, KR-like's client filter (premultiplied taps
-since 693a1e76), and BC7's edge texels.
+opaque blends. The fractional alpha the transparent pass sees at ordinary sprite edges comes from the EC art's own
+authored alpha, BC7's edge texels, and KR-like's client filter (`texture_filter = 1`), whose taps blend premultiplied
+since 693a1e76.
+
+### Which taps filter sprite art (checked 2026-11-23)
+
+No path takes a straight-alpha hardware-linear sample of sprite art or mobile frames, so no tap blends a transparent
+texel's colour (the packages' black) into an edge:
+
+- **Pixel-art filter** (`texture_filter = 0`: Classic, Enhanced and UOD-Painterly; statics in `art/main.wesl`, ground
+  art in `art/ground.wesl`, mobiles through `sprite_page_tap` and `mobile_frame_tap`). The art page atlases
+  (`create_art_atlas_image`, statics_draw.rs) and the mobile frame atlases (`atlas_image`, frame_atlas.rs) set no
+  sampler, so they get Bevy's default one, nearest (`ImagePlugin::default_nearest()`, app.rs; bevy_render's
+  `GpuImage` resolves `ImageSampler::Default` to it). `pixel_art_atlas_uv_iq` only moves the point inside the texel
+  the plain uv lies in, so the tap is nearest at every zoom; `enable_linear_filtering` (on in UOD-Painterly) reaches
+  land and EC item surfaces only. The SPAN 2x frames and the RIFE in-betweens are frames in the same atlases, drawn
+  the same way; the crossfade of two frames (`mobile_frames_mix`) blends premultiplied.
+- **Client filter** (`texture_filter = 1`: KR-like): `client_filtered_rect` and `mobile_frame_client_filtered` load the
+  texels and blend them premultiplied, the emulated mip box included.
+- **Filtered wide water** (zoom out): premultiplied taps.
+
+Evidence: Enhanced, UOD-Painterly and Classic captures at Britain 1495,1697 (zoom 0.4 and 0.73, CC and EC art, SPAN
+on and off) with the iq point replaced by the plain uv match exactly for EC art and at zoom 0.73. For CC art at zoom
+0.4, 1.4 % of the pixels differ, as single pixel columns along the roofs where float rounding puts the point in the
+neighbouring texel; with a linear sampler every magnified texel's interior would have changed. The Classic art's
+edges stay stair-stepped and binary in every style but KR-like.
 
 ## The edge factor, removed 2026-11-22
 

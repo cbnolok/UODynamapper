@@ -842,12 +842,14 @@ classic_formats`). Both are binary in alpha: the sampled pages hold alpha 0 and 
 those per animation, the art has no palette. The transparent texels are (0, 0, 0, 0), all of them. Blocks of the
 Classic mobile pages: 61 % transparent, 21 % all opaque, 17 % mixed (art 67, 19, 15 %).
 
-**How the renderer reads them.** A sprite's tap (`client_bilinear_rect`, `mobile_frame_bilinear`) blends the four
-texels straight, not premultiplied, then cuts at alpha one half (the opaque pass) and draws the rest blended. The RGB
-of a transparent texel therefore reaches every edge pixel: next to a transparent black texel the edge darkens. Against
+**How the renderer reads them.** Under the KR client filter (KR-like), a sprite's tap (`client_bilinear_rect`,
+`mobile_frame_bilinear`) blended the four texels straight, not premultiplied, then cut at alpha one half (the opaque
+pass) and drew the rest blended. The RGB of a transparent texel therefore reached every edge pixel: next to a
+transparent black texel the edge darkened. Against
 a premultiplied tap (sum of alpha x RGB over sum of alpha, where a transparent texel lends no colour) the lossless
 pages' edges are at 22.2 to 22.8 dB: the dark fringe is in the data and the filter, whatever the format. (The
-renderer has taken the premultiplied tap since, see "What to do"; the measurements below are of the straight one.)
+renderer has taken the premultiplied tap since, see "What to do"; the measurements below are of the straight one. The
+other styles sample these pages nearest, with no blend.)
 
 Measured on the pages `bc7_gpu` samples (Classic mobile 20 pages, 56.8 Mpx; Classic art 20, 20.5 Mpx; Enhanced mobile
 16, 48.0 Mpx, for contrast), each page compressed alone. Opaque PSNR is RGB over the texels of alpha 255 only. Flips
@@ -1028,11 +1030,12 @@ This section measures BC7 that ignores the colour of the texels of alpha 0 (2026
 taps never show that colour: KR-like's client filter, SPAN and RIFE. Yet the kernel spends its endpoints and indices
 on the black that the packers store there, and the edge blocks' colour line runs from black to the sprite's colour.
 
-One tap does show it. The Enhanced style's hardware bilinear (`pixel_art_atlas_uv_iq`, straight; art_alpha_passes.md)
-blends that colour into the fringe. There the packages hold black today, and the "don't care" encode gives one of the
-block's own colours instead. `classic_formats` measures that tap: on the Classic mobile pages, its straight bilinear
-edges move from 22.29 to 26.32 dB against the premultiplied tap and from 37.77 to 27.09 dB against the lossless
-page's straight tap. The dark fringe lightens towards the premultiplied result, a change of look in that style.
+No other tap of the renderer shows it either. The pixel-art filter of Classic, Enhanced and UOD-Painterly
+(`pixel_art_atlas_uv_iq`) samples the art and mobile frame atlases nearest, through Bevy's default sampler, so it
+never blends a transparent texel into an edge (art_alpha_passes.md, "Which taps filter sprite art"). `classic_formats`
+still measures a straight bilinear tap, as a model of a filter that would: on the Classic mobile pages its edges move
+from 22.29 to 26.32 dB against the premultiplied tap and from 37.77 to 27.09 dB against the lossless page's straight
+tap. That changes nothing on screen today; it matters only if a straight linear tap of these pages is ever added.
 
 The kernel tried ([`dont_care.patch`](atlas_page_compression/dont_care.patch), against bc7.wgsl and page_encode.rs
 of 4e2add68) works like this:

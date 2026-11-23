@@ -241,8 +241,9 @@ the pack holds. Bevy already compiles at runtime, and `shader_defs` remove the o
 A mixed pack pays a pipeline switch wherever draw order forces a change of format. Compiling at load also avoids the mid-game
 stutter the user dislikes in the original client.
 
-Palette indices can't use hardware filtering, which the renderer relies on: `art/main.wesl` samples colour once through the
-hardware sampler after `pixel_art_atlas_uv_iq`. Fetches per pixel with that filter on:
+Palette indices can't use hardware filtering. The renderer does not rely on it for sprites: `art/main.wesl` samples colour
+once after `pixel_art_atlas_uv_iq`, through the atlas's nearest sampler (art_alpha_passes.md), and the KR client filter
+loads its four texels itself. Fetches per pixel with the pixel-art filter:
 
 | Layout | Fetches |
 |---|---:|

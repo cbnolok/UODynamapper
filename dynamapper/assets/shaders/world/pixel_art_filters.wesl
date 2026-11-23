@@ -23,6 +23,8 @@ fn pixel_art_uv_iq_grad(uv: vec2<f32>, texture_size: vec2<f32>, dx: vec2<f32>, d
     return snapped / size;
 }
 
+// The art and mobile frame atlases sample nearest (Bevy's default sampler, `ImagePlugin::default_nearest` in app.rs):
+// there the snapped point stays in the texel the plain uv lies in, and no tap blends a transparent texel into an edge.
 fn pixel_art_atlas_uv_iq(
     uv: vec2<f32>,
     uv_min: vec2<f32>,
