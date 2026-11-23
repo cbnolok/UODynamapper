@@ -468,3 +468,74 @@ fn benchmark() {
         }
     }
 }
+
+/// The tiled test's frame (with its border, a canvas of 154x122), the workspace it tiles on (3 by 3 tiles), and the
+/// column its two regions meet at.
+const TILED_FRAME: (u32, u32) = (150, 118);
+const TILED_WORKSPACE: u32 = 64;
+const TILED_SPLIT: u32 = 77;
+
+/// The 2x output of `workspace`'s frame at `origin`, rows packed (no row padding).
+fn upscaled_texels(gpu: &Gpu, workspace: &UpscaleWorkspace, frame: SourceRect, origin: [i32; 2]) -> Vec<u8> {
+    workspace.set_frame_at(&gpu.queue, 0, frame, origin, false);
+    let readback = readback_buffer(gpu, workspace.output().size());
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    record(&mut encoder, &mut workspace.upscale(0));
+    encoder.copy_buffer_to_buffer(workspace.output(), 0, &readback, 0, workspace.output().size());
+    gpu.queue.submit([encoder.finish()]);
+    let bytes = read_back(gpu, &readback);
+    let (width, height) = workspace.output_size();
+    let row = workspace.output_bytes_per_row() as usize;
+    let packed = (width * UPSCALE_OUTPUT_TEXEL_BYTES) as usize;
+    (0..height as usize).flat_map(|y| bytes[y * row..y * row + packed].iter().copied()).collect()
+}
+
+#[test]
+#[ignore = "requires a GPU adapter; run explicitly for upscaler changes"]
+fn tiles_stitch_into_the_whole_canvas() {
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let (frame_width, frame_height) = TILED_FRAME;
+    let (width, height) = upscale_canvas_size(frame_width, frame_height);
+    let frame = SourceRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height };
+    let noise: Vec<u8> = (0..frame_width * frame_height * UPSCALE_OUTPUT_TEXEL_BYTES)
+        .map(|index| ((index as f32 * BENCHMARK_INPUT_STEP).fract() * BYTE_MAX) as u8).collect();
+    // The canvas in two regions, as a frame stored in two parts is: the left, and the right from an odd column.
+    let rows = tiles::TileSpan { start: 0, end: height };
+    let tiles = [(0, TILED_SPLIT), (TILED_SPLIT, width)].into_iter().flat_map(|(start, end)| {
+        tiles::upscale_tiles([width, height], [TILED_WORKSPACE; 2], [tiles::TileSpan { start, end }, rows]).unwrap()
+    }).collect::<Vec<_>>();
+    println!("{frame_width}x{frame_height} on {TILED_WORKSPACE}x{TILED_WORKSPACE}: {} tiles", tiles.len());
+    let texel = UPSCALE_OUTPUT_TEXEL_BYTES as usize;
+    let out_row = (width * UPSCALE_OUTPUT_SCALE) as usize * texel;
+    let tile_row = (TILED_WORKSPACE * UPSCALE_OUTPUT_SCALE) as usize * texel;
+    for (name, texels) in [("synthetic", synthetic_frame(frame_width, frame_height)), ("noise", noise)] {
+        let (_texture, source) = atlas_texture(&gpu, (frame_width, frame_height, 1), &texels);
+        for &units in &gpu.units {
+            let model = UpscaleModel::new(&gpu.device, units).unwrap();
+            let whole_workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
+            let whole = upscaled_texels(&gpu, &whole_workspace, frame, [UPSCALE_BORDER as i32; 2]);
+            let tile_workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, TILED_WORKSPACE, TILED_WORKSPACE)
+                .unwrap();
+            let mut stitched = vec![0u8; whole.len()];
+            for tile in &tiles {
+                let output = upscaled_texels(&gpu, &tile_workspace, frame, tile.frame_origin());
+                let ([from_x, from_y], [core_width, core_height]) = tile.output_core();
+                let [to_x, to_y] = [0, 1].map(|axis| tile.core[axis].start * UPSCALE_OUTPUT_SCALE);
+                let bytes = core_width as usize * texel;
+                for y in 0..core_height as usize {
+                    let from = (from_y as usize + y) * tile_row + from_x as usize * texel;
+                    let to = (to_y as usize + y) * out_row + to_x as usize * texel;
+                    stitched[to..to + bytes].copy_from_slice(&output[from..from + bytes]);
+                }
+            }
+            let worst = whole.iter().zip(&stitched).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+            let differing = whole.chunks_exact(texel).zip(stitched.chunks_exact(texel)).filter(|(a, b)| a != b).count();
+            println!("{name} on the {units:?}: worst difference {worst} steps, {differing} of {} texels differ",
+                whole.len() / texel);
+            assert!(worst <= OUTPUT_STEP_TOLERANCE, "{name} on the {units:?}: tiles differ by {worst} steps");
+        }
+    }
+}

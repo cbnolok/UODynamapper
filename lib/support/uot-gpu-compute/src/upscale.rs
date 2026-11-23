@@ -16,7 +16,11 @@
 //! takes the grey matte off the network's colour (see shaders/upscale/pixel.wgsl). The frame sits on a canvas with a
 //! transparent border of [`UPSCALE_BORDER`] texels, so outlines and the bicubic alpha can grow past the frame's edge:
 //! the output covers the whole canvas at 2x, the frame's top left texel starting at `2 * UPSCALE_BORDER`.
+//!
+//! A canvas larger than a workspace upscales in tiles ([`tiles`]): windows of it, each set with
+//! [`UpscaleWorkspace::set_frame_at`], whose cores put together are the whole canvas's upscale.
 
+pub mod tiles;
 mod weights;
 #[cfg(test)]
 mod tests;
@@ -48,6 +52,9 @@ const COLOR_CHANNELS: u32 = 3;
 const SPAB_BLOCKS: u32 = 6;
 const CONV_SIDE: u32 = 3;
 const POINTWISE_SIDE: u32 = 1;
+/// The 3x3 convolutions from the input to the upsampler, one after another: conv_1, the three of each SPAB block,
+/// conv_2 and the upsampler (conv_cat is pointwise).
+const CONV_SIDE_LAYERS: u32 = 1 + 3 * SPAB_BLOCKS + 1 + 1;
 /// The upsampler's convolution: each colour channel's 4x4 sub-pixels, pixel-shuffled by `finish`.
 const UPSAMPLER_CHANNELS: u32 = COLOR_CHANNELS * NETWORK_SCALE * NETWORK_SCALE;
 // Every layer writes FEATURES channels, the upsampler too.
@@ -150,12 +157,13 @@ struct PixelUniform {
     source_y: u32,
     frame_width: u32,
     frame_height: u32,
-    border: u32,
+    origin_x: i32,
+    origin_y: i32,
     alpha_base: u32,
     network_base: u32,
     row_texels: u32,
     snap_alpha: u32,
-    _pad: [u32; 3],
+    _pad: [u32; 2],
 }
 
 /// The compiles [`UpscalePipelines::new`] reports for the convolutions on `units`: a convolution variant and tile
@@ -436,16 +444,19 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource: buffer.as_entire_binding() }
 }
 
-/// The per-pixel steps' parameters for a canvas and a frame on it.
-fn pixel_uniform(width: u32, height: u32, frame: SourceRect, snap_alpha: bool) -> PixelUniform {
+/// The per-pixel steps' parameters for a canvas and a frame on it, its top left at `origin`.
+fn pixel_uniform(width: u32, height: u32, frame: SourceRect, origin: [i32; 2], snap_alpha: bool) -> PixelUniform {
     let pixels = width * height;
     PixelUniform {
         width, height, pixels, layer: frame.layer, source_x: frame.x, source_y: frame.y, frame_width: frame.width,
-        frame_height: frame.height, border: UPSCALE_BORDER, alpha_base: ALPHA_PLANE * pixels,
+        frame_height: frame.height, origin_x: origin[0], origin_y: origin[1], alpha_base: ALPHA_PLANE * pixels,
         network_base: NETWORK_OUTPUT_PLANE * pixels, row_texels: output_bytes_per_row(width) / UPSCALE_OUTPUT_TEXEL_BYTES,
-        snap_alpha: snap_alpha as u32, _pad: [0; 3],
+        snap_alpha: snap_alpha as u32, _pad: [0; 2],
     }
 }
+
+/// Where a frame's top left lies on a canvas of its own: past the border.
+const FRAME_ORIGIN: [i32; 2] = [UPSCALE_BORDER as i32; 2];
 
 /// The canvas a frame needs: the frame and its transparent border on each side.
 pub fn upscale_canvas_size(frame_width: u32, frame_height: u32) -> (u32, u32) {
@@ -518,7 +529,7 @@ impl UpscaleWorkspace {
 
         let (out_width, out_height) = (width * UPSCALE_OUTPUT_SCALE, height * UPSCALE_OUTPUT_SCALE);
         let pixel_uniform =
-            pixel_uniform(width, height, SourceRect { layer: 0, x: 0, y: 0, width: 0, height: 0 }, false);
+            pixel_uniform(width, height, SourceRect { layer: 0, x: 0, y: 0, width: 0, height: 0 }, FRAME_ORIGIN, false);
         let mut pending = planner.pending;
         // A slot's prepare holds its parameters; its finish reads them there too.
         for _ in 0..UPSCALE_FRAME_SLOTS {
@@ -607,9 +618,16 @@ impl UpscaleWorkspace {
             return Err(format!("upscale: a {}x{} frame needs a {needed_width}x{needed_height} canvas, this one is {}x{}",
                 frame.width, frame.height, self.width, self.height));
         }
-        let uniform = pixel_uniform(self.width, self.height, frame, snap_alpha);
-        queue.write_buffer(&self.uniforms, self.slot_offsets[slot], bytemuck::bytes_of(&uniform));
+        self.set_frame_at(queue, slot, frame, FRAME_ORIGIN, snap_alpha);
         Ok(())
+    }
+
+    /// [`UpscaleWorkspace::set_frame`] with the frame's top left at `origin` on the canvas, which may lie outside it:
+    /// the canvas is then a window of the frame's own canvas, a tile ([`tiles::UpscaleTile::frame_origin`]). The
+    /// canvas outside the frame is transparent.
+    pub fn set_frame_at(&self, queue: &wgpu::Queue, slot: usize, frame: SourceRect, origin: [i32; 2], snap_alpha: bool) {
+        let uniform = pixel_uniform(self.width, self.height, frame, origin, snap_alpha);
+        queue.write_buffer(&self.uniforms, self.slot_offsets[slot], bytemuck::bytes_of(&uniform));
     }
 
     /// The slot's frame onto the canvas, transparent around it, as the network's input.

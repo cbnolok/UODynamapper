@@ -27,13 +27,15 @@ struct Pixel {
     width: u32,
     height: u32,
     pixels: u32,
-    // The frame in the source texture, and where it starts on the canvas (both sides).
+    // The frame in the source texture, and where its top left lies on the canvas: past the border on a canvas of its
+    // own, outside the canvas when the canvas is a tile starting inside the frame.
     layer: u32,
     source_x: u32,
     source_y: u32,
     frame_width: u32,
     frame_height: u32,
-    border: u32,
+    origin_x: i32,
+    origin_y: i32,
     // Arena elements: the alpha plane, and the upsampler's first output channel.
     alpha_base: u32,
     network_base: u32,
@@ -68,8 +70,8 @@ fn prepare(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= pixel.pixels) {
         return;
     }
-    let x = i32(id.x % pixel.width) - i32(pixel.border);
-    let y = i32(id.x / pixel.width) - i32(pixel.border);
+    let x = i32(id.x % pixel.width) - pixel.origin_x;
+    let y = i32(id.x / pixel.width) - pixel.origin_y;
     var texel = vec4<f32>(0.0);
     if (x >= 0 && y >= 0 && x < i32(pixel.frame_width) && y < i32(pixel.frame_height)) {
         let at = vec2<i32>(i32(pixel.source_x) + x, i32(pixel.source_y) + y);
