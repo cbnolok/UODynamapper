@@ -33,7 +33,7 @@ impl UddConvApp {
         let logs = Arc::new(Mutex::new(Vec::new()));
         let asset_progress = Arc::new(Mutex::new(HashMap::new()));
         let cancel_conversion = Arc::new(AtomicBool::new(false));
-        crate::logic::panel_logger::install_panel_logger(logs.clone());
+        crate::logic::panel_logger::install_panel_logger(logs.clone(), settings.hide_verbose_packaging_logs);
 
         {
             let mut logs_guard = logs.lock().expect("initialize GUI logs");

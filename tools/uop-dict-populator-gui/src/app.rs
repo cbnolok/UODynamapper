@@ -204,7 +204,10 @@ impl eframe::App for UopPopulatorApp {
             .min_size(LOG_PANEL_MIN_HEIGHT)
             .max_size(log_max_height)
             .show(ui, |ui| {
-                ui.label("Log");
+                ui.horizontal(|ui| {
+                    ui.label("Log");
+                    uot_gui::export_log_button(ui, env!("CARGO_PKG_NAME"), self.log.iter().map(String::as_str));
+                });
                 uot_gui::show_log_text(
                     ui,
                     "logs",

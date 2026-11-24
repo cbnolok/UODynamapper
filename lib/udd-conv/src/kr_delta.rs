@@ -147,7 +147,8 @@ pub fn make_kr_delta(kr_dir: &Path, ec_dir: &Path) -> eyre::Result<(KrDeltaConte
     let mut files = Vec::new();
     let mut summaries = Vec::new();
     let world_art_uses = WorldArtTextureUses::load(kr_dir)?;
-    info!("Kingdom Reborn delta: {} world-art textures drawn only as items' sprites, compared where they are drawn",
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+        "Kingdom Reborn delta: {} world-art textures drawn only as items' sprites, compared where they are drawn",
         world_art_uses.sprite_texture_count());
     for (name, kind) in KR_DELTA_CLIENT_FILES {
         let path = kr_dir.join(name);
@@ -261,10 +262,13 @@ pub fn log_kr_delta_summary(summaries: &[KrDeltaFileSummary]) {
             summary.name,
             summary.stored_bytes
         );
-        if !summary.kept.is_empty() {
-            info!("{}: textures kept as Kingdom Reborn's (name hash: difference, none where the Enhanced Client lacks it \
-                or the images cannot be compared): {:?}", summary.name, summary.kept.iter()
-                .map(|(hash, difference)| format!("{hash:016x}: {difference:?}")).collect::<Vec<_>>());
+        for (hash, difference) in &summary.kept {
+            match difference {
+                Some(difference) => log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+                    "{}: kept KR texture {hash:016x} (difference {difference:.2} 8-bit channel levels)", summary.name),
+                None => log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+                    "{}: kept KR texture {hash:016x} (Enhanced image unavailable or dimensions differ)", summary.name),
+            }
         }
     }
 }

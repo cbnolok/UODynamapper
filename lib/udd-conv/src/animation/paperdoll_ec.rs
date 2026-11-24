@@ -86,8 +86,8 @@ impl fmt::Display for PaperdollEcPackSummary {
 }
 
 /// Packs `Paperdoll.uop` with what each dress-layer item takes off, measured with `tileart.uop` (names
-/// from `string_dictionary.uop`), each found in the first of `source_dirs` that has it. Logs one line per
-/// dress-layer item and body, and a summary.
+/// from `string_dictionary.uop`), each found in the first of `source_dirs` that has it. The per-item and per-body
+/// decisions are available through the verbose packaging log and the optional report.
 pub fn pack_paperdoll_ec(
     source_dirs: &[PathBuf],
     out_file: &Path,
@@ -111,8 +111,7 @@ pub fn pack_paperdoll_ec(
     Ok(summary)
 }
 
-/// Measures what each dress-layer item of `tileart` takes off, logs each decision and the summary, and writes the
-/// report.
+/// Measures what each dress-layer item of `tileart` takes off, logs the summary, and writes the report if requested.
 fn measure_dress(
     sets: &FrameSets,
     tileart: &NamedTileArt,
@@ -130,7 +129,7 @@ fn measure_dress(
         log::warn!("paperdoll_ec: body {skipped} is not measured.");
     }
     for decision in &measurement.decisions {
-        info!("paperdoll_ec: {}.", decision.describe(name));
+        log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "paperdoll_ec: {}.", decision.describe(name));
     }
     info!("paperdoll_ec: {}.", measurement.summary());
     if let Some(path) = &options.report {

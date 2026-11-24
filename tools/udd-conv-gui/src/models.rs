@@ -122,6 +122,7 @@ pub struct AppSettings {
     pub input_uddp_dir: PathBuf,
     pub output_uddp_dir: PathBuf,
     pub link_uddp_dirs: bool,
+    pub hide_verbose_packaging_logs: bool,
     pub opt_tex_art_cc: TextureOptimization,
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
@@ -231,6 +232,7 @@ impl Default for AppSettings {
             input_uddp_dir: PathBuf::from("packages"),
             output_uddp_dir: PathBuf::from("packages"),
             link_uddp_dirs: true,
+            hide_verbose_packaging_logs: true,
             opt_tex_art_cc: TextureOptimization::Bc7Zstd,
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::Bc7Zstd,
@@ -394,6 +396,7 @@ impl AssetPackProgress {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LogLevel {
+    Task,
     Info,
     Success,
     Warning,

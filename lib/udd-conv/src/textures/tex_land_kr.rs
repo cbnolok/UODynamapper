@@ -18,8 +18,8 @@
 //!   [`UDDP_GRUNGE_ENTRY_VPATH`], which Dynamapper's Client Grunge multiplies onto the statics; left out when it is
 //!   within the threshold of the Enhanced Client's image, which Dynamapper then reads from `tex_aux_ec.uddp`.
 //!
-//! Every definition, texture and route is logged with the client it came from, and written to the report when one
-//! is asked for.
+//! The verbose log reports source decisions. The optional report also includes routes that are the same in both
+//! clients.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -178,9 +178,9 @@ pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
     let kr_texture_path = required_client_file(kr_dir, TEXTURE_FILE_NAME, "--krdir")?;
     let ec_terrain_path = required_client_file(ec_dir, TERRAIN_DEFINITION_FILE_NAME, "--ecdir")?;
     let ec_texture_path = required_client_file(ec_dir, TEXTURE_FILE_NAME, "--ecdir")?;
-    info!("Converting Kingdom Reborn Land to {}", out_file.display());
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "Converting Kingdom Reborn land to {}", out_file.display());
     for path in [&kr_terrain_path, &kr_texture_path, &ec_terrain_path, &ec_texture_path] {
-        println!("Using {}", path.display());
+        log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "Using {}", path.display());
     }
 
     let kr_definitions = load_definitions(&kr_terrain_path, ClientDialect::KingdomReborn)?;
@@ -255,7 +255,9 @@ pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
         package_progress,
     )?;
     for texture_id in &package.ignored_source_texture_ids {
-        record(&mut report, format!("texture {texture_id:08}: in neither client, not packed"));
+        let line = format!("texture {texture_id:08}: in neither client, not packed");
+        warn!("KR land: {line}");
+        report.push(line);
     }
 
     let count = |client| definitions.iter().filter(|(_, source)| *source == client).count() as u32;
@@ -293,9 +295,9 @@ pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
     Ok(summary)
 }
 
-/// Logs one source decision and keeps it for the report.
+/// Logs one source decision in verbose mode and keeps it for the report.
 fn record(report: &mut Vec<String>, line: String) {
-    info!("KR land: {line}");
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "KR land: {line}");
     report.push(line);
 }
 
@@ -537,7 +539,12 @@ fn merge_routes(
         }
         let change = match csv.set_route(route) {
             None => "the Enhanced Client has no route".to_owned(),
-            Some(previous) if previous == route => "the same in the Enhanced Client".to_owned(),
+            Some(previous) if previous == route => {
+                report.push(format!(
+                    "route {legacy_id} -> {material}/{subtype}: Kingdom Reborn (the same in the Enhanced Client)"
+                ));
+                continue;
+            }
             Some(previous) => {
                 kr_routes_changing_ec += 1;
                 format!("the Enhanced Client routes it to {}/{}", previous.material_id, previous.subtype)

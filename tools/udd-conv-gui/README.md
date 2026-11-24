@@ -18,7 +18,9 @@ The batch uses BC7 and BC1 where supported and Zstd by default. The packer can c
 
 For radar images, use the World tab. The Enhanced packages can use the bundled Kingdom Reborn delta or the optional Kingdom Reborn folder chosen in Sources.
 
-The log names the current job and reports failures. Stop requests cancellation, and packages that were already completed stay in the output folder. The converter asks before replacing existing outputs.
+The log marks each output with a `[TASK]` heading, then reports the pixel format and processing options where applicable. After writing a UDDP, it lists the codecs actually used, including any nested Kingdom Reborn entries. **Hide verbose packaging logs** is on by default. Turn it off before a run to include detailed Kingdom Reborn comparisons and per-garment paperdoll decisions. **Export log…** saves all collected messages to a timestamped text file.
+
+Stop requests cancellation, and packages that were already completed stay in the output folder. The converter asks before replacing existing outputs.
 
 ## Features
 
@@ -77,7 +79,7 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-lights` | Yes: Assets, World Lights (`--use-verdata` is the overview's verdata.mul) | |
 | `pack-hues` | Yes: Assets, Hues (the hue ramp is greyed out when the source is an Enhanced `Hues.uop`, which is copied as it is) | |
 | `pack-ec-effects` | Yes: Assets, Enhanced Effects | |
-| `pack-ec-paperdoll` | Yes: Assets, Enhanced Paperdoll (`--report` is the Findings Report cell; the log panel shows each dress-layer decision) | |
+| `pack-ec-paperdoll` | Yes: Assets, Enhanced Paperdoll (`--report` is the Findings Report cell; per-item decisions also appear when verbose packaging logs are enabled) | |
 | `audit-ec-material-refs` | CLI only | |
 | `inventory-ec-support-textures` | CLI only | |
 | `report-ec-material-baseline` | CLI only | |

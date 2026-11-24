@@ -68,12 +68,19 @@ impl eframe::App for UddConvApp {
             .min_size(LOG_PANEL_MIN_HEIGHT)
             .max_size((ui.available_height() - MIN_CONTENT_HEIGHT).max(LOG_PANEL_MIN_HEIGHT))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                let logs = self.logs.lock().map(|logs| logs.clone()).unwrap_or_default();
+                let mut clear = false;
+                ui.horizontal_wrapped(|ui| {
                     ui.label(section_heading("Logs"));
                     if ui.button("Clear").clicked() {
-                        if let Ok(mut logs) = self.logs.lock() {
-                            logs.clear();
-                        }
+                        clear = true;
+                    }
+                    uot_gui::export_log_button(ui, "udd-conv-gui", logs.iter().map(|log| log.text.as_str()));
+                    if ui.checkbox(&mut self.settings.hide_verbose_packaging_logs, "Hide verbose packaging logs")
+                        .on_hover_text("Applies to new messages, including Kingdom Reborn details and paperdoll decisions.")
+                        .changed()
+                    {
+                        logic::panel_logger::hide_verbose_packaging(self.settings.hide_verbose_packaging_logs);
                     }
                     if self.is_busy() {
                         ui.spinner();
@@ -82,9 +89,12 @@ impl eframe::App for UddConvApp {
                 });
                 ui.add_space(5.0);
 
-                let logs = self.logs.lock().map(|logs| logs.clone()).unwrap_or_default();
-                let lines = logs.iter().map(|log| {
+                if clear && let Ok(mut logs) = self.logs.lock() {
+                    logs.clear();
+                }
+                let lines = logs.iter().filter(|_| !clear).map(|log| {
                     let color = match log.level {
+                        LogLevel::Task => egui::Color32::from_rgb(125, 200, 255),
                         LogLevel::Info => egui::Color32::from_gray(200),
                         LogLevel::Success => egui::Color32::from_rgb(100, 255, 100),
                         LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),

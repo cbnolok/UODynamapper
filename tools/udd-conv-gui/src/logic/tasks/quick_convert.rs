@@ -237,11 +237,12 @@ impl UddConvApp {
                 progress.panic_if_cancelled();
                 let name = job.file_name();
                 let output = settings.output_uddp_dir.join(&name);
-                log::info!("Quick Convert {}/{total}: {name}", index + 1);
+                format_log::start_file(format_args!("Quick Convert {}/{total}: ", index + 1), &output);
                 progress.set(AssetPackProgressState::Running, index as f32 / total as f32, format!("{}/{total}: {name}", index + 1));
                 package_progress.start();
                 job.write(&settings, &output, &package_progress)
                     .map_err(|error| eyre::eyre!("pack {name} after writing {index} of {total} packages: {error:#}"))?;
+                format_log::written_package(&output);
             }
             Ok(format!("Wrote {total} packages to {}", settings.output_uddp_dir.display()))
         });

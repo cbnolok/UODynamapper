@@ -689,15 +689,12 @@ fn build_tilemeta_tables_with_ec_sources(
     let tiledata_path = find_first_existing_file(cc_source_dirs, &["tiledata.mul"])
         .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
     let radarcol_path = find_first_existing_file(cc_source_dirs, &["radarcol.mul"]);
-    info!("Using tiledata.mul: {}", tiledata_path.display());
-    info!("Using tileart.uop: {}", ec_sources.tileart_path.display());
-    info!("Using string dictionary: {}", ec_sources.stringdict_path.display());
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "Using tiledata.mul: {}", tiledata_path.display());
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "Using tileart.uop: {}", ec_sources.tileart_path.display());
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+        "Using string dictionary: {}", ec_sources.stringdict_path.display());
     if let Some(ref p) = radarcol_path {
-        info!("Using radarcol.mul: {}", p.display());
-    }
-    println!("Using CC tiledata source file: {}", tiledata_path.display());
-    if let Some(ref p) = radarcol_path {
-        println!("Using CC radar color source file: {}", p.display());
+        log::debug!(target: crate::VERBOSE_PACKAGING_TARGET, "Using radarcol.mul: {}", p.display());
     }
 
     info!("Converting Tile Metadata tables from MUL/UOP sources");
@@ -908,7 +905,8 @@ fn build_tilemeta_tables_with_ec_sources(
         layers.tiledata_only_wearable,
     );
     if !layers.examples.is_empty() {
-        info!("tilemeta: first layer disagreements (item, tileart Layer, tiledata layer): {:?}", layers.examples);
+        log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+            "tilemeta: first layer disagreements (item, tileart Layer, tiledata layer): {:?}", layers.examples);
     }
     let light_textures: std::collections::BTreeSet<u32> = item_lights.iter().map(|light| light.light_texture_entry).collect();
     info!("tilemeta: {} item lights, light textures {light_textures:?}", item_lights.len());

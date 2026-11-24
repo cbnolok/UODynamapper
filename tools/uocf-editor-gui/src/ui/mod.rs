@@ -991,7 +991,10 @@ pub fn draw_ui(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) 
                 .default_size(max_height)
                 .size_range(HOME_LOG_MIN_HEIGHT..=max_height)
                 .show(ui, |ui| {
-                    ui.heading("Logs");
+                    ui.horizontal(|ui| {
+                        ui.heading("Logs");
+                        uot_gui::export_log_button(ui, env!("CARGO_PKG_NAME"), app.logs.iter().map(String::as_str));
+                    });
                     ui.separator();
                     uot_gui::show_log_text(ui, "logs", app.logs.iter().map(|line| (line.as_str(), None)), egui::TextStyle::Body);
                 });

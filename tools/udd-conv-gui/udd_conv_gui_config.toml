@@ -1,6 +1,7 @@
 input_uddp_dir = "packages"
 output_uddp_dir = "packages"
 link_uddp_dirs = true
+hide_verbose_packaging_logs = true
 opt_tex_art_cc = "Bc7Zstd"
 opt_tex_land_cc = "None"
 opt_tex_art_ec = "Bc7Zstd"

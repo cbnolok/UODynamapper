@@ -31,6 +31,7 @@
 //! so it cannot be read over another one.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
@@ -41,6 +42,7 @@ use crate::metadata::tilemeta::{
     build_item_texture_refs_and_lights, build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources,
     find_string_dictionary_path, primary_ec_texture_item, TileMetaBuildOptions,
 };
+use crate::VERBOSE_PACKAGING_TARGET;
 use crate::textures::tex_art_ec::{
     compute_tex_art_ec_crop_adjustments_from_loaded_sources, convert_tex_art_ec_overlay_from_loaded_sources,
     load_tex_art_ec_sources, names_packed_world_art, normalized_source_clip_rect, primary_texture_stable_role,
@@ -334,6 +336,29 @@ impl WorldArtDifference {
     }
 }
 
+impl fmt::Display for WorldArtDifference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::EnhancedLacksItem => f.write_str("Enhanced has no packed world art for this item"),
+            Self::OtherTexture { kr, ec } => write!(f, "uses texture {kr} in Kingdom Reborn and {ec} in Enhanced"),
+            Self::OtherGeometry { kr, ec } => write!(f, "window or draw offset differs (KR {kr:?}, EC {ec:?})"),
+            Self::OtherKind => f.write_str("tile kind, rotation, or primary liquid texture role differs"),
+            Self::OtherSpriteDescriptor => f.write_str("authored sprite descriptor differs"),
+            Self::OtherImage { texture, difference: Some(difference) } => {
+                let (region, limit) = if texture >= KR_TERRAIN_TEXTURE_ID_START {
+                    ("whole image", KR_IMAGE_EQUIVALENCE_THRESHOLD)
+                } else {
+                    ("visible sprite window", KR_SPRITE_EQUIVALENCE_THRESHOLD)
+                };
+                write!(f, "texture {texture} differs by {difference:.2} 8-bit channel levels ({region}, reuse limit {limit})")
+            }
+            Self::OtherImage { texture, difference: None } => {
+                write!(f, "texture {texture} could not be compared (dimensions differ or an image is unavailable)")
+            }
+        }
+    }
+}
+
 /// [`compare_world_art`]'s result.
 #[derive(Debug, Clone, Default)]
 pub struct WorldArtComparison {
@@ -472,7 +497,8 @@ pub fn load_ec_sources_with_kr_windows(ec_dirs: &[PathBuf], kr_dir: &Path) -> ey
     let mut ec = load_tex_art_ec_sources(ec_dirs)?;
     let kr = load_art_definition(kr_dir)?;
     let adopted = adopt_kr_world_windows(&mut ec.art_definition, &kr);
-    info!("Enhanced items with Kingdom Reborn's world-art window ({}): {:x?}", adopted.len(), adopted);
+    log::debug!(target: VERBOSE_PACKAGING_TARGET,
+        "Enhanced items with Kingdom Reborn's world-art window ({}): {:x?}", adopted.len(), adopted);
     Ok(ec)
 }
 
@@ -551,7 +577,7 @@ pub struct KrTilemetaOutput<'a> {
 /// art is packed from. The art takes the encoding of `ec_art_options`, the Enhanced art's ([`kr_art_options`]).
 pub fn pack_kr_art_and_tilemeta(kr_dir: &Path, ec: &TexArtEcLoadedSources, art_out: &Path,
     ec_art_options: &TexArtEcAtlasOptions, tilemeta: Option<KrTilemetaOutput>) -> eyre::Result<KrArtBuildSummary> {
-    info!("Converting the Kingdom Reborn items to {}{}", art_out.display(),
+    log::debug!(target: VERBOSE_PACKAGING_TARGET, "Converting the Kingdom Reborn items to {}{}", art_out.display(),
         tilemeta.as_ref().map(|tilemeta| format!(" and {}", tilemeta.out.display())).unwrap_or_default());
     let mut kr = load_tex_art_ec_sources(&[kr_dir.to_path_buf()])
         .wrap_err_with(|| format!("load the Kingdom Reborn tileart and textures from {}", kr_dir.display()))?;
@@ -594,7 +620,8 @@ pub fn pack_kr_art_and_tilemeta(kr_dir: &Path, ec: &TexArtEcLoadedSources, art_o
 /// its options `ec_aux_options`.
 pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Path, aux_out: &Path,
     ec_aux_options: &TexAuxEcPackOptions) -> eyre::Result<TexAuxEcOverlaySummary> {
-    info!("Kingdom Reborn items: the Enhanced Client's tables, for the textures tex_aux_ec.uddp holds");
+    log::debug!(target: VERBOSE_PACKAGING_TARGET,
+        "Kingdom Reborn items: reading Enhanced Client tables for the textures tex_aux_ec.uddp holds");
     let ec = load_tex_art_ec_sources(&[ec_dir.to_path_buf()])
         .wrap_err_with(|| format!("load the Enhanced Client tileart and textures from {}", ec_dir.display()))?;
     let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec)?;
@@ -614,7 +641,11 @@ pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Pa
 
 /// Logs the world-art comparison: what the overlay holds and why, and what it leaves to `tex_art_ec.uddp`.
 fn log_world_art(world_art: &WorldArtComparison) {
-    info!("Kingdom Reborn world art: {} items, {} textures both clients name for the same window, by difference from \
+    if !log::log_enabled!(target: VERBOSE_PACKAGING_TARGET, log::Level::Debug) {
+        return;
+    }
+    log::debug!(target: VERBOSE_PACKAGING_TARGET,
+        "Kingdom Reborn world art: {} items, {} textures both clients name for the same window, by difference from \
         the Enhanced Client's (levels): {}", world_art.items, world_art.textures.len(),
         difference_histogram(world_art.textures.iter().map(|&(_, difference)| difference)));
     let mut counts: Vec<(&str, usize)> = Vec::new();
@@ -624,15 +655,19 @@ fn log_world_art(world_art: &WorldArtComparison) {
             None => counts.push((difference.name(), 1)),
         }
     }
-    info!("Kingdom Reborn world art: {} items in the Kingdom Reborn art section ({counts:?}), {} left to tex_art_ec.uddp (at most \
+    let counts = counts.iter().map(|(reason, count)| format!("{count} {reason}")).collect::<Vec<_>>().join(", ");
+    log::debug!(target: VERBOSE_PACKAGING_TARGET,
+        "Kingdom Reborn world art: {} items in the Kingdom Reborn art section ({counts}), {} left to tex_art_ec.uddp (at most \
         {KR_SPRITE_EQUIVALENCE_THRESHOLD} levels from the Enhanced Client's where a sprite is drawn, \
         {KR_IMAGE_EQUIVALENCE_THRESHOLD} for a terrain texture)", world_art.differing.len(), world_art.equivalents.len());
-    info!("Kingdom Reborn world art in its section (item: why): {:?}", world_art.differing);
-    info!("Kingdom Reborn world-art items left to tex_art_ec.uddp at {WORLD_ART_LOGGED_DIFFERENCE} levels or more \
-        (item: difference; the others are closer): {:?}", world_art.equivalents.iter()
-        .filter(|record| record.difference >= WORLD_ART_LOGGED_DIFFERENCE)
-        .map(|record| (record.id, record.difference))
-        .collect::<Vec<_>>());
+    for (item, reason) in &world_art.differing {
+        log::debug!(target: VERBOSE_PACKAGING_TARGET, "Kingdom Reborn world art item {item}: {reason}");
+    }
+    for record in world_art.equivalents.iter().filter(|record| record.difference >= WORLD_ART_LOGGED_DIFFERENCE) {
+        log::debug!(target: VERBOSE_PACKAGING_TARGET,
+            "Kingdom Reborn world art item {} reuses Enhanced art (difference {:.2} 8-bit channel levels)",
+            record.id, record.difference);
+    }
 }
 
 /// Logs the material-texture overlay: what it keeps and what it leaves to `tex_aux_ec.uddp`.
@@ -640,14 +675,27 @@ fn log_aux(aux: &TexAuxEcOverlaySummary) {
     info!("Kingdom Reborn material textures: {} kept, {} left to tex_aux_ec.uddp (at most {KR_IMAGE_EQUIVALENCE_THRESHOLD} \
         levels from the Enhanced Client's); {} source-absent ids aliased to the missing texture",
         aux.kept.len(), aux.equivalents.len(), aux.pack.excluded_source_absent);
-    info!("Kingdom Reborn material textures kept, by difference (levels): {}",
+    if !log::log_enabled!(target: VERBOSE_PACKAGING_TARGET, log::Level::Debug) {
+        return;
+    }
+    log::debug!(target: VERBOSE_PACKAGING_TARGET, "Kingdom Reborn material textures kept, by difference (levels): {}",
         difference_histogram(aux.kept.iter().map(|&(_, difference)| difference)));
-    info!("Kingdom Reborn material textures left to tex_aux_ec.uddp, by difference (levels): {}",
+    log::debug!(target: VERBOSE_PACKAGING_TARGET,
+        "Kingdom Reborn material textures left to tex_aux_ec.uddp, by difference (levels): {}",
         difference_histogram(aux.equivalents.iter().map(|record| Some(record.difference))));
-    info!("Kingdom Reborn material textures kept (key: difference, none where tex_aux_ec lacks the key or the image \
-        has another extent): {:?}", aux.kept);
-    info!("Kingdom Reborn material textures left to tex_aux_ec.uddp (key: difference): {:?}",
-        aux.equivalents.iter().map(|record| (record.id, record.difference)).collect::<Vec<_>>());
+    for (key, difference) in &aux.kept {
+        match difference {
+            Some(difference) => log::debug!(target: VERBOSE_PACKAGING_TARGET,
+                "Kingdom Reborn material texture {key} kept (difference {difference:.2} 8-bit channel levels)"),
+            None => log::debug!(target: VERBOSE_PACKAGING_TARGET,
+                "Kingdom Reborn material texture {key} kept (Enhanced package lacks the image or dimensions differ)"),
+        }
+    }
+    for record in &aux.equivalents {
+        log::debug!(target: VERBOSE_PACKAGING_TARGET,
+            "Kingdom Reborn material texture {} reuses Enhanced art (difference {:.2} 8-bit channel levels)",
+            record.id, record.difference);
+    }
 }
 
 #[cfg(test)]

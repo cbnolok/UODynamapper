@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use udd_assets::gumps::GumpsPackage;
 use udd_container::{CompressionFlag, LookupMode, UddpBuilder};
+use uocf::enhanced::image_census::{classify_content, ContentFormat, TgaVerdict};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
@@ -35,6 +36,10 @@ pub const EC_LOSSY_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc7;
 /// ([`crate::single_gumps::is_in_classic_colour_space`]), the Classic gumps Interface.uop repeats (the user,
 /// 2026-11-06): BC1, as `gumps_cc` stores them, since they have no soft alpha for BC7 to keep.
 pub const EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc1;
+
+/// The empty, zero-sized 32-bit RLE TGA used for unused Interface.uop gump slots.
+/// Earlier clients stop at the header. The fully patched client appends zero padding.
+const EMPTY_GUMP_TGA_HEADER: [u8; 18] = [0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 8];
 
 /// The brightest channel a glow texel has ([`glow_texels`]).
 const GLOW_DARK_MAX_CHANNEL: u8 = 32;
@@ -278,7 +283,7 @@ fn convert_ec_gumps_from_interface_uop(
         };
 
         match decode_ec_gump_payload(gump_id, format, &payload) {
-            Ok(mut decoded) => {
+            Ok(Some(mut decoded)) => {
                 // Baked before the upscale passes, on the texels the client reads.
                 if is_enhanced_paperdoll_gump_id(gump_id) {
                     bake_enhanced_paperdoll_rule(&mut decoded);
@@ -309,9 +314,10 @@ fn convert_ec_gumps_from_interface_uop(
                 }
                 gump_count += 1;
             }
+            Ok(None) => {}
             Err(error) => {
                 skipped_count += 1;
-                log::warn!("Skipping EC gump {gump_id}: {error}");
+                log::warn!("Skipping EC gump {gump_id} in {}: {error:#}", interface_uop.display());
             }
         }
     }
@@ -383,14 +389,14 @@ fn convert_ec_gumps_from_extracted_dir(
             Ok(payload) => payload,
             Err(error) => {
                 skipped_count += 1;
-                log::warn!("Skipping EC gump {gump_id}: {error}");
+                log::warn!("Skipping EC gump {gump_id} in {}: {error}", source.path.display());
                 continue;
             }
         };
 
         let format = infer_ec_image_format(&payload, source.format);
         match decode_ec_gump_payload(gump_id, format, &payload) {
-            Ok(mut decoded) => {
+            Ok(Some(mut decoded)) => {
                 // Baked before the upscale passes, on the texels the client reads.
                 if is_enhanced_paperdoll_gump_id(gump_id) {
                     bake_enhanced_paperdoll_rule(&mut decoded);
@@ -421,9 +427,10 @@ fn convert_ec_gumps_from_extracted_dir(
                 }
                 gump_count += 1;
             }
+            Ok(None) => {}
             Err(error) => {
                 skipped_count += 1;
-                log::warn!("Skipping EC gump {gump_id}: {error}");
+                log::warn!("Skipping EC gump {gump_id} in {}: {error:#}", source.path.display());
             }
         }
     }
@@ -572,7 +579,14 @@ fn decode_ec_gump_payload(
     gump_id: u32,
     format: ECImageFormat,
     source_payload: &[u8],
-) -> eyre::Result<DecodedGump> {
+) -> eyre::Result<Option<DecodedGump>> {
+    if source_payload.strip_prefix(&EMPTY_GUMP_TGA_HEADER)
+        .is_some_and(|padding| padding.iter().all(|&byte| byte == 0))
+    {
+        return Ok(None);
+    }
+    eyre::ensure!(!source_payload.is_empty(), "the entry has no image bytes");
+
     let tex_file = TextureFile {
         metadata: TextureItem::absent(),
         is_ec: true,
@@ -581,19 +595,31 @@ fn decode_ec_gump_payload(
         raw_data: Arc::from(source_payload),
         image_data_offset: 0,
     };
-    let rgba = tex_file.decode_to_rgba8()?;
+    let rgba = tex_file.decode_to_rgba8().map_err(|error| {
+        let content = classify_content(source_payload);
+        match content.format {
+            ContentFormat::Dds => error.wrap_err("invalid or unsupported DDS data"),
+            ContentFormat::Tga | ContentFormat::TgaTrailing => error.wrap_err("could not decode TGA image data"),
+            ContentFormat::Binary => match content.tga {
+                Some(TgaVerdict::BadData(reason)) => eyre::eyre!("invalid TGA image data ({reason})"),
+                _ => eyre::eyre!("no recognizable image data ({} bytes)", source_payload.len()),
+            },
+            other => eyre::eyre!("expected DDS or TGA image data, found {}", other.label()),
+        }
+    })?;
     let width = rgba.width();
     let height = rgba.height();
+    eyre::ensure!(width != 0 && height != 0, "image has zero width or height and does not match the shipped empty gump");
     if width > u16::MAX as u32 || height > u16::MAX as u32 {
         eyre::bail!("EC gump {gump_id} dimensions exceed u16 metadata bounds: {width}x{height}");
     }
-    Ok(DecodedGump {
+    Ok(Some(DecodedGump {
         gump_id,
         width: width as u16,
         height: height as u16,
         upscale_factor: 1,
         rgba: rgba.into_raw(),
-    })
+    }))
 }
 
 /// The extracted gumpart folder the Enhanced gumps are read from when no source folder holds an Interface.uop: a
@@ -852,6 +878,34 @@ mod tests {
         let mut tga = vec![0u8; 18];
         tga[2] = 2;
         assert_eq!(infer_ec_image_format(&tga, ECImageFormat::DDS), ECImageFormat::TGA);
+    }
+
+    #[test]
+    fn unpacked_gump_placeholders_have_no_pixels_to_pack() {
+        const GUMP_ID: u32 = 140;
+        const PATCHED_PLACEHOLDER_BYTES: usize = 32_802;
+        let mut placeholder = EMPTY_GUMP_TGA_HEADER.to_vec();
+        assert!(decode_ec_gump_payload(GUMP_ID, ECImageFormat::TGA, &placeholder).unwrap().is_none());
+        placeholder.resize(PATCHED_PLACEHOLDER_BYTES, 0);
+        assert!(decode_ec_gump_payload(GUMP_ID, ECImageFormat::TGA, &placeholder).unwrap().is_none());
+
+        *placeholder.last_mut().unwrap() = 1;
+        assert!(decode_ec_gump_payload(GUMP_ID, ECImageFormat::TGA, &placeholder).is_err());
+    }
+
+    #[test]
+    fn gump_decode_distinguishes_missing_invalid_and_other_image_data() {
+        const GUMP_ID: u32 = 140;
+        let error = |bytes| {
+            let format = infer_ec_image_format(bytes, ECImageFormat::TGA);
+            decode_ec_gump_payload(GUMP_ID, format, bytes).unwrap_err().to_string()
+        };
+        let mut truncated_tga = solid_tga(SYNTHETIC_GUMP_SIDE);
+        truncated_tga.pop();
+        assert_eq!(error(&[]), "the entry has no image bytes");
+        assert!(error(&truncated_tga).starts_with("invalid TGA image data"));
+        assert_eq!(error(b"DDS "), "invalid or unsupported DDS data");
+        assert_eq!(error(b"\x89PNG\r\n\x1a\n"), "expected DDS or TGA image data, found PNG");
     }
 
     #[test]

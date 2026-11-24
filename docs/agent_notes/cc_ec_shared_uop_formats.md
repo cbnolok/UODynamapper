@@ -117,5 +117,9 @@ clients, the zero at those offsets makes the TGA reader refuse 4,413 of the 4,44
 Enhanced ones and 1,068 of the Classic art entries, but others still come out as tiny garbage images (Classic art
 0x4821, of 0xF82 bytes, reads as 2x2).
 
+In the fully patched Enhanced Client, the same 34 unused `Interface.uop` gumps have the same 0×0 32-bit RLE TGA
+header followed by 32,784 zero bytes. The Enhanced gump packer matches that empty header followed by only zero padding
+and leaves those slots out of the UDDP. It checks for DDS magic before treating other `.tga` entries as TGA.
+
 An empty image handed to egui is a wgpu validation error, and wgpu's default handler panics. The inspector's textures
 go through `tools/uocf-editor-gui/src/ui/textures.rs`, which turns that into a message.

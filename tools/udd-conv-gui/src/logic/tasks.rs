@@ -489,6 +489,7 @@ fn pack_gumps_cc(
     let sources = cc_gumps_source_dirs(settings);
     if sources.is_empty() { eyre::bail!("No Classic or Enhanced source dir configured"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::GumpsCc);
     let options = cc_gumps_options(settings, load_upscale_profile(settings)?);
     let label = extract_label(
         upscale_filter_active(settings.upscale_gumps_cc_paperdoll) || upscale_filter_active(settings.upscale_gumps_cc_single),
@@ -527,6 +528,7 @@ fn pack_gumps_ec(
     let sources = ec_gumps_source_dirs(settings);
     if sources.is_empty() { eyre::bail!("No Enhanced source dir or extracted gumpart folder configured"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::GumpsEc);
     if let EcGumpsShare::MissingGumpsCc(gumps_cc) = share {
         log::warn!(
             "No {} to share the Classic gumps with: packing {} standalone.",
@@ -583,6 +585,7 @@ fn pack_gumps_cc_and_ec(
     let cc_progress = progress.for_task(AssetPackTask::GumpsCc);
     progress.set(AssetPackProgressState::Running, 0.0, "Waiting for the Classic gumps");
     cc_progress.start();
+    format_log::start_file(format_args!(""), cc_output);
     let cc_summary = match panic::catch_unwind(AssertUnwindSafe(|| pack_gumps_cc(settings, cc_output, &cc_progress))) {
         Ok(Ok(summary)) => {
             cc_progress.finish();
@@ -602,9 +605,12 @@ fn pack_gumps_cc_and_ec(
             panic::resume_unwind(payload);
         }
     };
+    format_log::written_package(cc_output);
     progress.panic_if_cancelled();
     let share = ec_gumps_share(settings.gumps_ec_sharing, cc_output, true);
+    format_log::start_file(format_args!(""), ec_output);
     let ec_summary = pack_gumps_ec(settings, ec_output, &share, progress)?;
+    format_log::written_package(ec_output);
     Ok((cc_summary, ec_summary))
 }
 
@@ -680,6 +686,7 @@ fn pack_hues(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
     let sources = hues_source_dirs(settings);
     if sources.is_empty() { eyre::bail!("No Classic or Enhanced source dir configured"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::Hues);
     convert_hues_to_hues_uddp_from_sources(&sources, output, &hues_options(settings))?;
     Ok(format!("Wrote {HUES_OUTPUT} to {}", output.display()))
 }
@@ -699,6 +706,7 @@ fn pack_world_lights(settings: &AppSettings, output: &Path) -> eyre::Result<Stri
         eyre::bail!("No Classic source dir configured; the world lights come from light.mul");
     };
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::WorldLights);
     convert_client_lights_to_world_lights_uddp(
         cc_dir,
         output,
@@ -730,12 +738,14 @@ fn pack_effects_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<St
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No Enhanced source dir configured"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::EffectsEc);
     let options = effects_ec_options(settings);
     if let Some(report) = &options.report {
         ensure_output_parent(report)?;
     }
     let summary = pack_effects_ec(&sources, output, &options)?;
-    Ok(format!("effects_ec: {summary}; wrote {}", output.display()))
+    log::info!("effects_ec: {summary}");
+    Ok(format!("Wrote {EFFECTS_EC_OUTPUT} to {}", output.display()))
 }
 
 /// The string dictionary the Enhanced paperdoll job names the dress-layer items from.
@@ -767,6 +777,7 @@ fn pack_paperdoll_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No Enhanced source dir configured"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::PaperdollEc);
     let options = paperdoll_ec_options(settings);
     if let Some(report) = &options.report {
         ensure_output_parent(report)?;
@@ -826,6 +837,7 @@ fn pack_tex_art_cc(settings: &AppSettings, output: &Path, progress: &AssetProgre
     let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::TexArtCc);
 
     let compression = texture_compression(settings.opt_tex_art_cc, settings.zstd_tex_art_cc);
     let upscale_profile = load_upscale_profile(settings)?;
@@ -869,6 +881,7 @@ fn pack_tex_land_cc(settings: &AppSettings, output: &Path, progress: &AssetProgr
     let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::TexLandCc);
 
     let compression = texture_compression(settings.opt_tex_land_cc, settings.zstd_tex_land_cc);
     let upscale_profile = load_upscale_profile(settings)?;
@@ -908,6 +921,7 @@ fn pack_tex_art_ec(settings: &AppSettings, output: &Path, progress: &AssetProgre
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::TexArtEc);
 
     let compression = texture_compression(settings.opt_tex_art_ec, settings.zstd_tex_art_ec);
     let upscale_profile = load_upscale_profile(settings)?;
@@ -953,6 +967,7 @@ fn pack_tex_land_ec(settings: &AppSettings, output: &Path, progress: &AssetProgr
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::TexLandEc);
     let terrain_overrides_kdl = conversion_table(settings, EC_TERRAIN_OVERRIDES_KDL)?;
     let transcode_kdl = conversion_table(settings, TERRAIN_TRANSCODE_KDL)?;
 
@@ -1010,6 +1025,7 @@ fn pack_tex_land_ec(settings: &AppSettings, output: &Path, progress: &AssetProgr
 
 fn pack_tilemeta(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::TileMeta);
     match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
         (Some(cc_dir), Some(ec_dir)) => {
             let kr_work = KrSectionWork::prepare(&kr_source(settings), ec_dir, output)?;
@@ -1052,6 +1068,7 @@ fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetPr
     let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::MobileAnimCc);
 
     let compression = texture_compression(
         settings.opt_mobile_anim_cc,
@@ -1101,6 +1118,7 @@ fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetPr
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::MobileAnimEc);
     // Without the table the packer writes empty item metadata, when the settings allow it.
     let metadata_path = match conversion_table(settings, EC_MOBILE_ANIMATIONS_KDL) {
         Ok(path) => Some(path),
@@ -1167,6 +1185,7 @@ fn pack_tex_aux_ec_job(settings: &AppSettings, output: &Path, tilemeta_path: &Pa
         eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
     }
     ensure_output_parent(output)?;
+    format_log::asset_settings(settings, AssetPackTask::TexAuxEc);
     let compression = texture_compression(
         settings.opt_tex_aux_ec,
         settings.zstd_tex_aux_ec,
@@ -1202,6 +1221,7 @@ fn pack_map(settings: &AppSettings, output: &Path, map_id: u32) -> eyre::Result<
     let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::world_settings("map");
     let summary = convert_map_mul_to_uddp_from_sources_with_patches(
         &sources,
         output,
@@ -1217,6 +1237,7 @@ fn pack_statics(settings: &AppSettings, output: &Path, map_id: u32) -> eyre::Res
     let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
     ensure_output_parent(output)?;
+    format_log::world_settings("statics");
     let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
         &sources,
         output,
@@ -1227,6 +1248,7 @@ fn pack_statics(settings: &AppSettings, output: &Path, map_id: u32) -> eyre::Res
     Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
 }
 
+mod format_log;
 mod quick_convert;
 
 impl UddConvApp {
@@ -1304,13 +1326,24 @@ impl UddConvApp {
     where
         F: FnOnce() -> eyre::Result<String> + Send + 'static,
     {
-        let validate = self.settings.validate_after_packing.then_some(packages);
+        let validate = self.settings.validate_after_packing;
         let logs = self.logs.clone();
         self.spawn_task(name, move || {
+            let single = match packages.as_slice() {
+                [output] => Some(output),
+                _ => None,
+            };
+            if let Some(output) = single {
+                format_log::start_file(format_args!(""), output);
+            }
             let message = task()?;
-            match &validate {
-                Some(packages) => validate_written_packages(message, packages, &logs),
-                None => Ok(message),
+            if let Some(output) = single {
+                format_log::written_package(output);
+            }
+            if validate {
+                validate_written_packages(message, &packages, &logs)
+            } else {
+                Ok(message)
             }
         });
     }
@@ -1336,10 +1369,17 @@ impl UddConvApp {
             cancel: self.cancel_conversion.clone(),
         };
         let reporter_for_task = reporter.clone();
-        let validate = (self.settings.validate_after_packing && !packages.is_empty()).then_some(packages);
+        let validate = self.settings.validate_after_packing && !packages.is_empty();
         let logs = self.logs.clone();
         reporter.start();
         self.spawn_task(name, move || {
+            let single = match packages.as_slice() {
+                [output] => Some(output),
+                _ => None,
+            };
+            if let Some(output) = single {
+                format_log::start_file(format_args!(""), output);
+            }
             let result = match panic::catch_unwind(AssertUnwindSafe(|| {
                 task(reporter_for_task.clone())
             })) {
@@ -1349,12 +1389,16 @@ impl UddConvApp {
                 }
                 Err(payload) => panic::resume_unwind(payload),
             };
-            let result = result.and_then(|message| match &validate {
-                Some(packages) => {
-                    reporter_for_task.set(AssetPackProgressState::Running, VALIDATING_PROGRESS, "Validating");
-                    validate_written_packages(message, packages, &logs)
+            let result = result.and_then(|message| {
+                if let Some(output) = single {
+                    format_log::written_package(output);
                 }
-                None => Ok(message),
+                if validate {
+                    reporter_for_task.set(AssetPackProgressState::Running, VALIDATING_PROGRESS, "Validating");
+                    validate_written_packages(message, &packages, &logs)
+                } else {
+                    Ok(message)
+                }
             });
             match &result {
                 Ok(_) => reporter_for_task.finish(),
@@ -1557,6 +1601,8 @@ impl UddConvApp {
                 eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
             }
             ensure_output_parent(&output)?;
+            format_log::start_file(format_args!(""), &output);
+            format_log::radar_settings(&settings);
 
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
                 let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_options(
@@ -1602,24 +1648,13 @@ impl UddConvApp {
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             std::fs::create_dir_all(&settings.output_uddp_dir)?;
 
-            // 1. Map
-            convert_map_mul_to_uddp_from_sources_with_patches(
-                &sources,
-                &map_output,
-                map_id,
-                settings.map_preferences[map_id as usize],
-                &classic_patch_options(&settings),
-                ChunkCompression::default(),
-            )?;
+            format_log::start_file(format_args!(""), &map_output);
+            pack_map(&settings, &map_output, map_id)?;
+            format_log::written_package(&map_output);
 
-            // 2. Statics
-            convert_statics_mul_to_uddp_from_sources_with_patches(
-                &sources,
-                &statics_output,
-                map_id,
-                &classic_patch_options(&settings),
-                ChunkCompression::default(),
-            )?;
+            format_log::start_file(format_args!(""), &statics_output);
+            pack_statics(&settings, &statics_output, map_id)?;
+            format_log::written_package(&statics_output);
 
             // 3. Radar
             if !tilemeta_path.exists() {
@@ -1631,6 +1666,8 @@ impl UddConvApp {
                 map_id,
                 settings.radar_format.extension()
             ));
+            format_log::start_file(format_args!(""), &radar_output);
+            format_log::radar_settings(&settings);
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
                 let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_options(
                     &sources,

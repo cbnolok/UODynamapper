@@ -346,12 +346,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
         "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
         out_file.display()
     );
-    println!(
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
         "Using TerrainDefinition.uop: {}",
         source_path_label_from_dirs(source_dirs, &terrain_definition_path)
     );
     if let Some(path) = texture_uop_path.as_ref() {
-        println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
+        log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+            "Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
 
     let world_textures = if let Some(texture_uop_path) = texture_uop_path.as_ref() {
@@ -430,12 +431,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
         out_file.display()
     );
-    println!(
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
         "Using TerrainDefinition.uop: {}",
         source_path_label_from_dirs(source_dirs, terrain_definition_path)
     );
     if let Some(path) = texture_uop_path {
-        println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
+        log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+            "Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
 
     build_land_package(

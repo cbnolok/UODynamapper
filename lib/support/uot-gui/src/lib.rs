@@ -7,7 +7,7 @@ pub mod image_background;
 mod log_view;
 
 pub use image_background::{image_background_control, ImageBackground};
-pub use log_view::show_log_text;
+pub use log_view::{export_log_button, show_log_text};
 
 pub type AppCreatorResult =
     Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>;

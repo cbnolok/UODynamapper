@@ -547,3 +547,33 @@ pub fn get_package_info_string(path: &Path) -> eyre::Result<String> {
 
     Ok(out)
 }
+
+/// Summarize the codecs actually selected for package entries without decoding their payloads.
+pub fn packed_compression_summary(path: &Path) -> eyre::Result<String> {
+    fn codecs(package: &UddpReader) -> String {
+        let mut counts = BTreeMap::new();
+        for record in package.records() {
+            let meta = record.locator.meta32;
+            let name = match unpack_codec(meta) {
+                Codec::None => "uncompressed",
+                Codec::ZstdNoDict if udd_container::unpack_independent_frames(meta) => "Zstd (independent frames)",
+                Codec::ZstdNoDict => "Zstd",
+                Codec::ZstdTypeDict => "Zstd (dictionary)",
+                Codec::Lz4Hc => "LZ4 HC",
+            };
+            *counts.entry(name).or_insert(0usize) += 1;
+        }
+        if counts.is_empty() {
+            return "no entries".to_owned();
+        }
+        counts.into_iter().map(|(codec, count)| format!("{codec} {count}")).collect::<Vec<_>>().join(", ")
+    }
+
+    let package = UddpReader::load(path).wrap_err_with(|| format!("load {}", path.display()))?;
+    let storage = codecs(&package);
+    let kr = udd_assets::common::open_kr_section(&package, udd_container::UddpReaderOptions::disabled())?;
+    Ok(match kr {
+        Some(kr) => format!("{storage}. Embedded Kingdom Reborn entries: {}", codecs(&kr)),
+        None => storage,
+    })
+}

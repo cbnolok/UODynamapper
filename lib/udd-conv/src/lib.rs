@@ -42,6 +42,9 @@ pub use udd_container::CompressionFlag as CompressionFlag;
 pub use udd_container::{BuildProgress, BuildProgressPhase};
 pub use udd_assets::tex_art_cc::PagePixelFormat as PagePixelFormat;
 
+/// The debug log target for per-entry packaging decisions and build diagnostics.
+pub const VERBOSE_PACKAGING_TARGET: &str = "udd_conv::verbose_packaging";
+
 pub(crate) const BC7_BLOCK_DIM: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

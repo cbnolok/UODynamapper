@@ -411,20 +411,21 @@ fn convert_loaded_sources(
     let payload_progress = |progress| payload_progress_reporter.report(progress);
     validate_options(options)?;
 
-    info!(
-        "Converting EC Art from Texture.uop to {}",
-        out_file.display()
-    );
-    println!("Using tileart.uop: {}", source_file_label(&sources.tileart_path));
-    println!(
+    if overlay.is_none() {
+        info!("Converting EC Art from Texture.uop to {}", out_file.display());
+    }
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+        "Using tileart.uop: {}", source_file_label(&sources.tileart_path));
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
         "Using TerrainDefinition.uop: {}",
         source_file_label(&sources.terrain_definition_path)
     );
-    println!(
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
         "Using string dictionary: {}",
         source_file_label(&sources.stringdict_path)
     );
-    println!("Using Texture.uop: {}", source_file_label(&sources.texture_uop_path));
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+        "Using Texture.uop: {}", source_file_label(&sources.texture_uop_path));
 
     let slot_count = TEX_ART_EC_SLOT_COUNT;
     let (decoded_tiles, aliases, crop_adjustments, ec_crop_adjustments) = decode_present_tiles(
@@ -1036,7 +1037,7 @@ fn decode_present_tiles(
          {world_art_source_absent_count} canonical sources are absent from Texture.uop; those owners get no \
          slot (their Classic art comes from tex_art_cc)"
     );
-    tracing::info!(
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
         "tex_art_ec: {} items whose copied window cuts more than {COPIED_WINDOW_MAX_CUT_SHARE} of the borrowed \
          world-art image get no slot (their Classic art comes from tex_art_cc) (item: share cut): {copied_window_cuts:?}",
         copied_window_cuts.len()

@@ -10,14 +10,16 @@ const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 200, 0);
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 100, 100);
 
 pub fn ui_log_panel(ui: &mut egui::Ui, logs: &Logs) {
+    let mut messages = logs.snapshot();
     ui.horizontal(|ui| {
         ui.heading("Logs");
         if ui.button("Clear").clicked() {
             logs.clear();
+            messages.clear();
         }
+        uot_gui::export_log_button(ui, env!("CARGO_PKG_NAME"), messages.iter().map(|message| message.text.as_str()));
     });
     ui.separator();
-    let messages = logs.snapshot();
     let lines = messages.iter().map(|message| {
         let color = match message.level {
             LogLevel::Info => INFO_COLOR,

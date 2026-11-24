@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, WrapErr};
 use crate::progress::{ProgressBar, ProgressStyle};
-use log::info;
 use udd_container::uddp::BuildError;
 use udd_container::{
     BuildProgress, BuildProgressFile, BuildProgressPhase, CompressionFlag, CompressionSummary,
@@ -372,7 +371,7 @@ where
     }
 
     bar.finish_with_message(format!("saved {}", out_file.display()));
-    info!(
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
         "UDDP package timing for {}: dictionaries {:.3}s, compression {:.3}s, assembly and write {:.3}s",
         out_file.display(),
         dictionary_time.as_secs_f64(),

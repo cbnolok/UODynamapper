@@ -13,7 +13,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
-use log::info;
 
 use udd_assets::common::KR_SECTION_ENTRY_PATH;
 use udd_container::uddp::FormatError;
@@ -93,7 +92,8 @@ pub fn embed_kr_section(package: &Path, section: &Path) -> eyre::Result<()> {
     let partial = PathBuf::from(partial);
     fs::write(&partial, &bytes).wrap_err_with(|| format!("write {}", partial.display()))?;
     fs::rename(&partial, package).wrap_err_with(|| format!("replace {}", package.display()))?;
-    info!("Nested the Kingdom Reborn section ({section_size} bytes) in {} ({} bytes)", package.display(), bytes.len());
+    log::debug!(target: crate::VERBOSE_PACKAGING_TARGET,
+        "Nested the Kingdom Reborn section ({section_size} bytes) in {} ({} bytes)", package.display(), bytes.len());
     Ok(())
 }
 
@@ -134,7 +134,6 @@ pub fn add_kr_land_section(
     let section = work.section_path(KR_LAND_SECTION_FILE_NAME);
     let summary = convert_kr_land_to_tex_land_kr_uddp_with_progress(work.kr_dir(), ec_dir, land_package, &section, options,
         payload_progress, package_progress)?;
-    info!("Kingdom Reborn land: {summary}");
     embed_kr_section(land_package, &section)?;
     Ok(summary)
 }

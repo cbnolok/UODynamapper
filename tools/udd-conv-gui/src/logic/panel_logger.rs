@@ -1,18 +1,26 @@
 use std::sync::{Arc, Mutex, Once};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
 use crate::models::{LogLevel, LogMessage};
 
-const PANEL_LOG_LEVEL: LevelFilter = LevelFilter::Info;
+pub(crate) const PACKAGE_TASK_TARGET: &str = "udd_conv_gui::package_task";
+
+static HIDE_VERBOSE_PACKAGING: AtomicBool = AtomicBool::new(true);
+
+pub(crate) fn hide_verbose_packaging(hide: bool) {
+    HIDE_VERBOSE_PACKAGING.store(hide, Ordering::Relaxed);
+}
 
 static INSTALL_LOGGER: Once = Once::new();
 
-pub fn install_panel_logger(logs: Arc<Mutex<Vec<LogMessage>>>) {
+pub fn install_panel_logger(logs: Arc<Mutex<Vec<LogMessage>>>, hide_verbose: bool) {
+    hide_verbose_packaging(hide_verbose);
     INSTALL_LOGGER.call_once(|| {
         let logger = PanelLogger { logs };
         match log::set_boxed_logger(Box::new(logger)) {
-            Ok(()) => log::set_max_level(PANEL_LOG_LEVEL),
+            Ok(()) => log::set_max_level(LevelFilter::Debug),
             Err(error) => eprintln!("Could not install GUI log panel logger: {error}"),
         }
     });
@@ -24,11 +32,23 @@ struct PanelLogger {
 
 impl Log for PanelLogger {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        metadata.level() <= PANEL_LOG_LEVEL && is_project_target(metadata.target())
+        if metadata.target() == udd_conv::VERBOSE_PACKAGING_TARGET && metadata.level() >= Level::Info {
+            return !HIDE_VERBOSE_PACKAGING.load(Ordering::Relaxed);
+        }
+        metadata.level() <= Level::Info && is_project_target(metadata.target())
     }
 
     fn log(&self, record: &Record<'_>) {
         if !self.enabled(record.metadata()) {
+            return;
+        }
+
+        if record.target() == PACKAGE_TASK_TARGET {
+            let text = format!("\n[TASK] {}", record.args());
+            eprintln!("{text}");
+            if let Ok(mut logs) = self.logs.lock() {
+                logs.push(LogMessage { text, level: LogLevel::Task });
+            }
             return;
         }
 
