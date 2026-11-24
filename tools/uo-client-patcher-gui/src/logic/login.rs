@@ -251,6 +251,9 @@ pub struct LoginEdit {
     pub hosts: Vec<LoginField>,
     pub ports: Vec<LoginField>,
     pub same_for_all: bool,
+    pub can_route_to_first_host: bool,
+    pub first_host_already_routed: bool,
+    pub first_host_only: bool,
 }
 
 impl LoginEdit {
@@ -272,19 +275,41 @@ impl LoginEdit {
             }
             _ => {}
         }
-        Self { mode, hosts, ports, same_for_all: true }
+        let can_route_to_first_host = mode == LoginMode::PublicSites
+            && inspection.login.as_ref().is_some_and(|sites| sites.can_route_to_first_host());
+        let first_host_already_routed = mode == LoginMode::PublicSites
+            && inspection.login.as_ref().is_some_and(|sites| sites.uses_first_host_only());
+        Self {
+            mode, hosts, ports, same_for_all: true, can_route_to_first_host, first_host_already_routed,
+            first_host_only: first_host_already_routed,
+        }
     }
 
     pub fn is_edited(&self) -> bool {
-        self.hosts.iter().chain(&self.ports).any(|field| !field.text.trim().is_empty())
+        self.routes_new_host_choice()
+            || self.active_hosts().iter().chain(&self.ports).any(|field| !field.text.trim().is_empty())
     }
 
     /// True when the build has more than one site of a kind, so `same_for_all` matters.
     pub fn has_several_sites(&self) -> bool {
-        self.hosts.len() > 1 || self.ports.len() > 1
+        self.active_hosts().len() > 1 || self.ports.len() > 1
+    }
+
+    fn routes_new_host_choice(&self) -> bool {
+        self.first_host_only && !self.first_host_already_routed
+    }
+
+    pub fn active_hosts(&self) -> &[LoginField] {
+        if self.first_host_only { &self.hosts[..1] } else { &self.hosts }
+    }
+
+    pub fn set_first_host_only(&mut self, first_only: bool) {
+        self.first_host_only = self.first_host_already_routed || (self.can_route_to_first_host && first_only);
+        self.spread(false, 0);
     }
 
     pub fn clear(&mut self) {
+        self.first_host_only = self.first_host_already_routed;
         for field in self.hosts.iter_mut().chain(&mut self.ports) {
             field.text.clear();
         }
@@ -293,7 +318,7 @@ impl LoginEdit {
     /// With `same_for_all`, copies host `index`'s text to every host field (`port: false`) or port `index`'s to
     /// every port field.
     pub fn spread(&mut self, port: bool, index: usize) {
-        if !self.same_for_all {
+        if !self.same_for_all || (self.first_host_only && !port) {
             return;
         }
         let fields = if port { &mut self.ports } else { &mut self.hosts };
@@ -331,7 +356,7 @@ impl LoginEdit {
         }
         let mut hosts = Vec::new();
         let mut names: Vec<&str> = Vec::new();
-        for field in &self.hosts {
+        for field in self.active_hosts() {
             let host = field.value();
             match validate_login_host(host) {
                 Ok(HostKind::Ipv4) => {}
@@ -375,11 +400,18 @@ impl LoginEdit {
                     .push(format!("{}: `{text}` is not a number {MIN_LOGIN_PORT}..={}", field.label, u16::MAX)),
             }
         }
-        let unchanged = self.hosts.iter().chain(&self.ports).all(|field| field.value() == field.current);
+        let unchanged = !self.routes_new_host_choice()
+            && self.active_hosts().iter().chain(&self.ports).all(|field| field.value() == field.current);
         if !validation.is_ok() || unchanged {
             return (None, validation);
         }
-        (Some(ExeEdit::LoginServer(LoginServerEdit { hosts, ports })), validation)
+        let edit = if self.first_host_only {
+            let host = hosts.into_iter().next().expect("first host validated");
+            ExeEdit::LoginServerFirstHost { host, ports }
+        } else {
+            ExeEdit::LoginServer(LoginServerEdit { hosts, ports })
+        };
+        (Some(edit), validation)
     }
 }
 

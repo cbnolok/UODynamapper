@@ -20,7 +20,7 @@ use uocf::client::login::{
     STOCK_LOGIN_HOSTS,
 };
 use uocf::client::patch::{
-    dry_run_client_exe, plan_patch, write_patched_client_exe, ExeEdit, ExePatch, PatchWarningKind,
+    dry_run_client_exe, patch_client_exe, plan_patch, write_patched_client_exe, ExeEdit, ExePatch, PatchWarningKind,
 };
 
 use super::client_exe_facet_dimensions::{allowed_ranges, client_exes, exe_kind, ExeKind};
@@ -151,6 +151,41 @@ fn per_site_edit(sites: &LoginSites) -> ExeEdit {
     let hosts = PATCHED_HOSTS.iter().take(sites.host_site_count()).map(|host| LoginHost::new(host).unwrap()).collect();
     let ports = PATCHED_PORTS.iter().take(sites.port_site_count()).copied().collect();
     ExeEdit::LoginServer(LoginServerEdit { hosts, ports })
+}
+
+#[test]
+#[ignore = "needs real clients: set UO_CLIENT_ROOTS and run with --ignored"]
+fn enhanced_copies_can_route_both_choices_to_the_first_host() {
+    let mut verified = 0;
+    for exe in ec_kr_exes().into_iter().filter(|exe| exe_kind(exe) == ExeKind::Enhanced) {
+        let original = std::fs::read(&exe).unwrap();
+        let before = ClientExeInspection::inspect(&original).unwrap();
+        let sites = before.login.as_ref().unwrap();
+        let [first, second] = sites.hosts.as_slice() else { continue };
+        assert!(sites.can_route_to_first_host(), "{}", exe.display());
+        let host = &FULL_LENGTH_HOST[..first.capacity - 1];
+        let patch = ExePatch { edits: vec![ExeEdit::LoginServerFirstHost {
+            host: LoginHost::new(host).unwrap(),
+            ports: sites.values().ports,
+        }] };
+        let plan = plan_patch(&original, &patch, None).unwrap();
+        let patched = patch_client_exe(&original, &patch, None).unwrap();
+        assert_eq!(plan.changes, patched.changes);
+        assert!(patched.after.checksum_valid());
+        let after = patched.after.login.unwrap();
+        assert!(after.uses_first_host_only());
+        assert_eq!(after.values().hosts, [host; MAX_PUBLIC_SERVERS]);
+        assert_eq!((after.fixed, after.ports), (sites.fixed, sites.ports.clone()));
+        let untouched = second.offset..second.offset + second.capacity;
+        assert_eq!(original[untouched.clone()], patched.bytes[untouched]);
+        let allowed = allowed_ranges(&before, &patch.edits);
+        assert!(original.iter().zip(&patched.bytes).enumerate().all(|(offset, (old, new))| {
+            old == new || allowed.iter().any(|range| range.contains(&offset))
+        }));
+        println!("{}: {} characters in slot 1, slot 2 capacity {}", exe.display(), host.len(), second.capacity);
+        verified += 1;
+    }
+    assert!(verified > 0, "no Enhanced Client with two public host choices under the roots");
 }
 
 #[test]

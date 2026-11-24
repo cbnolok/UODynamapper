@@ -14,7 +14,10 @@ pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
     let inspection = &opened.inspection;
     let mut rows = vec![
         ("Family", format!("{} (located by structure)", inspection.family.label())),
-        ("Known build", inspection.known.map_or_else(|| "not a traced build".to_owned(), |build| build.name.to_owned())),
+        ("Reference executable", inspection.known.map_or_else(
+            || "No exact SHA-256 match".to_owned(),
+            |build| format!("{} (exact SHA-256 match)", build.name),
+        )),
         ("SHA-256", inspection.sha256.clone()),
         ("Size", format!("{} bytes", inspection.file_size)),
         ("Version", version_label(inspection.version.as_ref())),

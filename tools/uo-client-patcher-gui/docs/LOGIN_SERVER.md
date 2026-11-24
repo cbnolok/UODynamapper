@@ -95,6 +95,11 @@ The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`,
 
 ## Tools
 
+- The GUI shows one host and port by default. Typed values are copied to every matching site. Uncheck
+  **Use one address for all public slots** to edit each site separately. The shared host must fit the shortest slot.
+  On supported two-choice Enhanced builds, **Route both public host choices to slot 1** makes both choices read
+  the first slot. The host can then use the first slot's full capacity. The second string stays in the file,
+  and the port choices can still be edited separately.
 - `uocf-cli exe show <exe>`: the version, the built-in address, slots, ports and whether they are stock, and
   whether the encryption is on.
 - `uocf-cli exe patch <exe> --output <copy> [--dry-run]` with `--login-server HOST:PORT` (every site),

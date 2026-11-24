@@ -191,7 +191,7 @@ impl PatcherApp {
         match OpenedExe::open(path) {
             Ok(opened) => {
                 let inspection = &opened.inspection;
-                let build = inspection.known.map(|build| format!(", known build {}", build.name)).unwrap_or_default();
+                let build = inspection.known.map(|build| format!(", matches reference executable {}", build.name)).unwrap_or_default();
                 self.logs.push(LogLevel::Info, format!("Opened {}: {}{build}", path.display(), inspection.family.label()));
                 match &opened.manifest {
                     ManifestState::Current(manifest) => self.logs.push(

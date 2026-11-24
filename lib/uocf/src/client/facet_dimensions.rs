@@ -212,7 +212,7 @@ pub const KNOWN_BUILDS: [KnownBuild; 12] = [
         checksum_offset: EC_CHECKSUM_OFFSET,
     },
     KnownBuild {
-        name: "Enhanced Client fp UOSA.exe",
+        name: "Enhanced Client 4.0.115.0 (UOSA.exe)",
         sha256: "9692f6ae95dd55338985caabf247f3a2490ba2ef4d0cfe2d75694b56ba65e3dd",
         family: ClientFamily::Enhanced,
         table_offsets: &[0x9ad2e0],

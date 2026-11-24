@@ -437,6 +437,33 @@ fn login_hosts_validate_against_their_own_slot() {
 }
 
 #[test]
+fn enhanced_login_can_use_only_the_first_host_slot() {
+    const PRIMARY_HOST: &str = "203.100.100.100";
+    let temp = TempDir::new("login_first_host");
+    let source = temp.folder("source").join(EC_EXE_NAME);
+    let image = synthetic_enhanced_login(SyntheticLogin::TimeOfLegends { short_slot: true });
+    std::fs::write(&source, image).unwrap();
+    let opened = OpenedExe::open(&source).unwrap();
+    let mut edits = EditState::new(&opened.inspection);
+    assert!(edits.login.can_route_to_first_host);
+    assert!(!edits.login.first_host_only);
+
+    edits.login.set_first_host_only(true);
+    edits.login.hosts[0].text = PRIMARY_HOST.to_owned();
+    edits.login.ports[0].text = SHARD_PORTS[0].to_string();
+    edits.login.spread(true, 0);
+    assert!(edits.login.check().1.is_ok());
+
+    let reopened = plan_write_and_reopen(&opened, &edits, &temp.0.join(EC_EXE_NAME));
+    let mut login = LoginEdit::new(&reopened.inspection);
+    assert!(login.first_host_only && login.first_host_already_routed);
+    assert_eq!(login.active_hosts()[0].current, PRIMARY_HOST);
+    assert!(!login.is_edited());
+    login.set_first_host_only(false);
+    assert!(login.first_host_only);
+}
+
+#[test]
 fn kingdom_reborn_takes_an_ipv4_address() {
     let temp = TempDir::new("kr_login");
     let exe = temp.folder("client").join(KR_EXE_NAME);

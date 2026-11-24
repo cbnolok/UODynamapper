@@ -21,8 +21,8 @@ use crate::logic::login::{
 };
 use crate::logic::preview::login_warnings;
 
-const HOST_EDIT_WIDTH: f32 = 180.0;
-const PORT_EDIT_WIDTH: f32 = 64.0;
+const HOST_EDIT_WIDTH: f32 = 280.0;
+const PORT_EDIT_WIDTH: f32 = 88.0;
 const SERVER_ROW_WIDTH: f32 = 240.0;
 const SITE_GRID_SPACING: [f32; 2] = [14.0, 2.0];
 const OVERWRITE_MODAL_ID: &str = "overwrite_login_cfg";
@@ -42,9 +42,8 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
         LoginMode::PublicSites => {
             muted_label(
                 ui,
-                "The Enhanced Client connects to the address built into the executable: a host per public slot and a \
-                 port per immediate. The values below are one more edit of the same patch as the facet and seam \
-                 edits: the preview lists its bytes, \"Save as\" writes it and the manifest records it.",
+                "Set the public login address in the Enhanced Client executable. Preview shows the changes and \
+                 Save as writes a patched copy.",
             );
             ui_executable_sites(ui, session);
         }
@@ -175,8 +174,7 @@ fn ui_executable_sites(ui: &mut egui::Ui, session: &mut Session) {
     if sites.hosts.len() > 1 || sites.ports.len() > 1 {
         muted_label(
             ui,
-            "Each login draws rand() twice: the first picks the host, the second the port, independently. The same \
-             host on every slot and the same port on every immediate make every draw give the one address.",
+            "The client chooses a host and port independently. Using one address fills every public host and port slot.",
         );
     }
 
@@ -210,7 +208,7 @@ fn ui_executable_sites(ui: &mut egui::Ui, session: &mut Session) {
     }
 }
 
-/// One row per host site (with its slot's capacity) and per port site; an empty field keeps the file's value.
+/// Show one host and port in linked mode, or a field for each site in individual mode.
 fn ui_login_fields(ui: &mut egui::Ui, login: &mut LoginEdit) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("New login server").strong());
@@ -219,31 +217,64 @@ fn ui_login_fields(ui: &mut egui::Ui, login: &mut LoginEdit) {
             login.clear();
         }
     });
+    if login.first_host_already_routed {
+        muted_label(ui, "Both public host choices already use slot 1.");
+    } else if login.can_route_to_first_host {
+        let mut first_only = login.first_host_only;
+        if ui.checkbox(&mut first_only, "Route both public host choices to slot 1")
+            .on_hover_text("Changes the second choice to read the first slot, using the first slot’s full capacity.")
+            .changed()
+        {
+            login.set_first_host_only(first_only);
+        }
+    }
     if login.has_several_sites() {
         let mut same = login.same_for_all;
+        let label = if login.first_host_only {
+            "Use one port for all public slots"
+        } else {
+            "Use one address for all public slots"
+        };
         let toggle = ui
-            .checkbox(&mut same, "Same for all")
-            .on_hover_text("Typing a host or port fills every host or port site with it");
+            .checkbox(&mut same, label)
+            .on_hover_text("Fill every public host and port slot with the same values. Uncheck to edit each slot.");
         if toggle.changed() {
             login.set_same_for_all(same);
         }
     }
+    let linked = login.same_for_all && login.has_several_sites();
+    let shared_host_limit = login.active_hosts().iter().filter_map(|field| field.max_host_length()).min();
+    let first_only = login.first_host_only;
     let host_hint = if login.mode == LoginMode::FixedAddress { "dotted IPv4" } else { "IPv4 or host name" };
     let mut spread = None;
     egui::Grid::new("login_edit_grid").num_columns(3).spacing(SITE_GRID_SPACING).show(ui, |ui| {
         for (port, fields) in [(false, &mut login.hosts), (true, &mut login.ports)] {
-            for (index, field) in fields.iter_mut().enumerate() {
-                ui.label(capitalized(&field.label));
-                let (hint, width) = if port { (field.current.as_str(), PORT_EDIT_WIDTH) } else { (host_hint, HOST_EDIT_WIDTH) };
-                let response = ui.add(egui::TextEdit::singleline(&mut field.text).hint_text(hint).desired_width(width));
+            let one_field = linked || (first_only && !port);
+            let shown = if one_field { 1 } else { fields.len() };
+            for (index, field) in fields.iter_mut().take(shown).enumerate() {
+                if one_field {
+                    ui.label(if port { "Port" } else { "Host" });
+                } else {
+                    ui.label(capitalized(&field.label));
+                }
+                let (hint, width) = if port {
+                    (if linked { "port" } else { field.current.as_str() }, PORT_EDIT_WIDTH)
+                } else {
+                    (host_hint, HOST_EDIT_WIDTH)
+                };
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut field.text).hint_text(hint).min_size(egui::vec2(width, 0.0)),
+                );
                 if response.changed() {
                     spread = Some((port, index));
                 }
-                let note = match field.max_host_length() {
-                    Some(max) => format!("now {}; at most {max} characters ({}-byte slot)", field.current, field.capacity.unwrap_or_default()),
-                    None => format!("now {}", field.current),
+                let note = match (linked && (!first_only || port), port, field.max_host_length()) {
+                    (true, false, _) => shared_host_limit.map(|max| format!("Up to {max} characters across all public slots")),
+                    (true, true, _) => None,
+                    (false, _, Some(max)) => Some(format!("now {}; at most {max} characters", field.current)),
+                    (false, _, None) => Some(format!("now {}", field.current)),
                 };
-                muted_label(ui, note);
+                muted_label(ui, note.unwrap_or_default());
                 ui.end_row();
             }
         }

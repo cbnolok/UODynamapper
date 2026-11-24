@@ -143,6 +143,13 @@ pub struct LoginHostSlot {
     pub references: usize,
 }
 
+impl LoginHostSlot {
+    /// The file offset of the absolute string address in the push instruction.
+    pub(crate) fn address_operand_offset(&self) -> usize {
+        self.push_offset + PUSH_IMM32_LEN - size_of::<u32>()
+    }
+}
+
 /// A public port immediate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoginPortSite {
@@ -167,6 +174,8 @@ pub struct LoginSites {
 pub struct LoginValues {
     pub hosts: Vec<String>,
     pub ports: Vec<u16>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_host_only: bool,
 }
 
 impl LoginSites {
@@ -186,13 +195,29 @@ impl LoginSites {
         if self.uses_fixed_address() { 1 } else { self.ports.len() }
     }
 
+    /// Both public choices already push the address of the first host string.
+    pub fn uses_first_host_only(&self) -> bool {
+        matches!(self.hosts.as_slice(), [first, second] if first.va == second.va)
+    }
+
+    /// The two host choices were found and their string references can be accounted for.
+    pub fn can_route_to_first_host(&self) -> bool {
+        match self.hosts.as_slice() {
+            [first, _] if self.uses_first_host_only() => first.references == self.hosts.len(),
+            [first, second] => first.references == 1 && second.references == 1
+                && (first.offset + first.capacity <= second.offset || second.offset + second.capacity <= first.offset),
+            _ => false,
+        }
+    }
+
     pub fn values(&self) -> LoginValues {
         if self.uses_fixed_address() {
-            return LoginValues { hosts: vec![self.fixed.ip.to_string()], ports: vec![self.fixed.port] };
+            return LoginValues { hosts: vec![self.fixed.ip.to_string()], ports: vec![self.fixed.port], first_host_only: false };
         }
         LoginValues {
             hosts: self.hosts.iter().map(|slot| slot.host.clone()).collect(),
             ports: self.ports.iter().map(|site| site.port).collect(),
+            first_host_only: self.uses_first_host_only(),
         }
     }
 
@@ -202,7 +227,7 @@ impl LoginSites {
         if self.uses_fixed_address() {
             return STOCK_KR_LOGIN_ADDRESSES.contains(&(self.fixed.ip, self.fixed.port));
         }
-        self.hosts.iter().all(|slot| STOCK_LOGIN_HOSTS.contains(&slot.host.as_str()))
+        !self.uses_first_host_only() && self.hosts.iter().all(|slot| STOCK_LOGIN_HOSTS.contains(&slot.host.as_str()))
             && self.ports.iter().zip(STOCK_LOGIN_PORTS).all(|(site, stock)| site.port == stock)
     }
 
@@ -226,8 +251,14 @@ impl LoginSites {
 
     /// The file offsets of the sites, to check a patched copy locates them at the same places.
     pub fn offsets(&self) -> Vec<usize> {
+        self.offsets_with_host_routing(false)
+    }
+
+    pub(crate) fn offsets_with_host_routing(&self, route_first: bool) -> Vec<usize> {
         let mut offsets = vec![self.fixed.offset];
-        offsets.extend(self.hosts.iter().map(|slot| slot.offset));
+        offsets.extend(self.hosts.iter().map(|slot| slot.push_offset));
+        let first = self.hosts.first().filter(|_| route_first);
+        offsets.extend(self.hosts.iter().map(|slot| first.unwrap_or(slot).offset));
         offsets.extend(self.ports.iter().map(|site| site.offset));
         offsets
     }
@@ -524,7 +555,8 @@ pub fn locate_login_sites(bytes: &[u8], pe: &PeImage, family: ClientFamily) -> e
     // Time of Legends on: the two pushes are the arms of `JE +7; PUSH h1; JMP +5; PUSH h2`.
     let two_arms = hosts.len() == 2 && {
         let first = hosts[0].push_offset - base;
-        code.get(first - JCC_REL8_LEN..first) == Some(&[OPCODE_JE_REL8, (PUSH_IMM32_LEN + JCC_REL8_LEN) as u8])
+        first.checked_sub(JCC_REL8_LEN).and_then(|branch| code.get(branch..first))
+            == Some(&[OPCODE_JE_REL8, (PUSH_IMM32_LEN + JCC_REL8_LEN) as u8])
             && code.get(first + PUSH_IMM32_LEN..first + PUSH_IMM32_LEN + JCC_REL8_LEN) == Some(&[OPCODE_JMP_REL8, PUSH_IMM32_LEN as u8])
             && hosts[1].push_offset == hosts[0].push_offset + PUSH_IMM32_LEN + JCC_REL8_LEN
     };
@@ -688,7 +720,7 @@ pub(crate) mod tests {
         let tol = ClientExeInspection::inspect(&synthetic_login_client(true, false)).unwrap();
         let login = tol.login.as_ref().unwrap();
         assert_eq!((login.fixed.ip, login.fixed.port), (INTERNAL_IP, STOCK_LOGIN_PORTS[0]));
-        assert_eq!(login.values(), LoginValues { hosts: TOL_HOSTS.map(str::to_owned).to_vec(), ports: STOCK_LOGIN_PORTS.to_vec() });
+        assert_eq!(login.values(), LoginValues { hosts: TOL_HOSTS.map(str::to_owned).to_vec(), ports: STOCK_LOGIN_PORTS.to_vec(), first_host_only: false });
         assert!(login.hosts.iter().all(|slot| slot.capacity == LOGIN_HOST_SLOT_SIZE && slot.references == 1));
         assert!(login.is_stock());
         assert_eq!(login.public_servers(), [(TOL_HOSTS[0].to_owned(), 7775), (TOL_HOSTS[1].to_owned(), 7776)]);

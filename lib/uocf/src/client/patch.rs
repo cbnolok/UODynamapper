@@ -23,6 +23,8 @@
 //!   ([`crate::client::login`]); the internal test address is left alone. Kingdom Reborn: the fixed address's
 //!   ip imm32 (dotted IPv4 only: the code holds a number, not a string the client resolves) and port imm16.
 //!   Classic is refused: it reads `login.cfg` ([`crate::client::login_servers`]).
+//! - [`ExeEdit::LoginServerFirstHost`]: both Enhanced Client host choices use the first string. Only that
+//!   string and the second push's existing address operand are written for the hosts.
 //! - [`ExeEdit::NoEncryption`]: the bytes of each network cipher ([`crate::client::encryption`]): NOPs over the
 //!   login cipher's XOR (and the Enhanced Client's game cipher XORs), and a `JMP` for the `JZ` that enters the 0xE3
 //!   key exchange ciphers' loop. Recognized early Classic clients share one login/game XOR; other Classic ciphers
@@ -122,6 +124,8 @@ pub enum ExeEdit {
     ClassicWrap { facet: u8, wrap_width: u32, wrap_height: u32 },
     /// A new built-in login server (Enhanced Client, Kingdom Reborn): one host per host site, one port per port site.
     LoginServer(LoginServerEdit),
+    /// Route both Enhanced Client host choices to the first string, with one port per port site.
+    LoginServerFirstHost { host: LoginHost, ports: Vec<u16> },
     /// Plaintext login and game traffic (Enhanced Client, Kingdom Reborn): every network cipher patched out,
     /// and KR's mandatory key exchange replaced with immediate game login.
     NoEncryption,
@@ -143,6 +147,10 @@ impl ExeEdit {
                 format!("facet {facet} wrap {wrap_width}x{wrap_height}")
             }
             Self::LoginServer(login) => login.describe(),
+            Self::LoginServerFirstHost { host, ports } => {
+                let ports = ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ");
+                format!("login host {host} for both choices (first slot only), ports {ports}")
+            }
             Self::NoEncryption => "no encryption".to_owned(),
             Self::NoLoginEncryption => "no login encryption".to_owned(),
             Self::NoGameEncryption => "no game encryption".to_owned(),
@@ -369,14 +377,24 @@ fn site_count_text(count: usize, what: &str) -> String {
     format!("{count} {what} site{}", if count == 1 { "" } else { "s" })
 }
 
-/// The login sites `login` writes, checked: one host and port per site, the ports, and each host against its site
-/// (Enhanced Client: its slot's capacity; Kingdom Reborn: dotted IPv4).
-fn checked_login_sites<'a>(before: &'a ClientExeInspection, login: &LoginServerEdit) -> eyre::Result<&'a LoginSites> {
+struct PlannedLogin<'a> {
+    edit: usize,
+    hosts: Vec<LoginHost>,
+    ports: &'a [u16],
+    route_first: bool,
+}
+
+/// The login sites the edit writes, checked against the number and capacity of the located sites.
+fn checked_login_sites<'a>(before: &'a ClientExeInspection, login: &PlannedLogin<'_>) -> eyre::Result<&'a LoginSites> {
     let sites = match (&before.login, before.family) {
         (Some(sites), ClientFamily::Enhanced) if !sites.hosts.is_empty() && !sites.ports.is_empty() => sites,
         (Some(sites), ClientFamily::KingdomReborn) => sites,
         _ => eyre::bail!("{}", login_refusal(before.family)),
     };
+    eyre::ensure!(
+        !login.route_first || before.family == ClientFamily::Enhanced && sites.can_route_to_first_host(),
+        "routing both choices to the first host needs the Enhanced Client's two verified host choices"
+    );
     let (host_sites, port_sites) = (sites.host_site_count(), sites.port_site_count());
     eyre::ensure!(
         login.hosts.len() == host_sites && login.ports.len() == port_sites,
@@ -387,7 +405,7 @@ fn checked_login_sites<'a>(before: &'a ClientExeInspection, login: &LoginServerE
         site_count_text(host_sites, "host"),
         site_count_text(port_sites, "port")
     );
-    for port in &login.ports {
+    for port in login.ports {
         validate_login_port(*port)?;
     }
     if sites.uses_fixed_address() {
@@ -399,7 +417,15 @@ fn checked_login_sites<'a>(before: &'a ClientExeInspection, login: &LoginServerE
         );
         return Ok(sites);
     }
-    for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).enumerate() {
+    let shared = login.route_first || sites.uses_first_host_only();
+    if shared {
+        eyre::ensure!(
+            login.hosts[0] == login.hosts[1],
+            "both login choices use the first host slot: give the same host for each choice"
+        );
+    }
+    let writes = if shared { 1 } else { sites.hosts.len() };
+    for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).take(writes).enumerate() {
         eyre::ensure!(
             host.as_str().len() < slot.capacity,
             "host `{host}` has {} characters: host slot {} (VA {:#x}, `{}`) takes at most {} (a {}-byte slot): use a \
@@ -412,7 +438,7 @@ fn checked_login_sites<'a>(before: &'a ClientExeInspection, login: &LoginServerE
             slot.capacity
         );
         eyre::ensure!(
-            slot.references == 1,
+            slot.references == if sites.uses_first_host_only() { sites.hosts.len() } else { 1 },
             "host slot {} (VA {:#x}) is referenced {} times in the image: writing it could change other code",
             number + 1,
             slot.va,
@@ -511,9 +537,15 @@ pub fn plan_patch_inspected(
                 eyre::ensure!(wrapped[facet_index].is_none(), "two wrap edits for facet {facet}");
                 wrapped[facet_index] = Some(index);
             }
-            ExeEdit::LoginServer(ref login) => {
+            ExeEdit::LoginServer(_) | ExeEdit::LoginServerFirstHost { .. } => {
                 eyre::ensure!(login_edit.is_none(), "two login server edits");
-                let sites = checked_login_sites(&before, login)?;
+                let (hosts, ports, route_first) = match edit {
+                    ExeEdit::LoginServer(login) => (login.hosts.clone(), login.ports.as_slice(), false),
+                    ExeEdit::LoginServerFirstHost { host, ports } => (vec![*host, *host], ports.as_slice(), true),
+                    _ => unreachable!(),
+                };
+                let login = PlannedLogin { edit: index, hosts, ports, route_first };
+                let sites = checked_login_sites(&before, &login)?;
                 if !sites.is_stock() && previous.is_none() {
                     let values = sites.values();
                     let ports: Vec<String> = values.ports.iter().map(u16::to_string).collect();
@@ -538,7 +570,7 @@ pub fn plan_patch_inspected(
                         format!("`{host}` is a host name: the client resolves it (gethostbyname) at each login"),
                     ));
                 }
-                login_edit = Some((index, login));
+                login_edit = Some(login);
             }
             ExeEdit::NoEncryption | ExeEdit::NoLoginEncryption | ExeEdit::NoGameEncryption | ExeEdit::BypassKrHandshake => {
                 eyre::ensure!(
@@ -565,7 +597,8 @@ pub fn plan_patch_inspected(
         }
         let facet = match *edit {
             ExeEdit::FacetSize { facet, .. } | ExeEdit::ClassicWrap { facet, .. } => Some(facet),
-            ExeEdit::Split(_) | ExeEdit::LoginServer(_) | ExeEdit::NoEncryption | ExeEdit::NoLoginEncryption
+            ExeEdit::Split(_) | ExeEdit::LoginServer(_) | ExeEdit::LoginServerFirstHost { .. }
+            | ExeEdit::NoEncryption | ExeEdit::NoLoginEncryption
             | ExeEdit::NoGameEncryption | ExeEdit::BypassKrHandshake => None,
         };
         if classic && facet == Some(0) {
@@ -612,10 +645,11 @@ pub fn plan_patch_inspected(
     if let Some((_, x)) = split_edit {
         expected.split_x = Some(x);
     }
-    if let Some((_, login)) = login_edit {
+    if let (Some(login), Some(sites)) = (&login_edit, &before.login) {
         expected.login = Some(LoginValues {
             hosts: login.hosts.iter().map(|host| host.as_str().to_owned()).collect(),
-            ports: login.ports.clone(),
+            ports: login.ports.to_vec(),
+            first_host_only: login.route_first || sites.uses_first_host_only(),
         });
     }
     if !encryption_edits.is_empty() {
@@ -677,7 +711,8 @@ pub fn plan_patch_inspected(
             writes.push(FieldWrite::u32(*offset, x, field, edit));
         }
     }
-    if let (Some((edit, login)), Some(sites)) = (login_edit, &before.login) {
+    if let (Some(login), Some(sites)) = (login_edit, &before.login) {
+        let edit = login.edit;
         if sites.uses_fixed_address() {
             let ip: std::net::Ipv4Addr = login.hosts[0].as_str().parse().wrap_err("the checked IPv4 host")?;
             let fixed = &sites.fixed;
@@ -692,13 +727,25 @@ pub fn plan_patch_inspected(
                 writes.push(FieldWrite { offset, new, field, edit });
             }
         }
-        for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).enumerate() {
+        if login.route_first && !sites.uses_first_host_only() {
+            let [first, second] = sites.hosts.as_slice() else { unreachable!() };
+            let operands = [first.address_operand_offset(), second.address_operand_offset()];
+            // Both instructions keep their absolute operands at the same offsets. A relocatable image must
+            // already have the corresponding loader relocations, so the existing table needs no writes.
+            let relocs = super::pe_relocations::plan(
+                bytes, &before.pe, operands[0]..operands[1] + size_of::<u32>(), &operands,
+            )?;
+            eyre::ensure!(relocs.is_empty(), "the public host choices have unexpected PE base relocations");
+            writes.push(FieldWrite::u32(operands[1], first.va, "login host choice 2 points to slot 1".to_owned(), edit));
+        }
+        let host_writes = if login.route_first || sites.uses_first_host_only() { 1 } else { sites.hosts.len() };
+        for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).take(host_writes).enumerate() {
             let mut new = host.as_str().as_bytes().to_vec();
             new.resize(slot.capacity, 0);
             let field = format!("login host {} ({}-byte slot)", number + 1, slot.capacity);
             writes.push(FieldWrite { offset: slot.offset, new, field, edit });
         }
-        for (number, (site, port)) in sites.ports.iter().zip(&login.ports).enumerate() {
+        for (number, (site, port)) in sites.ports.iter().zip(login.ports).enumerate() {
             let field = format!("login port {} (imm16)", number + 1);
             writes.push(FieldWrite { offset: site.offset, new: port.to_le_bytes().to_vec(), field, edit });
         }
@@ -820,13 +867,15 @@ pub fn patch_client_exe(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeMan
         inspection.classic.as_ref().and_then(|layout| layout.startup).map(|startup| startup.offset)
     };
     let login_offsets = |inspection: &ClientExeInspection| inspection.login.as_ref().map(LoginSites::offsets);
+    let first_host_only = plan.patch.edits.iter().any(|edit| matches!(edit, ExeEdit::LoginServerFirstHost { .. }));
+    let expected_login_offsets = before.login.as_ref().map(|sites| sites.offsets_with_host_routing(first_host_only));
     let cipher_offsets = |inspection: &ClientExeInspection| inspection.encryption.as_ref().map(EncryptionSites::offsets);
     eyre::ensure!(
         after.family == before.family
             && offsets(&after) == offsets(&before)
             && split_offsets(&after) == split_offsets(&before)
             && startup(&after) == startup(&before)
-            && login_offsets(&after) == login_offsets(&before)
+            && login_offsets(&after) == expected_login_offsets
             && cipher_offsets(&after) == cipher_offsets(&before),
         "internal error: the patched copy's tables, split, startup values, login sites or ciphers are located elsewhere"
     );
@@ -1232,13 +1281,63 @@ mod tests {
         let mut old = patched.manifest.clone();
         old.values.login = None;
         assert!(plan_patch(&patched.bytes, &ExePatch { edits: vec![size(6, 512, 512)] }, Some(&old)).is_ok());
-        old.values.login = Some(LoginValues { hosts: vec![], ports: vec![] });
+        old.values.login = Some(LoginValues { hosts: vec![], ports: vec![], first_host_only: false });
         assert!(plan_patch(&patched.bytes, &ExePatch { edits: vec![size(6, 512, 512)] }, Some(&old)).is_err());
 
         // The one-host build before Time of Legends.
         let old_build = synthetic_login_client(false, false);
         let patched = patch_client_exe(&old_build, &ExePatch { edits: vec![login(&old_build, LOCAL_HOST, SHARD_PORT)] }, None).unwrap();
         assert_eq!(patched.after.login.unwrap().public_servers(), [(LOCAL_HOST.to_owned(), SHARD_PORT)]);
+    }
+
+    #[test]
+    fn both_choices_can_use_the_first_host_with_the_ports_unchanged() {
+        const FIRST_SLOT_HOST: &str = "192.168.100.100";
+        let image = synthetic_login_client(true, true);
+        let sites = ClientExeInspection::inspect(&image).unwrap().login.unwrap();
+        assert!(sites.can_route_to_first_host() && !sites.uses_first_host_only());
+        let [first, second] = sites.hosts.as_slice() else { panic!("two host choices") };
+        assert_eq!(FIRST_SLOT_HOST.len() + 1, first.capacity);
+        assert!(FIRST_SLOT_HOST.len() >= second.capacity);
+        let edit = ExeEdit::LoginServerFirstHost {
+            host: LoginHost::new(FIRST_SLOT_HOST).unwrap(),
+            ports: sites.values().ports,
+        };
+        let patch = ExePatch { edits: vec![edit.clone()] };
+        let plan = plan_patch(&image, &patch, None).unwrap();
+        let patched = patch_client_exe(&image, &patch, None).unwrap();
+        assert_plan_is_the_write(&image, &plan, &patched.bytes);
+        let changed: Vec<_> = plan.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0))
+            .map(|change| change.offset).collect();
+        assert_eq!(changed, [second.address_operand_offset(), first.offset]);
+        let old_second = second.offset..second.offset + second.capacity;
+        assert_eq!(patched.bytes[old_second.clone()], image[old_second]);
+        let after = patched.after.login.as_ref().unwrap();
+        assert!(after.can_route_to_first_host() && after.uses_first_host_only());
+        assert_eq!(after.ports, sites.ports);
+        assert_eq!(after.fixed, sites.fixed);
+        assert_eq!(after.values().hosts, [FIRST_SLOT_HOST; 2]);
+        let manifest = parse_manifest(&serde_json::to_string(&patched.manifest).unwrap()).unwrap();
+        assert_eq!(manifest.steps[0].edits, [edit]);
+        assert!(manifest.values.login.as_ref().unwrap().first_host_only);
+
+        let followup = ExePatch { edits: vec![login(&patched.bytes, LOCAL_HOST, SHARD_PORT)] };
+        let chained = patch_client_exe(&patched.bytes, &followup, Some(&manifest)).unwrap();
+        let after = chained.after.login.as_ref().unwrap();
+        assert!(after.uses_first_host_only());
+        assert_eq!(after.values().hosts, [LOCAL_HOST; 2]);
+        assert_eq!(chained.manifest.steps.len(), 2);
+        let different = ExePatch { edits: vec![per_site(&[LOCAL_HOST, SHARD_HOST], &[SHARD_PORT; 2])] };
+        assert!(plan_patch(&chained.bytes, &different, Some(&chained.manifest)).is_err());
+
+        let one_choice = synthetic_login_client(false, false);
+        assert!(plan_patch(&one_choice, &patch, None).is_err());
+
+        let mut other_reference = image.clone();
+        other_reference.extend(first.va.to_le_bytes());
+        let sites = ClientExeInspection::inspect(&other_reference).unwrap().login.unwrap();
+        assert!(!sites.can_route_to_first_host());
+        assert!(plan_patch(&other_reference, &patch, None).is_err());
     }
 
     #[test]
@@ -1250,7 +1349,7 @@ mod tests {
         assert_eq!(after.public_servers(), [(LOCAL_HOST.to_owned(), SHARD_PORT), (SHARD_HOST.to_owned(), SECOND_SHARD_PORT)]);
         assert_eq!(
             patched.manifest.values.login,
-            Some(LoginValues { hosts: vec![LOCAL_HOST.to_owned(), SHARD_HOST.to_owned()], ports: vec![SHARD_PORT, SECOND_SHARD_PORT] })
+            Some(LoginValues { hosts: vec![LOCAL_HOST.to_owned(), SHARD_HOST.to_owned()], ports: vec![SHARD_PORT, SECOND_SHARD_PORT], first_host_only: false })
         );
         assert_eq!(edit.describe(), format!("login hosts 1 {LOCAL_HOST}, 2 {SHARD_HOST}; ports 1 {SHARD_PORT}, 2 {SECOND_SHARD_PORT}"));
         // Only the second host changes: one host write and nothing at the ports.
@@ -1288,7 +1387,7 @@ mod tests {
         let before = ClientExeInspection::inspect(&image).unwrap();
         let sites = before.login.clone().unwrap();
         assert!(sites.uses_fixed_address() && sites.is_stock());
-        assert_eq!(before.values().login, Some(LoginValues { hosts: vec![sites.fixed.ip.to_string()], ports: vec![sites.fixed.port] }));
+        assert_eq!(before.values().login, Some(LoginValues { hosts: vec![sites.fixed.ip.to_string()], ports: vec![sites.fixed.port], first_host_only: false }));
         let patch = ExePatch { edits: vec![login(&image, SHARD_HOST, SHARD_PORT)] };
         let plan = plan_patch(&image, &patch, None).unwrap();
         let patched = patch_client_exe(&image, &patch, None).unwrap();
@@ -1306,7 +1405,7 @@ mod tests {
         let after = patched.after.login.as_ref().unwrap();
         assert_eq!((after.fixed.ip, after.fixed.port), (ip, SHARD_PORT));
         assert!(!after.is_stock());
-        assert_eq!(patched.manifest.values.login, Some(LoginValues { hosts: vec![SHARD_HOST.to_owned()], ports: vec![SHARD_PORT] }));
+        assert_eq!(patched.manifest.values.login, Some(LoginValues { hosts: vec![SHARD_HOST.to_owned()], ports: vec![SHARD_PORT], first_host_only: false }));
         // Patches again with its manifest; a host name cannot be written.
         assert!(plan_patch(&patched.bytes, &ExePatch { edits: vec![login(&image, LOCAL_HOST, SHARD_PORT)] }, Some(&patched.manifest)).is_ok());
         let error = plan_patch(&image, &ExePatch { edits: vec![login(&image, "shard.example", SHARD_PORT)] }, None).unwrap_err().to_string();

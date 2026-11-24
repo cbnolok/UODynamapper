@@ -180,6 +180,15 @@ pub(super) fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) ->
                     ranges.extend(login.ports.iter().map(|site| site.offset..site.offset + size_of::<u16>()));
                 }
             }
+            ExeEdit::LoginServerFirstHost { .. } => {
+                if let Some(login) = &before.login
+                    && let [first, second] = login.hosts.as_slice()
+                {
+                    ranges.push(first.offset..first.offset + first.capacity);
+                    ranges.push(field(second.push_offset + size_of::<u8>()));
+                    ranges.extend(login.ports.iter().map(|site| site.offset..site.offset + size_of::<u16>()));
+                }
+            }
             ExeEdit::NoEncryption | ExeEdit::NoLoginEncryption | ExeEdit::NoGameEncryption | ExeEdit::BypassKrHandshake => {
                 if let Some(ciphers) = &before.encryption {
                     let selected = match edit {
