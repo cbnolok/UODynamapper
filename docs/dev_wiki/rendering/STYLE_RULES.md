@@ -54,6 +54,19 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
   (`art/statics_collect.rs`), `grade_color_vibrant`'s `land_grade` (`postprocess/color_grading.wesl`). Test:
   `canonical_statics_that_continue_the_land_take_its_style`. Fixtures: `britain-shop-counter-keeps-its-colour`, `minoc-hall-tables-zview`, `minoc-grass-land-like-statics`,
   `yew-forest-canopy`.
+- **Projected shadows follow the sun and the casters' shapes.** UOD-Painterly's sprite shadows lie on the plane of
+  the caster's base and lean away from the sun: a point h world units up falls h × Length × (the sun's run over the
+  default sun's, at most 4×) along the ground, so azimuth turns them and elevation lengthens or shortens them; an
+  overhead sun casts none. Only what the KR client casts a shadow for casts one (no Roof, Surface, Rotated or
+  NoShadow item, no floor, Background static or EC item surface), so a roof's or a stair's tiles no longer shade the
+  tiles beside them. A wall (the light scene's wall class) casts its two faces, the south and the east edge of its
+  cell, as a parallelogram along the ground, with its doors and windows read through its art; trees and the other
+  casters keep the card laid on the ground in a soft ellipse. Sun Strength lights the land and leaves the shadows
+  alone. Source: user, 2026-11-25 (roof tiles shaded one another, walls cast round blobs, the sun settings did not
+  move the shadows). Code: `projected_shadow_casts`, `projected_shadow_step`, `wall_shadow_face_point`,
+  `wall_shadow_card_corner` (`sh/art/projected_shadow.wesl`), the `PASS_MODE_SHADOW` branches of `sh/art/main.wesl`.
+  Tests: `projected_shadow_tests.rs`. Known gap: a shadow lies at its caster's base z, so an upper storey's wall
+  casts a band in the air over the storey under it.
 
 - Source: user decisions recorded in [`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md);
   KR client trace [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).

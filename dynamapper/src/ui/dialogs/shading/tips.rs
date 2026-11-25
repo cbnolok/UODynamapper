@@ -93,7 +93,7 @@ pub(super) const SUN_STRENGTH: &str =
 pub(super) const SUN_AZIMUTH: &str =
     "Compass bearing of the sun in degrees, clockwise from north (180 = south). Lights land and art and turns the sprite shadows.";
 pub(super) const SUN_ELEVATION: &str =
-    "Height of the sun above the horizon in degrees (90 = overhead).";
+    "Height of the sun above the horizon in degrees (90 = overhead). A lower sun casts longer sprite shadows.";
 pub(super) const TERRAIN_AMBIENT: &str =
     "Light that reaches every land tile, even in shade, in Classic and with per-pixel land shading; raise it to open up dark slopes, nights and caves. With Client per-vertex land shading it lights only water: land water, flat-water statics and water drawn from Enhanced textures; KR-like uses it to draw water unlit, as the client.";
 pub(super) const LAND_RELIEF: &str =
@@ -243,7 +243,7 @@ pub(super) const KR_TRANSITION_GRIME_STRENGTH: &str =
 pub(super) const ART_PROJECTED_SHADOW_STRENGTH: &str =
     "How dark the item shadows are. Needs Projected Shadows on.";
 pub(super) const ART_PROJECTED_SHADOW_LENGTH: &str =
-    "How long the item shadows are. Needs Projected Shadows on.";
+    "How long the item shadows are under the default sun; a lower sun lengthens them. Needs Projected Shadows on.";
 pub(super) const ART_PROJECTED_SHADOW_SOFTNESS: &str =
     "How soft the edge of the item shadows is. Needs Projected Shadows on; the difference is small.";
 

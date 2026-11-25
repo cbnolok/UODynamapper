@@ -21,6 +21,8 @@ pub(crate) mod transparent_order;
 mod shading_tests;
 #[cfg(test)]
 mod depth_tests;
+#[cfg(test)]
+mod projected_shadow_tests;
 
 pub struct DrawStaticSpritesPlugin {
     pub registered_by: &'static str,

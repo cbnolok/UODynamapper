@@ -1,7 +1,8 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, light_scene_class,
     light_scene_height, light_scene_cell_rise, light_scene_cap_probe_v, light_scene_may_be_cap, light_scene_cap_texel,
-    LIGHT_SCENE_MIN_ALPHA, LIGHT_SCENE_CAP_MIN_ALPHA, LIGHT_SCENE_CLASS_HEIGHT};
+    LIGHT_SCENE_MIN_ALPHA, LIGHT_SCENE_CAP_MIN_ALPHA, LIGHT_SCENE_CLASS_HEIGHT, LIGHT_SCENE_CLASS_WALL,
+    LIGHT_SCENE_ANCHOR_OFFSET};
 import bevy_pbr::render::{
     forward_io::Vertex,
     mesh_functions::get_tag,
@@ -30,12 +31,14 @@ import package::shaders::world::art::art_bindings::{
     global_light,
     hue_sampler, hue_texture, visual_grunge_texture, client_grunge_texture, client_grunge_sampler,
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
-    INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
-    DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
+    INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR,
+    DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, PASS_MODE_OPAQUE,
     PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
     client_shadow_logical_offset, CLIENT_SHADOW_TIE_LEVEL_OFFSET};
+import package::shaders::world::art::projected_shadow::{projected_shadow_casts, projected_shadow_step,
+    wall_shadow_ground_box, wall_shadow_face_point, wall_shadow_card_corner};
 import package::shaders::world::art::mobile_frames::{mobile_frames_blend, mobile_frames_tap,
     mobile_frames_client_filtered};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
@@ -81,6 +84,8 @@ struct ArtFragmentOutput {
 // A projected shadow lies half a priority z under the base it is cast from: in front of the land (z - 2) and the
 // Background floors (z - 1) there, behind the statics standing at that base (z and up).
 const PROJECTED_SHADOW_PRIORITY_Z_OFFSET: f32 = -0.5;
+// A projected shadow lies this far above its caster's base, over the land there.
+const PROJECTED_SHADOW_GROUND_LIFT: f32 = 0.012;
 // static_batches.rs: an opaque Classic water diamond keeps the sea's sampling.
 const STATIC_FLAG_CC_WATER_FILL: u32 = 1u << 26u;
 
@@ -99,7 +104,27 @@ fn client_shadow_logical_view_z(inst: SpriteInstance) -> f32 {
 }
 
 // Every corner of a non-caster lands on this one clip point: zero-area triangles draw nothing.
-const CLIENT_SHADOW_CULLED_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+const SHADOW_CULLED_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+
+// Whether the projected shadow of `inst` is a wall's (art/projected_shadow.wesl): a billboard of the light scene's
+// wall class, which stands on its cell's south and east edges.
+fn projected_shadow_is_wall(inst: SpriteInstance) -> bool {
+    return inst.flat_quad == 0u && light_scene_class(inst.is_wet_flags, false) == LIGHT_SCENE_CLASS_WALL;
+}
+
+// The corner of the wall's cell, from the statics' anchor (light_scene.wesl).
+fn projected_shadow_wall_cell(inst: SpriteInstance) -> vec2<f32> {
+    return round(inst.client_grunge_anchor - LIGHT_SCENE_ANCHOR_OFFSET);
+}
+
+// The height of the wall's faces in world units: its tiledata height, or its art's top where it has none.
+fn projected_shadow_wall_height(inst: SpriteInstance) -> f32 {
+    let tiledata_height = light_scene_height(inst.is_wet_flags);
+    if (tiledata_height > 0) {
+        return f32(tiledata_height) * HEIGHT_SCALE;
+    }
+    return max(inst.world_y + inst.local_max.y - inst.base_world_y, 0.0);
+}
 
 // The default isometric view looks along -(1, 1, 1) / sqrt(3): the camera's backward axis against this direction.
 const ISOMETRIC_VIEW_BACKWARD_COMPONENT: f32 = 0.577350269;
@@ -168,23 +193,30 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
             corner, view.world_from_view[0].xyz, view.world_from_view[1].xyz, pixel_aspect);
     }
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
-        let caster_height = max(world_pos.y - inst.base_world_y, 0.0);
-        let light_xz_len = max(length(scene.light_direction.xz), 0.001);
-        let shadow_dir = -scene.light_direction.xz / light_xz_len;
-        var profile_length = 1.0;
-        if (inst.depth_class == DEPTH_CLASS_FOLIAGE) {
-            profile_length = 1.18;
-        } else if (inst.depth_class == DEPTH_CLASS_ROOF) {
-            profile_length = 0.68;
+        let shadow_step = projected_shadow_step(scene.light_direction, effects.art_projected_shadow_length);
+        if (projected_shadow_is_wall(inst)) {
+            // The ground the wall's faces may cast on; the fragment finds the face point over each ground point.
+            let ground_box = wall_shadow_ground_box(projected_shadow_wall_cell(inst),
+                projected_shadow_wall_height(inst), shadow_step);
+            let ground = mix(ground_box.xy, ground_box.zw, corner);
+            projected_world_pos = vec3<f32>(ground.x, inst.base_world_y + PROJECTED_SHADOW_GROUND_LIFT, ground.y);
+            projected_local_pos = projected_world_pos - vec3<f32>(inst.world_x, inst.world_y, inst.world_z);
+        } else {
+            // The card laid on the ground, each point leaning by its height above the base.
+            let caster_height = max(world_pos.y - inst.base_world_y, 0.0);
+            var profile_length = 1.0;
+            if (inst.depth_class == DEPTH_CLASS_FOLIAGE) {
+                profile_length = 1.18;
+            }
+            let shadow_offset = shadow_step * caster_height * profile_length;
+            projected_world_pos = vec3<f32>(
+                world_pos.x + shadow_offset.x,
+                inst.base_world_y + PROJECTED_SHADOW_GROUND_LIFT,
+                world_pos.z + shadow_offset.y,
+            );
+            projected_local_pos = vec3<f32>(local_world_pos.x + shadow_offset.x,
+                projected_world_pos.y - inst.world_y, local_world_pos.z + shadow_offset.y);
         }
-        let shadow_offset = shadow_dir * caster_height * effects.art_projected_shadow_length * profile_length;
-        projected_world_pos = vec3<f32>(
-            world_pos.x + shadow_offset.x,
-            inst.base_world_y + 0.012,
-            world_pos.z + shadow_offset.y,
-        );
-        projected_local_pos = vec3<f32>(local_world_pos.x + shadow_offset.x,
-            projected_world_pos.y - inst.world_y, local_world_pos.z + shadow_offset.y);
     }
     var out: ArtVertexOutput;
     out.local_light_rgba = art_local_light_at_corner(inst.local_light_corners, corner);
@@ -198,8 +230,10 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         projected_local_pos = client_shadow_world_offset(inst, corner);
     }
     out.position = camera_relative_world_to_clip(vec3<f32>(inst.world_x, inst.world_y, inst.world_z), projected_local_pos);
-    if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW && !client_shadow_casts(inst)) {
-        out.position = CLIENT_SHADOW_CULLED_POSITION;
+    if ((sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW && !client_shadow_casts(inst))
+        || (sprite_params.pass_mode == PASS_MODE_SHADOW && !projected_shadow_casts(inst.depth_class, inst.flat_quad,
+            inst.client_shadow_flags))) {
+        out.position = SHADOW_CULLED_POSITION;
     }
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = art_page_varying(inst.layer);
@@ -266,6 +300,34 @@ fn sprite_page_client_filtered(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, 
     }
     return art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, uv_min, uv_max, wrap, uv_dx, uv_dy,
         client_view_scale);
+}
+
+// The sprite's alpha around `uv` for a projected shadow, blurred over `radius` (in atlas uv) within its rectangle.
+fn projected_shadow_coverage(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, radius: vec2<f32>,
+    instance_index: u32) -> f32 {
+    let alpha_center = clamp(uv, uv_min, uv_max);
+    let alpha_x0 = clamp(uv + vec2<f32>(radius.x, 0.0), uv_min, uv_max);
+    let alpha_x1 = clamp(uv - vec2<f32>(radius.x, 0.0), uv_min, uv_max);
+    let alpha_y0 = clamp(uv + vec2<f32>(0.0, radius.y), uv_min, uv_max);
+    let alpha_y1 = clamp(uv - vec2<f32>(0.0, radius.y), uv_min, uv_max);
+    let alpha_d0 = clamp(uv + radius, uv_min, uv_max);
+    let alpha_d1 = clamp(uv - radius, uv_min, uv_max);
+    let alpha_d2 = clamp(uv + vec2<f32>(radius.x, -radius.y), uv_min, uv_max);
+    let alpha_d3 = clamp(uv + vec2<f32>(-radius.x, radius.y), uv_min, uv_max);
+    return
+        sprite_page_tap(page, alpha_center, instance_index).a * 0.28 +
+        (
+            sprite_page_tap(page, alpha_x0, instance_index).a +
+            sprite_page_tap(page, alpha_x1, instance_index).a +
+            sprite_page_tap(page, alpha_y0, instance_index).a +
+            sprite_page_tap(page, alpha_y1, instance_index).a
+        ) * 0.11 +
+        (
+            sprite_page_tap(page, alpha_d0, instance_index).a +
+            sprite_page_tap(page, alpha_d1, instance_index).a +
+            sprite_page_tap(page, alpha_d2, instance_index).a +
+            sprite_page_tap(page, alpha_d3, instance_index).a
+        ) * 0.08;
 }
 
 fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
@@ -337,75 +399,66 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // Lying on the land of the cell it falls on, half a priority z over its base.
         out.depth = view_z_depth(cave_lifted_view_z(cell_priority_view_z(in.shadow_ground_xz,
             inst.base_world_y / HEIGHT_SCALE + PROJECTED_SHADOW_PRIORITY_Z_OFFSET), inst.is_wet_flags));
-        if (inst.flat_quad >= 2u) {
-            discard;
-        }
         if (effects.enable_art_projected_shadows == 0u || effects.art_projected_shadow_strength <= 0.0001 || sprite_params.render_mode == 1u) {
             discard;
         }
-        var depth_profile = 0.0;
+        // Foliage and the other standing statics; the rest cast none (projected_shadow_casts, culled in the vertex).
+        var depth_profile = 0.85;
         if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
             depth_profile = 1.0;
-        } else if (in.depth_class == DEPTH_CLASS_ROOF) {
-            depth_profile = 0.35;
-        } else if (in.depth_class != DEPTH_CLASS_BACKGROUND && in.depth_class != DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
-            depth_profile = 0.85;
         }
         // Onset tuned for classic sprite world-heights (a 44px tile is only ~1
         // world unit tall); the old 0.45..3.2 window left short/typical statics
         // casting a near-zero shadow, so the strength knob looked inert.
         let caster_height = max(inst.local_max.y - inst.local_min.y, 0.0);
         let height_profile = smoothstep(0.2, 1.5, caster_height);
-        var shadow_center = vec2<f32>(0.5, 0.56);
-        var shadow_radius = vec2<f32>(0.54, 0.42);
-        if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
-            shadow_center = vec2<f32>(0.5, 0.58);
-            shadow_radius = vec2<f32>(0.62, 0.48);
-        } else if (in.depth_class == DEPTH_CLASS_ROOF) {
-            shadow_center = vec2<f32>(0.5, 0.52);
-            shadow_radius = vec2<f32>(0.48, 0.34);
-        }
-        let centered = (uv_in_tile_for_shading - shadow_center) / shadow_radius;
-        let ellipse = dot(centered, centered);
         let softness = clamp(effects.art_projected_shadow_softness, 0.05, 1.0);
-        let mask = 1.0 - smoothstep(1.0 - softness * 0.48, 1.0, ellipse);
         let alpha_blur_radius = atlas_extent * (0.008 + 0.018 * softness);
-        let alpha_center = clamp(uv, inst.uv_min, inst.uv_max);
-        let alpha_x0 = clamp(uv + vec2<f32>(alpha_blur_radius.x, 0.0), inst.uv_min, inst.uv_max);
-        let alpha_x1 = clamp(uv - vec2<f32>(alpha_blur_radius.x, 0.0), inst.uv_min, inst.uv_max);
-        let alpha_y0 = clamp(uv + vec2<f32>(0.0, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
-        let alpha_y1 = clamp(uv - vec2<f32>(0.0, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
-        let alpha_d0 = clamp(uv + alpha_blur_radius, inst.uv_min, inst.uv_max);
-        let alpha_d1 = clamp(uv - alpha_blur_radius, inst.uv_min, inst.uv_max);
-        let alpha_d2 = clamp(uv + vec2<f32>(alpha_blur_radius.x, -alpha_blur_radius.y), inst.uv_min, inst.uv_max);
-        let alpha_d3 = clamp(uv + vec2<f32>(-alpha_blur_radius.x, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
-        let blurred_alpha =
-            sprite_page_tap(page, alpha_center, in.instance_index).a * 0.28 +
-            (
-                sprite_page_tap(page, alpha_x0, in.instance_index).a +
-                sprite_page_tap(page, alpha_x1, in.instance_index).a +
-                sprite_page_tap(page, alpha_y0, in.instance_index).a +
-                sprite_page_tap(page, alpha_y1, in.instance_index).a
-            ) * 0.11 +
-            (
-                sprite_page_tap(page, alpha_d0, in.instance_index).a +
-                sprite_page_tap(page, alpha_d1, in.instance_index).a +
-                sprite_page_tap(page, alpha_d2, in.instance_index).a +
-                sprite_page_tap(page, alpha_d3, in.instance_index).a
-            ) * 0.08;
-        let silhouette = smoothstep(0.03, 0.44, blurred_alpha);
+        var mask = 1.0;
+        var coverage = 0.0;
+        if (projected_shadow_is_wall(inst)) {
+            // The wall's two faces, each read through the card where the face point casting here shows on it.
+            let cell = projected_shadow_wall_cell(inst);
+            let wall_height = projected_shadow_wall_height(inst);
+            let shadow_step = projected_shadow_step(scene.light_direction, effects.art_projected_shadow_length);
+            let anchor = vec3<f32>(inst.world_x, inst.world_y, inst.world_z);
+            for (var face = 0u; face < 2u; face = face + 1u) {
+                let point = wall_shadow_face_point(in.shadow_ground_xz, cell, wall_height, shadow_step, face == 1u);
+                if (point.w > 0.0) {
+                    let card_corner = wall_shadow_card_corner(vec3<f32>(point.x, inst.base_world_y + point.z, point.y),
+                        anchor, view.world_from_view[2].xyz, inst.local_min, inst.local_max);
+                    if (all(card_corner >= vec2<f32>(0.0)) && all(card_corner <= vec2<f32>(1.0))) {
+                        coverage = max(coverage, projected_shadow_coverage(page,
+                            mix(inst.uv_min, inst.uv_max, card_corner), inst.uv_min, inst.uv_max, alpha_blur_radius,
+                            in.instance_index));
+                    }
+                }
+            }
+        } else {
+            var shadow_center = vec2<f32>(0.5, 0.56);
+            var shadow_radius = vec2<f32>(0.54, 0.42);
+            if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
+                shadow_center = vec2<f32>(0.5, 0.58);
+                shadow_radius = vec2<f32>(0.62, 0.48);
+            }
+            let centered = (uv_in_tile_for_shading - shadow_center) / shadow_radius;
+            let ellipse = dot(centered, centered);
+            mask = 1.0 - smoothstep(1.0 - softness * 0.48, 1.0, ellipse);
+            coverage = projected_shadow_coverage(page, uv, inst.uv_min, inst.uv_max, alpha_blur_radius,
+                in.instance_index);
+        }
+        let silhouette = smoothstep(0.03, 0.44, coverage);
         var family_breakup = 1.0;
         if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
             let leaf_noise = noise_2d(in.world_pos.xz * 1.35 + uv_in_tile_for_shading * 15.0);
             family_breakup = mix(0.58, 1.10, smoothstep(0.22, 0.92, leaf_noise));
-        } else if (in.depth_class == DEPTH_CLASS_ROOF) {
-            family_breakup = 0.82;
         }
         let alpha = mask * silhouette * height_profile * depth_profile * family_breakup * clamp(effects.art_projected_shadow_strength, 0.0, 1.0) * in.color.a;
         if (alpha <= 0.001) {
             discard;
         }
         out.color = vec4<f32>(0.025, 0.030, 0.036, alpha);
+        return out;
         return out;
     }
 
