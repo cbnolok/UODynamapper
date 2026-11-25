@@ -12,6 +12,8 @@ workspace = true
 dev-tool-tests = []
 gpu-bench = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:wesl", "dep:dds"]
 web-codecs = ["dep:libwebp-sys", "dep:image"]
+# The lossless supercompression experiments on the BC7 mobile animation pages (udd-bc7-supercompress).
+bc7-supercompress = ["dep:zstd", "dep:lz4"]
 
 [dependencies]
 udd-assets = { path = "../../lib/udd-assets" }
@@ -28,6 +30,9 @@ wesl = { version = "0.6", optional = true }
 dds = { workspace = true, optional = true }
 libwebp-sys = { version = "0.14.4", optional = true }
 image = { workspace = true, features = ["png"], optional = true }
+zstd = { workspace = true, optional = true }
+# The container's LZ4 HC; its C library also has the dictionary functions the experiments declare.
+lz4 = { version = "1.28", optional = true }
 
 [[bin]]
 name = "udd-devtools-cli"
@@ -43,3 +48,8 @@ required-features = ["dev-tool-tests", "gpu-bench"]
 name = "udd-webmap-codecs"
 path = "src/bin/webmap_codecs.rs"
 required-features = ["dev-tool-tests", "web-codecs"]
+
+[[bin]]
+name = "udd-bc7-supercompress"
+path = "src/bin/bc7_supercompress/main.rs"
+required-features = ["dev-tool-tests", "bc7-supercompress"]

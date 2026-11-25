@@ -7225,6 +7225,7 @@ dependencies = [
  "dds",
  "image",
  "libwebp-sys",
+ "lz4",
  "pollster 0.4.0",
  "rayon",
  "ssimulacra2",
@@ -7233,6 +7234,7 @@ dependencies = [
  "wesl",
  "wgpu",
  "workspace-hack",
+ "zstd",
 ]
 
 [[package]]
