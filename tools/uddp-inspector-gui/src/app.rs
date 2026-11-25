@@ -643,6 +643,7 @@ impl InspectorApp {
                             entry.data,
                             VirtualEntryData::Gump(_)
                                 | VirtualEntryData::WorldLight(_)
+                                | VirtualEntryData::TexAuxEc(_)
                                 | VirtualEntryData::PaperdollFrame(_)
                         )
                     })
@@ -697,6 +698,11 @@ impl InspectorApp {
                 self.virtual_entries = world_light_entries;
                 return;
             }
+        }
+
+        if let Ok(package) = udd_assets::tex_aux_ec::TexAuxEcPackage::from_uddp_package(reader.clone()) {
+            self.virtual_entries = detect_tex_aux_ec_virtual_entries(&package);
+            return;
         }
 
         if let Ok(package) = udd_assets::PaperdollEcPackage::from_uddp_package(reader.clone()) {
@@ -1495,6 +1501,47 @@ impl InspectorApp {
                                 info.height
                             ),
                         );
+                    }
+                    VirtualEntryData::TexAuxEc(info) => {
+                        let slot = &info.slot;
+                        let rgba = udd_assets::tex_aux_ec::TexAuxEcPackage::from_uddp_package(u_reader.clone())
+                            .and_then(|package| package.load_rgba(slot.texture_id));
+                        let expected_len = usize::from(slot.width) * usize::from(slot.height) * RGBA_BYTES_PER_PIXEL;
+                        match rgba {
+                            Ok(Some(rgba)) if expected_len > 0 && rgba.len() == expected_len => {
+                                self.set_preview_image(
+                                    ctx,
+                                    &format!("tex_aux_ec_{}", slot.texture_id),
+                                    [usize::from(slot.width), usize::from(slot.height)],
+                                    &rgba,
+                                    format!(
+                                        "Aux texture {} ({}x{}, {}, {})",
+                                        slot.texture_id,
+                                        slot.width,
+                                        slot.height,
+                                        tex_aux_ec_format_name(slot),
+                                        info.content
+                                    ),
+                                );
+                            }
+                            Ok(Some(rgba)) => {
+                                self.preview_texture = None;
+                                self.preview_text = Some(format!(
+                                    "Aux texture {} decodes to {} bytes, not the {} of {}x{} RGBA.",
+                                    slot.texture_id, rgba.len(), expected_len, slot.width, slot.height
+                                ));
+                            }
+                            Ok(None) => {
+                                self.preview_texture = None;
+                                self.preview_text =
+                                    Some(format!("Aux texture {} has no payload at {}.", slot.texture_id, info.path));
+                            }
+                            Err(error) => {
+                                self.preview_texture = None;
+                                self.preview_text =
+                                    Some(format!("Failed to read aux texture {}: {error:#}", slot.texture_id));
+                            }
+                        }
                     }
                     VirtualEntryData::PaperdollFrame(info) => {
                         let record = info.record;

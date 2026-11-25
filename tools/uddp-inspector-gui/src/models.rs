@@ -62,6 +62,7 @@ pub enum VirtualEntryData {
     TileMetaItem(TileMetaItemInfo),
     Gump(GumpInfo),
     WorldLight(WorldLightInfo),
+    TexAuxEc(TexAuxEcSlotInfo),
     PaperdollFrame(PaperdollFrameInfo),
     MapBlock {
         source_entry_idx: usize,
@@ -221,6 +222,17 @@ pub struct WorldLightInfo {
     pub width: u16,
     pub height: u16,
     pub flags: u16,
+    pub path: String,
+}
+
+/// A slot of `tex_aux_ec.uddp`.
+#[derive(Debug, Clone)]
+pub struct TexAuxEcSlotInfo {
+    pub slot: udd_assets::tex_aux_ec::SlotInfo,
+    /// What the slot holds: a tile texture's family and role, an atmosphere map, a light texture or the
+    /// missing-texture image.
+    pub content: String,
+    /// The payload entry holding the pixels: the missing-texture image's for a missing-source alias.
     pub path: String,
 }
 

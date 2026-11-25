@@ -525,6 +525,31 @@ impl InspectorApp {
                     ui.label(&info.path);
                     ui.end_row();
                 }
+                VirtualEntryData::TexAuxEc(info) => {
+                    let slot = &info.slot;
+                    metadata_label(ui, "Texture ID:");
+                    ui.label(format!("{} (0x{:08X})", slot.texture_id, slot.texture_id));
+                    ui.end_row();
+                    metadata_label(ui, "Holds:");
+                    ui.label(&info.content);
+                    ui.end_row();
+                    metadata_label(ui, "Size:");
+                    ui.label(format!("{}x{}", slot.width, slot.height));
+                    ui.end_row();
+                    metadata_label(ui, "Format:");
+                    ui.label(crate::logic::discovery::tex_aux_ec_format_name(slot));
+                    ui.end_row();
+                    metadata_label(ui, "Family / Role:");
+                    ui.label(format!("{} / {}", slot.logical_family, slot.stable_role));
+                    ui.end_row();
+                    metadata_label(ui, "Payload:");
+                    ui.label(if slot.is_missing_source() {
+                        format!("{} (source missing from the client: the missing-texture image)", info.path)
+                    } else {
+                        info.path.clone()
+                    });
+                    ui.end_row();
+                }
                 VirtualEntryData::PaperdollFrame(info) => {
                     let record = &info.record;
                     metadata_label(ui, "Frame:");

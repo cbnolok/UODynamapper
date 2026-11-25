@@ -2,7 +2,7 @@ use crate::models::{AtlasPageInfo, AtlasPixelFormat, DecodedAtlasPage};
 use crate::utils::crop_rgba;
 
 /// Bytes per RGBA8888 pixel.
-const RGBA_BYTES_PER_PIXEL: usize = 4;
+pub(crate) const RGBA_BYTES_PER_PIXEL: usize = 4;
 
 /// The RGBA pixels of `rect` (x, y, width, height) on a page: a BC7 page decodes only the 4x4 blocks covering
 /// the rect, which gives the bytes of [`decode_atlas_page`] cropped to it.

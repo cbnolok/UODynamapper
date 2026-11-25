@@ -4,7 +4,7 @@ use udd_assets::tex_art_cc::{MISSING_PAGE_INDEX, PagePixelFormat, SLOT_MANIFEST_
 use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage};
 use udd_container::{DataType, UddpReader, xxh64_virtual_path};
 
-use crate::models::{AtlasPageInfo, AtlasPixelFormat, PaperdollFrameInfo, VirtualEntry, VirtualEntryData};
+use crate::models::{AtlasPageInfo, AtlasPixelFormat, PaperdollFrameInfo, TexAuxEcSlotInfo, VirtualEntry, VirtualEntryData};
 
 const KIND_CC_ART: &str = "CC Art";
 const KIND_EC_ART: &str = "EC Art";
@@ -268,6 +268,68 @@ pub fn detect_paperdoll_frame_virtual_entries(package: &udd_assets::PaperdollEcP
         .collect()
 }
 
+/// The slots of a `tex_aux_ec.uddp`, by texture id: the tile textures, then the reserved keys (the atmosphere maps,
+/// the light textures and the missing-texture image).
+pub fn detect_tex_aux_ec_virtual_entries(package: &udd_assets::tex_aux_ec::TexAuxEcPackage) -> Vec<VirtualEntry> {
+    use udd_assets::tex_aux_ec::{is_tex_aux_ec_reserved_key, texture_entry_path, SlotInfo, TEX_AUX_EC_MISSING_TEXTURE_ID};
+    package
+        .slots()
+        .iter()
+        .map(|record| {
+            let slot = SlotInfo::from(record);
+            let kind = match slot.texture_id {
+                TEX_AUX_EC_MISSING_TEXTURE_ID => "Missing Texture",
+                key if is_tex_aux_ec_reserved_key(key) => "Terrain Texture",
+                _ => "Aux Texture",
+            };
+            let content = tex_aux_ec_slot_content(&slot);
+            let alias = if slot.is_missing_source() { " | missing source: the missing-texture image" } else { "" };
+            VirtualEntry {
+                id: slot.texture_id,
+                _data_type: DataType::Texture as u8,
+                kind: kind.to_string(),
+                summary: format!("{}x{} {} | {content}{alias}", slot.width, slot.height, tex_aux_ec_format_name(&slot)),
+                location: texture_entry_path(slot.payload_texture_id),
+                data: VirtualEntryData::TexAuxEc(TexAuxEcSlotInfo {
+                    path: texture_entry_path(slot.payload_texture_id),
+                    content,
+                    slot,
+                }),
+            }
+        })
+        .collect()
+}
+
+/// What a `tex_aux_ec` slot holds: the missing-texture image, a `TerrainTexture.uop` entry (an atmosphere map or a
+/// light texture) or a tile texture of its family and role.
+fn tex_aux_ec_slot_content(slot: &udd_assets::tex_aux_ec::SlotInfo) -> String {
+    use udd_assets::tex_aux_ec::{
+        is_tex_aux_ec_reserved_key, EC_DAY_MAP_TERRAIN_TEXTURE_ENTRY, EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY,
+        EC_NIGHT_SIGHT_MAP_TERRAIN_TEXTURE_ENTRY, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE,
+    };
+    use udd_assets::tilemeta::{EcMaterialLogicalFamily, EcMaterialStableRole};
+    let role = EcMaterialStableRole::from_u8(slot.stable_role).as_str();
+    match slot.texture_id {
+        TEX_AUX_EC_MISSING_TEXTURE_ID => "the client's missing-texture image".to_string(),
+        key if is_tex_aux_ec_reserved_key(key) => {
+            let entry = key & !TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE;
+            let name = match entry {
+                EC_DAY_MAP_TERRAIN_TEXTURE_ENTRY => "day map".to_string(),
+                EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY => "night map".to_string(),
+                EC_NIGHT_SIGHT_MAP_TERRAIN_TEXTURE_ENTRY => "night-sight map".to_string(),
+                _ => format!("{role} texture"),
+            };
+            format!("{name}, TerrainTexture.uop entry {entry}")
+        }
+        _ => format!("{:?} {role}", EcMaterialLogicalFamily::from_u8(slot.logical_family)),
+    }
+}
+
+/// The stored pixel format of a `tex_aux_ec` slot.
+pub(crate) fn tex_aux_ec_format_name(slot: &udd_assets::tex_aux_ec::SlotInfo) -> &'static str {
+    if slot.pixel_format == PagePixelFormat::Bc7 as u8 { "bc7" } else { "rgba8888" }
+}
+
 pub(crate) fn upscale_algorithm_name(code: u16) -> &'static str {
     match code {
         0 => "None",
@@ -426,5 +488,79 @@ mod tests {
             }
             other => panic!("expected a paperdoll frame, got {other:?}"),
         }
+    }
+
+    /// A `tex_aux_ec` package of `slots` (sorted), each non-alias slot's payload `width` by `height` RGBA texels.
+    fn tex_aux_ec_test_package(slots: &[udd_assets::tex_aux_ec::TexAuxEcSlotRecord]) -> udd_assets::tex_aux_ec::TexAuxEcPackage {
+        use udd_assets::tex_aux_ec::*;
+        use udd_container::{AddFileRequest, CompressionFlag, LookupMode, UddpBuilder};
+        const RGBA_BYTES: usize = 4;
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        let manifest = encode_tex_aux_ec_slots(slots);
+        let no_extents: &[u8] = &[];
+        for (path, data) in [(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, manifest.as_slice()), (TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH, no_extents)] {
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
+                virtual_path: Some(path), path_hash64: None, id: None, data,
+            }).expect("add metadata");
+        }
+        for slot in slots.iter().filter(|slot| !slot.is_missing_source()) {
+            let path = texture_entry_path(slot.texture_id);
+            let data = vec![u8::MAX; usize::from(slot.width) * usize::from(slot.height) * RGBA_BYTES];
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Texture as u8, compression: CompressionFlag::None,
+                width: slot.width.into(), height: slot.height.into(), virtual_path: Some(&path),
+                path_hash64: None, id: None, data: &data,
+            }).expect("add payload");
+        }
+        TexAuxEcPackage::from_uddp_package(UddpReader::open(builder.build().expect("build")).expect("open"))
+            .expect("load tex_aux_ec")
+    }
+
+    #[test]
+    fn tex_aux_ec_entries_name_each_slot_and_an_alias_points_at_the_missing_texture() {
+        use udd_assets::tex_aux_ec::*;
+        use udd_assets::tilemeta::{EcMaterialLogicalFamily, EcMaterialStableRole};
+        const TILE_TEXTURE: u32 = 20_002_472;
+        const ABSENT_TEXTURE: u32 = 20_004_039;
+        const LIGHT_ENTRY: u32 = 40;
+        const SIDE: u16 = 2;
+        const LIGHT_WIDTH: u16 = 3;
+        const LIGHT_HEIGHT: u16 = 1;
+        let record = |texture_id, width, height, family: EcMaterialLogicalFamily, role: EcMaterialStableRole| {
+            TexAuxEcSlotRecord {
+                texture_id, width, height, logical_family: family as u8, stable_role: role as u8, ..Default::default()
+            }
+        };
+        let tile = record(TILE_TEXTURE, SIDE, SIDE, EcMaterialLogicalFamily::WorldArt, EcMaterialStableRole::Noise);
+        let alias = TexAuxEcSlotRecord {
+            texture_id: ABSENT_TEXTURE, flags: TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE, ..tile
+        };
+        let atmosphere = EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.map(|entry| record(
+            tex_aux_ec_terrain_texture_key(entry), SIDE, SIDE, EcMaterialLogicalFamily::Textures, EcMaterialStableRole::Unknown,
+        ));
+        let light = record(tex_aux_ec_terrain_texture_key(LIGHT_ENTRY), LIGHT_WIDTH, LIGHT_HEIGHT,
+            EcMaterialLogicalFamily::Textures, EcMaterialStableRole::Light);
+        let missing = record(TEX_AUX_EC_MISSING_TEXTURE_ID, SIDE, SIDE,
+            EcMaterialLogicalFamily::SystemTextures, EcMaterialStableRole::Unknown);
+        let slots = [&[tile, alias][..], &atmosphere, &[light, missing]].concat();
+        let package = tex_aux_ec_test_package(&slots);
+
+        let entries = detect_tex_aux_ec_virtual_entries(&package);
+        let summary = |id: u32| {
+            let entry = entries.iter().find(|entry| entry.id == id).expect("listed slot");
+            (entry.kind.as_str(), entry.summary.clone(), entry.location.clone())
+        };
+        assert_eq!(entries.len(), slots.len());
+        assert_eq!(summary(TILE_TEXTURE), ("Aux Texture", "2x2 rgba8888 | WorldArt noise".into(), texture_entry_path(TILE_TEXTURE)));
+        let (_, alias_summary, alias_location) = summary(ABSENT_TEXTURE);
+        assert!(alias_summary.ends_with("missing source: the missing-texture image"), "{alias_summary}");
+        assert_eq!(alias_location, texture_entry_path(TEX_AUX_EC_MISSING_TEXTURE_ID));
+        let night = tex_aux_ec_terrain_texture_key(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY);
+        assert_eq!(summary(night).1, "2x2 rgba8888 | night map, TerrainTexture.uop entry 21");
+        let light_key = tex_aux_ec_terrain_texture_key(LIGHT_ENTRY);
+        assert_eq!(summary(light_key), ("Terrain Texture", "3x1 rgba8888 | light texture, TerrainTexture.uop entry 40".into(),
+            texture_entry_path(light_key)));
+        assert_eq!(summary(TEX_AUX_EC_MISSING_TEXTURE_ID).0, "Missing Texture");
     }
 }
