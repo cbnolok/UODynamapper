@@ -42,6 +42,8 @@ import package::shaders::world::art::projected_shadow::{projected_shadow_casts, 
     wall_shadow_ground_box, wall_shadow_face_point, wall_shadow_card_corner};
 import package::shaders::world::art::mobile_frames::{mobile_frames_blend, mobile_frames_tap,
     mobile_frames_client_filtered};
+import package::shaders::world::art::mobile_sharpen::{mobile_sharpening_on, mobile_sharpen, mobile_sharpen_tap_offset,
+    MOBILE_SHARPEN_WINDOW_TAPS, MOBILE_SHARPEN_CENTRE_TAP};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
@@ -331,6 +333,28 @@ fn projected_shadow_coverage(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv
         ) * 0.08;
 }
 
+// A mobile's colour `centre` at `uv` sharpened by its style's strength (art/mobile_sharpen.wesl). The window's other
+// taps lie a texel of the page apart, each taken as the fragment took `centre`: the client's filter, or the nearest
+// texel of the card, both inside the card's span `uv_min`..`uv_max` and, while two frames blend, each frame's own
+// rectangle.
+fn mobile_sharpened(centre: vec4<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
+    uv_dx: vec2<f32>, uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    var window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>;
+    for (var tap = 0u; tap < MOBILE_SHARPEN_WINDOW_TAPS; tap++) {
+        let tap_uv = uv + mobile_sharpen_tap_offset(tap) / atlas_size;
+        if (tap == MOBILE_SHARPEN_CENTRE_TAP) {
+            window[tap] = centre;
+        } else if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+            window[tap] = sprite_page_client_filtered(page, tap_uv, uv_min, uv_max, false, uv_dx, uv_dy,
+                scene.client_view_scale, instance_index);
+        } else {
+            window[tap] = sprite_page_tap(page, pixel_art_atlas_nearest_uv(tap_uv, uv_min, uv_max, atlas_size),
+                instance_index);
+        }
+    }
+    return mobile_sharpen(window, effects.mobile_sharpening);
+}
+
 fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     var out: ArtFragmentOutput;
     out.depth = view_z_depth(in.logical_view_z);
@@ -599,6 +623,15 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     @if(STATIC_PICK) {
         out.color = pick_color(in.instance_index, false, out.depth, sample_index);
         return out;
+    }
+
+    // A mobile's colour sharpened by its style's strength, its alpha kept, after the alpha test so that only the
+    // fragments drawn pay for it; off, the uniform branch skips the taps.
+    @if(MOBILE_FRAMES) {
+        if (mobile_sharpening_on(effects.mobile_sharpening)) {
+            color = mobile_sharpened(color, page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx, sprite_uv_dy,
+                atlas_size, in.instance_index);
+        }
     }
 
     var shaded = color * in.color;

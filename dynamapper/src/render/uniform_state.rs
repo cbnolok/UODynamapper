@@ -37,6 +37,9 @@ pub struct UniformState {
     /// The rule "Show Only the Player's Floor" follows, of the active preset's style: `Some` in KR-like and
     /// UOD-Painterly only.
     pub player_floor_rule: Option<PlayerFloorRule>,
+    /// The mobiles' contrast-adaptive sharpening of the active preset's style, not of its slot, in every style.
+    /// `effects.mobile_sharpening` follows it.
+    pub mobile_sharpening: f32,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
@@ -59,6 +62,7 @@ pub struct UniformSnapshot {
     pub land_texture_variation: Option<bool>,
     pub light_cover: LightCover,
     pub player_floor_rule: Option<PlayerFloorRule>,
+    pub mobile_sharpening: f32,
     pub sun: SunAngles,
 }
 
@@ -76,6 +80,7 @@ impl UniformState {
             land_texture_variation: self.land_texture_variation,
             light_cover: self.light_cover,
             player_floor_rule: self.player_floor_rule,
+            mobile_sharpening: self.mobile_sharpening,
             sun: self.sun,
         }
     }
@@ -92,6 +97,7 @@ impl UniformState {
         self.land_texture_variation = snap.land_texture_variation;
         self.light_cover = snap.light_cover;
         self.player_floor_rule = snap.player_floor_rule;
+        self.mobile_sharpening = snap.mobile_sharpening;
         self.sun = snap.sun;
         self.dirty = true;
     }
@@ -137,5 +143,10 @@ impl UniformState {
     /// Bring `effects.land_texture_variation` in line with `land_texture_variation`.
     pub fn sync_land_texture_variation(&mut self) {
         self.effects.land_texture_variation = self.land_texture_variation_flag();
+    }
+
+    /// Bring `effects.mobile_sharpening` in line with `mobile_sharpening`.
+    pub fn sync_mobile_sharpening(&mut self) {
+        self.effects.mobile_sharpening = self.mobile_sharpening;
     }
 }

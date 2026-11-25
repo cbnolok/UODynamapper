@@ -6,7 +6,7 @@ use crate::{
     },
     render::terrain::mesh_material::{
         ClientLocalLights, ClientNightLighting, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode,
-        LandShaderModePresets, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
+        LandShaderModePresets, LOCAL_LIGHT_INTENSITY_RANGE, MOBILE_SHARPENING_RANGE, TONE_CURVE_PROFILE,
     },
     app::system_sets::StartupSystems,
     prelude::*,
@@ -206,6 +206,13 @@ fn local_lights_range_problems(local_lights: &ClientLocalLights) -> Vec<String> 
     .collect()
 }
 
+/// A style's mobile sharpening outside `MOBILE_SHARPENING_RANGE`.
+fn mobile_sharpening_range_problem(strength: f32) -> Option<String> {
+    (!MOBILE_SHARPENING_RANGE.contains(&strength)).then(|| {
+        format!("{strength} is outside {}..={}", MOBILE_SHARPENING_RANGE.start(), MOBILE_SHARPENING_RANGE.end())
+    })
+}
+
 /// A style's local lights with both intensities brought into their range.
 fn clamp_local_lights(local_lights: ClientLocalLights) -> ClientLocalLights {
     let (min, max) = (*LOCAL_LIGHT_INTENSITY_RANGE.start(), *LOCAL_LIGHT_INTENSITY_RANGE.end());
@@ -245,11 +252,14 @@ fn normalize_client_lighting(
 /// A hand-written preset file must give every slot `client_lighting`, with the night overlay controls in every group
 /// but Classic and none in Classic, and Classic and UOD-Painterly alone `global_lighting`, with every value in range;
 /// KR-like, alone, `client_shadows`; KR-like and UOD-Painterly,
-/// alone, `player_floor_rule`; KR-like, Enhanced and UOD-Painterly, alone, their `local_lights`, in range; and every
-/// group but Classic, alone, its `land_texture_variation`.
+/// alone, `player_floor_rule`; KR-like, Enhanced and UOD-Painterly, alone, their `local_lights`, in range; every
+/// group but Classic, alone, its `land_texture_variation`; and every group its `mobile_sharpening` in range.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
     for (group, slots) in preset_groups(presets) {
+        if let Some(problem) = mobile_sharpening_range_problem(slots.mobile_sharpening) {
+            problems.push(format!("`{group}.mobile_sharpening`: {problem}"));
+        }
         match (preset_group_has_land_texture_variation(group), slots.land_texture_variation) {
             (true, None) => problems.push(format!("missing `{group}.land_texture_variation`")),
             (false, Some(_)) => problems.push(format!(
@@ -314,7 +324,7 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
 
 /// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming settings a group does not
 /// use, fill those it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`,
-/// `local_lights`, `land_texture_variation` and `player_floor_rule`. Returns a warning per change.
+/// `local_lights`, `land_texture_variation`, `player_floor_rule` and `mobile_sharpening`. Returns a warning per change.
 ///
 /// A land.toml saved before the night composite keeps `global_lighting` in KR-like and Enhanced; it is dropped there.
 /// One saved before Classic and UOD-Painterly dimmed by the light level lacks their `client_lighting`: it is filled
@@ -331,6 +341,10 @@ fn normalize_cached_preset_lighting(
         let Some(slots) = get_preset_group_mut(presets, group) else {
             continue;
         };
+        if let Some(problem) = mobile_sharpening_range_problem(slots.mobile_sharpening) {
+            slots.mobile_sharpening = slots.mobile_sharpening.clamp(*MOBILE_SHARPENING_RANGE.start(), *MOBILE_SHARPENING_RANGE.end());
+            warnings.push(format!("{file_name}: `{group}.mobile_sharpening` clamped: {problem}"));
+        }
         if preset_group_has_land_texture_variation(group) {
             if slots.land_texture_variation.is_none() {
                 slots.land_texture_variation = default_slots.land_texture_variation;
@@ -627,7 +641,7 @@ pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> Lan
 }
 
 /// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights, land
-/// texture variation, light cover and player floor rule in its group.
+/// texture variation, light cover, player floor rule and mobile sharpening in its group.
 ///
 /// The UI calls this before changing presets so edits are not discarded when the
 /// next slot is applied. Disk persistence remains tied to closing the shader panel.
@@ -637,6 +651,7 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
         slots.land_texture_variation = u.land_texture_variation;
         slots.light_cover = u.light_cover;
         slots.player_floor_rule = u.player_floor_rule;
+        slots.mobile_sharpening = u.mobile_sharpening;
     }
     if let Some(slot) = get_preset_slot_mut(presets, &u.active_preset) {
         slot.effects = u.effects;
@@ -721,7 +736,8 @@ pub fn get_preset_slot<'a>(
 }
 
 /// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights, land
-/// texture variation, light cover and player floor rule, which the shader window shows with the slot's values.
+/// texture variation, light cover, player floor rule and mobile sharpening, which the shader window shows with the
+/// slot's values.
 pub fn reset_preset_to_factory(
     presets: &mut LandShaderModePresets,
     factory_presets: &LandShaderModePresets,
@@ -740,12 +756,16 @@ pub fn reset_preset_to_factory(
     let factory_land_texture_variation = factory_slots.and_then(|slots| slots.land_texture_variation);
     let factory_light_cover = factory_slots.map(|slots| slots.light_cover);
     let factory_player_floor_rule = factory_slots.and_then(|slots| slots.player_floor_rule);
+    let factory_mobile_sharpening = factory_slots.map(|slots| slots.mobile_sharpening);
     if let Some(slots) = group.and_then(|group| get_preset_group_mut(presets, group)) {
         slots.local_lights = factory_local_lights;
         slots.land_texture_variation = factory_land_texture_variation;
         slots.player_floor_rule = factory_player_floor_rule;
         if let Some(light_cover) = factory_light_cover {
             slots.light_cover = light_cover;
+        }
+        if let Some(mobile_sharpening) = factory_mobile_sharpening {
+            slots.mobile_sharpening = mobile_sharpening;
         }
     }
     true
@@ -767,6 +787,7 @@ fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMod
         land_texture_variation: m.land_texture_variation,
         light_cover: m.light_cover,
         player_floor_rule: m.player_floor_rule,
+        mobile_sharpening: m.mobile_sharpening,
         local_lights: m.local_lights,
         morning: clone_slot(&m.morning),
         afternoon: clone_slot(&m.afternoon),
@@ -815,6 +836,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     // An invalid active preset falls back to classic.morning, and so to Classic's light cover.
     let light_cover = style.map_or(source.classic.light_cover, |slots| slots.light_cover);
     let player_floor_rule = style.and_then(|slots| slots.player_floor_rule);
+    let mobile_sharpening = style.map_or(source.classic.mobile_sharpening, |slots| slots.mobile_sharpening);
     let mut state = UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
@@ -826,6 +848,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
         land_texture_variation,
         light_cover,
         player_floor_rule,
+        mobile_sharpening,
         sun: preset.sun,
         dirty: true,
         saved_snapshot: None,
@@ -833,6 +856,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     };
     state.sync_local_light_intensity();
     state.sync_land_texture_variation();
+    state.sync_mobile_sharpening();
     state.saved_snapshot = Some(state.snapshot());
     state
 }
@@ -875,6 +899,7 @@ mod tests {
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
             player_floor_rule: None,
+            mobile_sharpening: crate::render::terrain::mesh_material::MOBILE_SHARPENING_OFF,
             local_lights: None,
             morning: slot(base_mode, base_global, 1.0),
             afternoon: slot(base_mode, base_global + 0.1, 1.1),
@@ -1326,6 +1351,48 @@ mod tests {
 
         assert!(reset_preset_to_factory(&mut saved, &bundled, "painterly.morning"));
         assert_eq!(saved.painterly.land_texture_variation, Some(true));
+    }
+
+    /// Every style ships with the mobiles' sharpening off; a cache from before it gets it off, with a warning, one out
+    /// of range is clamped, and a style's strength is written and read back and reaches the shaders' uniform.
+    #[test]
+    fn mobile_sharpening_ships_off_and_is_filled_clamped_and_kept() {
+        use crate::render::terrain::mesh_material::MOBILE_SHARPENING_OFF;
+        const STRENGTH: f32 = 0.4;
+        for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
+            let presets = parse(text).expect("bundled");
+            for (group, slots) in preset_groups(&presets) {
+                assert_eq!(slots.mobile_sharpening, MOBILE_SHARPENING_OFF, "{name} {group}");
+            }
+        }
+
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut older: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
+        older[ENHANCED_PRESET_GROUP].as_table_mut().expect("enhanced").remove("mobile_sharpening");
+        let older = toml::to_string(&older).expect("serialize");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
+        assert_eq!(load.warnings, ["land.toml: missing key `enhanced.mobile_sharpening` filled from the default"]);
+        assert_eq!(load.value.enhanced.mobile_sharpening, MOBILE_SHARPENING_OFF);
+
+        let mut cached = clone_presets(&bundled);
+        cached.kr.mobile_sharpening = *MOBILE_SHARPENING_RANGE.end() * 2.0;
+        assert_eq!(normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml").len(), 1);
+        assert_eq!(cached.kr.mobile_sharpening, *MOBILE_SHARPENING_RANGE.end());
+
+        let mut on_enhanced = clone_presets(&bundled);
+        on_enhanced.default_preset = "enhanced.night".to_string();
+        let mut state = uniform_state_from_presets(&on_enhanced);
+        state.mobile_sharpening = STRENGTH;
+        state.sync_mobile_sharpening();
+        assert_eq!(state.effects.mobile_sharpening, STRENGTH);
+        let written = toml::to_string_pretty(&build_save_presets(&state, &bundled)).expect("serialize");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.enhanced.mobile_sharpening, STRENGTH);
+        assert_eq!(load.value.classic.mobile_sharpening, MOBILE_SHARPENING_OFF);
+        let mut saved = load.value;
+        saved.default_preset = "enhanced.morning".to_string();
+        assert_eq!(uniform_state_from_presets(&saved).effects.mobile_sharpening, STRENGTH);
     }
 
     /// Every style has its light cover, Dynamapper's rule by default, in both bundled files.

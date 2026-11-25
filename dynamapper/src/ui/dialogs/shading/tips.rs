@@ -81,6 +81,8 @@ pub(super) const CLIENT_GRUNGE: &str =
     "The KR client's grunge: darkens statics and items it marks with soft blotches of its grunge texture, repeating every 16 tiles, never on land or light glows. The same blotches fall on Classic Client and Enhanced Client art sources. Strength 1 is the client; on in KR-like, optional in every style. Needs the Kingdom Reborn land of tex_land_ec.uddp for KR's texture, else uses the Enhanced Client's, a different image.";
 pub(super) const CLIENT_GRUNGE_STRENGTH: &str =
     "How much Client Grunge darkens: 1 is the KR client's full multiply, 0 leaves the colours as they are.";
+pub(super) const MOBILE_SHARPENING: &str =
+    "Sharpens the creatures' and the player's frames (AMD's contrast-adaptive sharpening): each texel against its eight neighbours in the frame, so the detail stays put as you zoom, low-contrast detail sharpened more than hard edges, the silhouette and transparency left as they are. Covers the upscaled frames and the in-between frames. 0 is off; 1 is AMD's strongest. One value for the style at every time of day.";
 
 // --- Terrain and water ---
 

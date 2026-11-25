@@ -1472,6 +1472,7 @@ mod tests {
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
             player_floor_rule: None,
+            mobile_sharpening: crate::render::terrain::mesh_material::MOBILE_SHARPENING_OFF,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,

@@ -244,6 +244,7 @@ fn poll_control(
                             "land_texture_variation": state.land_texture_variation,
                             "light_cover": state.light_cover, "light_cover_rule": format!("{:?}", state.light_cover_rule()),
                             "player_floor_rule": state.player_floor_rule,
+                            "mobile_sharpening": state.mobile_sharpening,
                             "local_light_intensity": state.effects.local_light_intensity,
                             "fog_params": state.lighting.fog_params, "uniforms_dirty": state.dirty})),
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len(),

@@ -19,7 +19,7 @@ use crate::render::mobiles::upscales::MobileUpscale;
 use crate::world::mobile_motion::MobileStop;
 use crate::render::mobiles::pace::MobileWalkPace;
 use crate::render::lighting::light_cover::LightCover;
-use crate::render::terrain::mesh_material::{LandShaderModePresets, PlayerFloorRule};
+use crate::render::terrain::mesh_material::{LandShaderModePresets, PlayerFloorRule, MOBILE_SHARPENING_RANGE};
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::render::assets::land::cache::LandTextureCache;
 use bevy::{ecs::system::SystemParam, prelude::*};
@@ -53,6 +53,7 @@ pub(super) enum ControlSetting {
     LightCover(LightCover),
     PlayerFloorRule(PlayerFloorRule),
     LandTextureVariation(bool),
+    MobileSharpening(f32),
     /// The camera zoom of the mouse wheel and the +/- keys.
     Zoom(f32),
 }
@@ -66,6 +67,11 @@ impl ControlSetting {
         if let Self::Zoom(zoom) = setting
             && !(zoom.is_finite() && (MIN_ZOOM..=MAX_ZOOM).contains(&zoom)) {
             return Err(format!("set: zoom {zoom} is outside {MIN_ZOOM}..={MAX_ZOOM}"));
+        }
+        if let Self::MobileSharpening(strength) = setting
+            && !MOBILE_SHARPENING_RANGE.contains(&strength) {
+            return Err(format!("set: mobile_sharpening {strength} is outside {}..={}",
+                MOBILE_SHARPENING_RANGE.start(), MOBILE_SHARPENING_RANGE.end()));
         }
         Ok(setting)
     }
@@ -156,7 +162,7 @@ impl ControlSettings<'_> {
                 }
                 Ok(true)
             }
-            S::LightCover(_) | S::PlayerFloorRule(_) | S::LandTextureVariation(_) => {
+            S::LightCover(_) | S::PlayerFloorRule(_) | S::LandTextureVariation(_) | S::MobileSharpening(_) => {
                 let uniforms = self.uniforms.as_mut().ok_or("the shader presets are not loaded yet")?;
                 let style = uniforms.active_preset.split_once('.').map_or("", |(style, _)| style).to_owned();
                 // The shader window shows player_floor_rule and land_texture_variation only in the styles that have
@@ -171,6 +177,7 @@ impl ControlSettings<'_> {
                         Some(variation) => variation != value,
                         None => return Err(format!("set: the style `{style}` has no land_texture_variation")),
                     },
+                    S::MobileSharpening(value) => uniforms.mobile_sharpening != value,
                     _ => unreachable!("matched above"),
                 };
                 if changed {
@@ -178,6 +185,7 @@ impl ControlSettings<'_> {
                         S::LightCover(value) => uniforms.light_cover = value,
                         S::PlayerFloorRule(value) => uniforms.player_floor_rule = Some(value),
                         S::LandTextureVariation(value) => uniforms.land_texture_variation = Some(value),
+                        S::MobileSharpening(value) => uniforms.mobile_sharpening = value,
                         _ => unreachable!("matched above"),
                     }
                     uniforms.dirty = true;
@@ -293,13 +301,16 @@ mod tests {
         assert_eq!(ControlSetting::parse("player_floor_rule", json!("kr")).unwrap(),
             ControlSetting::PlayerFloorRule(PlayerFloorRule::Kr));
         assert_eq!(ControlSetting::parse("zoom", json!(1.5)).unwrap(), ControlSetting::Zoom(1.5));
+        assert_eq!(ControlSetting::parse("mobile_sharpening", json!(0.5)).unwrap(),
+            ControlSetting::MobileSharpening(0.5));
 
         let unknown = ControlSetting::parse("udd_path", json!("/tmp")).unwrap_err();
         assert!(unknown.contains("unknown variant `udd_path`") && unknown.contains("show_only_player_floor"),
             "{unknown}");
         for (key, value) in [("enable_statics", json!("yes")), ("caves", json!("everywhere")),
             ("light_cover", json!(1)), ("zoom", json!("near")), ("zoom", json!(MIN_ZOOM / 2.0)),
-            ("zoom", json!(MAX_ZOOM * 2.0))] {
+            ("zoom", json!(MAX_ZOOM * 2.0)), ("mobile_sharpening", json!(-0.5)),
+            ("mobile_sharpening", json!(*MOBILE_SHARPENING_RANGE.end() * 2.0))] {
             assert!(ControlSetting::parse(key, value.clone()).is_err(), "{key} = {value}");
         }
     }

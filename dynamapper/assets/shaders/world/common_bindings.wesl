@@ -73,6 +73,8 @@ struct LandEffectsUniform {
     // Multiplies the land light decals and static local lights with light_decal_intensity: the intensity of the
     // source KR-like's and Enhanced's local lights take, 1 in Classic and UOD-Painterly.
     local_light_intensity: f32,
+    // The mobiles' contrast-adaptive sharpening, 0 off (art/mobile_sharpen.wesl).
+    mobile_sharpening: f32,
 }
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).

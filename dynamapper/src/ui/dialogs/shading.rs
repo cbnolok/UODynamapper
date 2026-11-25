@@ -263,7 +263,8 @@ fn preset_for_style(
     get_preset_slot(presets, &period.key(style.preset_group)).unwrap_or(&presets.classic.morning)
 }
 
-/// Load the preset of a style and time of day, with the style's local lights and land texture variation.
+/// Load the preset of a style and time of day, with the style's local lights, land texture variation and mobile
+/// sharpening.
 fn apply_render_preset(
     u: &mut UniformState,
     presets: &LandShaderModePresets,
@@ -295,6 +296,10 @@ fn apply_render_preset(
     u.sync_local_light_intensity();
     u.land_texture_variation = style_slots.and_then(|slots| slots.land_texture_variation);
     u.sync_land_texture_variation();
+    if let Some(slots) = style_slots {
+        u.mobile_sharpening = slots.mobile_sharpening;
+    }
+    u.sync_mobile_sharpening();
     u.sun = preset.sun;
     u.active_preset = period.key(style.preset_group);
     u.dirty = true;
@@ -1277,7 +1282,7 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
 }
 
 fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
-    section_header(ui, "Standard art", "Static art sprites.");
+    section_header(ui, "Standard art", "Static art sprites; Mobile Sharpening acts on the creatures.");
     let mut changed = client_shadows_toggle(ui, &mut u.client_shadows);
     // KR-like's client shadow replaces these sprite shadows.
     let sprite_shadows = u.client_shadows.is_none();
@@ -1288,6 +1293,8 @@ fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     changed |= slider_s(ui, "Light Catch", &mut effects.art_highlight_strength, 0.0..=1.0, tips::ART_LIGHT_CATCH);
     changed |= slider_s(ui, "Atmosphere Tint", &mut effects.art_depth_tint_strength, 0.0..=1.0, tips::ART_ATMOSPHERE_TINT);
     changed |= toggle_slider(ui, true, "Client Grunge", &mut effects.enable_client_grunge, &mut effects.client_grunge_strength, 0.0..=1.0, tips::CLIENT_GRUNGE);
+    // One setting for the style at every time of day, in every style.
+    changed |= slider_s(ui, "Mobile Sharpening", &mut u.mobile_sharpening, MOBILE_SHARPENING_RANGE, tips::MOBILE_SHARPENING);
     changed
 }
 
@@ -1496,6 +1503,7 @@ mod tests {
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
             player_floor_rule: None,
+            mobile_sharpening: crate::render::terrain::mesh_material::MOBILE_SHARPENING_OFF,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1520,6 +1528,7 @@ mod tests {
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
             player_floor_rule: None,
+            mobile_sharpening: crate::render::terrain::mesh_material::MOBILE_SHARPENING_OFF,
             local_lights: None,
             morning: preset(base),
             afternoon: preset(base + 1.0),

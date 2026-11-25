@@ -11,7 +11,9 @@ follow what each control acts on:
 - Terrain and water: Water Animation, the land sliders, KR Transition Grime and
   Normal Maps. Water animation also moves static water in the art shaders, and
   the caption says so.
-- Standard art and KR-style art: two columns of art sprite sliders.
+- Standard art and KR-style art: two columns of art sprite sliders. The standard
+  column ends with Mobile Sharpening, the style's sharpening of the creatures'
+  frames (the only control there that acts on mobiles, and its header says so).
 
 Those last three sit in three columns from 900 points of content width, in two
 from 600, and stack below that. A control with its own toggle and strength shares

@@ -1016,8 +1016,59 @@ grown budget should also want the frame limiter to have slept.
 ## Sharpening
 
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU
-(unwired) is in [`proposals/fsr-upscaling/`](proposals/fsr-upscaling/). There is no GPU RCAS; the land shader has its
-own unsharp mask (`apply_sharpening`).
+(unwired) is in [`proposals/fsr-upscaling/`](proposals/fsr-upscaling/). The land shader has its own unsharp mask
+(`apply_sharpening`).
+
+### Mobile sharpening (CAS, 2026-11-25)
+
+The mobiles' frames are sharpened in the art sprite shader at run time (`art/mobile_sharpen.wesl`, called from
+`art/main.wesl` `mobile_sharpened` under `MOBILE_FRAMES`), so the 1x frames, the SPAN 2x frames and the RIFE
+in-betweens all take it. Pack-time sharpening was rejected before (no 1x neural sharpener; SPAN downscaled back
+returns about the input).
+
+- **Knob**: `mobile_sharpening`, 0 to 1, one value per render style like `light_cover` (a required key of each
+  `[classic]`, `[enhanced]`, `[kr]`, `[painterly]` group of the shader presets, not per time of day). Shading Controls
+  shows it as Mobile Sharpening at the end of the standard art column; the control socket takes `set
+  mobile_sharpening` and reports it in `status.render`. It reaches the shader as `effects.mobile_sharpening` (a
+  `#[serde(skip)]` field kept in line by `UniformState::sync_mobile_sharpening`, as `land_texture_variation`). Every
+  style ships at 0.
+- **Off is free**: a uniform branch around the taps, after the alpha test, so with 0 the shader does no more than
+  before, and with it on only the fragments drawn pay.
+- **Algorithm**: AMD FidelityFX CAS (ffx_cas.h) without scaling. The soft minimum and maximum add the cross's and the
+  whole 3x3 window's; amplitude = sqrt(sat(min(soft min, 2 - soft max) / soft max)); lobe = -amplitude * strength *
+  0.2; out = (lobe * (N + W + E + S) + centre) / (1 + 4 lobe). Strength 1 is CAS's sharpness 1 (lobe -1/5), 0.625 its
+  sharpness 0 (-1/8); below that the lobe goes on down to 0. CAS rather than RCAS: RCAS is the pass after an FSR
+  upscale and limits its lobe by the local minimum/maximum to stop ringing on a resampled image; CAS's amplitude
+  already sharpens soft detail more than hard edges, which is what pixel-art outlines want, and it needs no
+  separate denoise term.
+- **Window**: the 3x3 texels of the frame's own atlas grid around the fragment's (offsets of one atlas texel, so the
+  sharpening is a property of the art and does not shimmer as the view zooms). Each neighbour is taken as the
+  fragment took its own colour: nearest, clamped into the card's rect, in Classic, Enhanced and UOD-Painterly;
+  KR-like's client bilinear filter, rect-clamped, in KR-like (sharpening filtered values a texel apart, close to
+  sharpen-then-filter). While two frames crossfade, the taps come from the blend, which reads transparent outside
+  each frame's own rect; so no tap ever reads a neighbouring frame of the atlas.
+- **Colour and alpha**: the colour is sharpened on sRGB-encoded values, as the clients' 8-bit art. A neighbour lends
+  its colour by its alpha and the centre's in the rest, so the transparent texels around a silhouette neither
+  darken nor brighten its edge (no halo); a transparent centre is left as it is, and the alpha never changes.
+
+Validation (2026-11-25, test packages `/home/claudio/test/uddp`, BC7):
+
+- **Strength 0 is pixel-identical** in all four styles. The regression harness (player hidden) compared
+  `before-mobile-cas` with the change: identical. With the player shown on the walking field west of Yew (map 1,
+  2093,790, zoom 0.3, in-betweens off so the poses are discrete, water and fog drift frozen), 20 captures per style
+  before and after: every capture after equals one before, byte for byte (Classic human and orc, Enhanced human and
+  daemon, KR-like and UOD-Painterly daemon). Single captures differ only by the idle pose, as two runs of one binary do.
+- **Look**: no halo on any silhouette, in any style. Strength 0.5 is lobe -0.1, a little under CAS's weakest; it
+  firms the Enhanced and KR renders without grain. Strength 1 (CAS's strongest) is too much on the Enhanced frames:
+  it grains the shading and brings out the BC7 blocks (the chroma blocks on a human's shorts). On Classic pixel art
+  0.5 barely shows and 1 adds a dotted edge to the shading. Clips: `cas/clips/` in the scratch folder (Enhanced
+  daemon and human at 0, 0.4, 0.8; Classic orc at 0, 0.5, 1).
+- **GPU cost**: the gfx engine's time per frame of the process (`/proc/<pid>/fdinfo` `drm-engine-gfx`), strength 0
+  and 1 alternated in one launch, 5 to 8 rounds of 8 s, uncapped at 1900 x 1000, a daemon at zoom 0.25 covering
+  about 190k fragments (10 % of the window, the area of some 15 daemons or 60 humans at zoom 1). Median of the paired
+  differences: Enhanced +0.06 ms of 13.2 (+0.5 %), KR-like +0.28 ms of 16.0 (+1.7 %, the filtered taps, eight more client
+  filters a fragment), UOD-Painterly +0.21 ms of 26.6 (+0.8 %, within its noise at 100 % busy), Classic (a small
+  human-sized body) +0.00 ms of 4.2. Off, the branch is not taken: nothing to measure.
 
 ## Block-compressed frame atlas (2026-11-21)
 

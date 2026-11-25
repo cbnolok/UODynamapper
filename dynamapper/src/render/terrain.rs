@@ -143,7 +143,8 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 
 /// Writes the shader controls' uniforms (`UniformState`) into every land material when they changed, so a material
 /// not drawn this frame does not keep stale lighting. It first brings in line the values edited apart from the
-/// effects: the transition flags from the settings, the local light intensity and the land texture variation flag.
+/// effects: the transition flags from the settings, the local light intensity, the land texture variation flag and
+/// the mobiles' sharpening.
 /// The Shading window registers it.
 pub fn sys_push_land_uniforms_if_dirty(
     mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
@@ -163,6 +164,11 @@ pub fn sys_push_land_uniforms_if_dirty(
     // So is the land texture variation: bring the flag the shaders read in line.
     if u.effects.land_texture_variation != u.land_texture_variation_flag() {
         u.sync_land_texture_variation();
+        u.dirty = true;
+    }
+    // And the mobiles' sharpening: bring the strength the shaders read in line.
+    if u.effects.mobile_sharpening != u.mobile_sharpening {
+        u.sync_mobile_sharpening();
         u.dirty = true;
     }
     if !u.dirty {
