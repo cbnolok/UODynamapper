@@ -92,7 +92,7 @@ impl ControlSettings<'_> {
         self.uniforms.as_deref()
     }
 
-    /// The Render Style and Time of Day buttons of the shader window. Returns whether the active preset changed.
+    /// The Render Style (Shading) and Time of Day (World Scene) buttons. Returns whether the active preset changed.
     pub(super) fn set_preset(&mut self, style: &str, time: &str) -> Result<bool, String> {
         let (Some(uniforms), Some(presets)) = (self.uniforms.as_mut(), self.presets.as_mut()) else {
             return Err("the shader presets are not loaded yet".into());

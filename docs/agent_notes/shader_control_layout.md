@@ -1,7 +1,8 @@
 # Shader controls: scope and responsive layout
 
 The main window shows every ordinary control at once, with no collapsed section.
-The top row picks the preset: Render Style and Time of Day. Below it, sections
+The top row picks the preset's Render Style and names the time of day, which the
+World Scene window (F4) sets with the light level since 2026-11-25. Below it, sections
 follow what each control acts on:
 
 - Whole scene: Tonemap, Color Grading, Texture Smoothness and Fog on one row,

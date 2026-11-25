@@ -77,6 +77,8 @@ fn sys_dispatch_keyboard_input(
             commands.trigger(ActionTogglePreferences);
         } else if key == settings.keybindings.shader_settings {
             commands.trigger(ActionToggleShaderSettings);
+        } else if key == settings.keybindings.world_scene {
+            commands.trigger(ActionToggleWorldScene);
         } else if key == KeyCode::Escape {
             commands.trigger(ActionCloseActiveDialog);
         }

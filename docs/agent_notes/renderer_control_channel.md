@@ -133,8 +133,9 @@ Three commands change what a fresh launch would otherwise fix in its settings
 files, so one preview can visit several styles, times and sources
 (`controls/dev_control/settings.rs`):
 
-- `{"command":"preset","style":"kr","time":"night"}`: the shader window's
-  style and time buttons (`shading::switch_render_preset`, which stores the
+- `{"command":"preset","style":"kr","time":"night"}`: the Shading window's
+  Render Style and the World Scene window's Time of Day buttons
+  (`shading::switch_render_preset`, which stores the
   live slot in the in-memory presets and applies the target, as a click does).
 - `{"command":"sources","art":"ec","land":"kr"}`: the preferences' art and land
   texture sources (`cc`/`ec`; `cc`/`ec`/`kr`). The land texture images and every
@@ -166,8 +167,9 @@ is counted then; always true for `reload_land`), `applied` and `switch_serial`. 
 (water animation, fog drift) stay in force: every preset slot is loaded frozen
 and a preset switch keeps the current water-animation flag.
 
-Persistence is the UI's. Preset switches stay in memory (the shader window
-writes land.toml only when it closes). A `sources` or `set` change of `Settings`
+Persistence is the UI's. Preset switches stay in memory (the Shading window
+writes land.toml only when it closes, and World Scene when it closes after
+changing the time of day or light level). A `sources` or `set` change of `Settings`
 reaches `cache/settings/` of the process's working directory through the app's
 debounced save, as a preference picked in the window does. In a harness or
 preview run that directory is the run's own isolated copy; never point a

@@ -38,7 +38,7 @@ enum ControlCommand {
     Click { x: f32, y: f32, button: PointerButton, state: InputState },
     Scroll { x: f32, y: f32 },
     ResetInput {},
-    /// The shader window's Render Style (preset group) and Time of Day.
+    /// The Shading window's Render Style (preset group) and the World Scene window's Time of Day.
     Preset { style: String, time: String },
     /// The preferences' Art and Land Texture Source.
     Sources { art: ClientTextureSource, land: LandTextureSource },

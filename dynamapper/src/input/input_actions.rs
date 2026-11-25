@@ -12,6 +12,10 @@ pub struct ActionTogglePreferences;
 #[derive(Event)]
 pub struct ActionToggleShaderSettings;
 
+/// Action to toggle the World Scene window (F4)
+#[derive(Event)]
+pub struct ActionToggleWorldScene;
+
 /// Action to toggle fullscreen (F11 / Alt+Enter)
 #[derive(Event)]
 pub struct ActionToggleFullscreen;

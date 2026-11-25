@@ -43,6 +43,7 @@ This document lists the keyboard shortcuts used in UODynamapper.
 | `F1` | Keybindings Help | `F1` (Configurable) |
 | `F2` | Options Menu | `F2` (Configurable) |
 | `F3` | Shading Controls | `F3` (Configurable) |
+| `F4` | World Scene: time of day, light level, player look and z | `F4` (Configurable) |
 
 > [!NOTE]
 > Keybindings are configurable! You can change them by editing the `assets/keybindings.toml` file.

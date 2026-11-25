@@ -22,7 +22,7 @@ Code:
 - `dynamapper/src/render/lighting/client_night.rs`: its module comment gives the formulas with their client addresses, the constants and a Rust mirror of the maths with unit tests.
 - `dynamapper/assets/shaders/world/effects/client_night_composite.wesl`.
 
-The settings are `[<group>.<period>.client_lighting]` (`ClientNightLighting`). The dialog shows them under Whole scene as "Light Level", "Night Overlay Strength" and "Night Overlay Colour". Next to them, "Local Lights" and its intensity slider are one setting per style, `[<group>.local_lights]` (`ClientLocalLights`, see Terrain and statics below).
+The settings are `[<group>.<period>.client_lighting]` (`ClientNightLighting`). The World Scene window (F4) shows the "Light Level", world state a server sets, with the Time of Day; Shading Controls shows "Night Overlay Strength" and "Night Overlay Colour" under Whole scene. Next to them, "Local Lights" and its intensity slider are one setting per style, `[<group>.local_lights]` (`ClientLocalLights`, see Terrain and statics below).
 
 ### Formula
 

@@ -6,6 +6,7 @@ pub mod paperdoll_menu;
 pub mod preferences;
 pub mod teleport;
 pub mod shading;
+pub mod world_scene;
 
 use crate::render::view::camera::UiCameraResource;
 use crate::impl_tracked_plugin;
@@ -18,6 +19,7 @@ use keybindings_help::KeybindingsHelpPlugin;
 use shading::ShadingUiPlugin;
 use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
+use world_scene::WorldScenePlugin;
 
 pub struct DialogsPlugin {
     pub registered_by: &'static str,
@@ -41,6 +43,9 @@ impl Plugin for DialogsPlugin {
                 registered_by: "DialogsPlugin",
             },
             TeleportPlugin {
+                registered_by: "DialogsPlugin",
+            },
+            WorldScenePlugin {
                 registered_by: "DialogsPlugin",
             },
         ))

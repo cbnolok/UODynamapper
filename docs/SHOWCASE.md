@@ -141,7 +141,7 @@ The same outfit in both Enhanced paperdoll modes. The 3D-style frames show the l
 
 ![Shading Controls showing the KR-like night preset over Britain](images/showcase/ui-settings.webp)
 
-Open Shading Controls with **F3** to switch styles and times of day, and tune lighting and materials for the active preset.
+Open Shading Controls with **F3** to switch styles and tune lighting and materials for the active preset. World Scene (**F4**) sets what a server or the player changes: the time of day and light level, the player's look (on foot or riding) and its z, to look at the floors of a building or a cave under the town.
 
 ![Graphics options with separate art and terrain choices, animation controls, and building and cave visibility](images/showcase/ui-graphics-options.webp)
 

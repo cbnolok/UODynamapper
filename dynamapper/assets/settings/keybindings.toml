@@ -1,4 +1,5 @@
 shader_settings = "F3"
+world_scene = "F4"
 user_settings = "F2"
 keybindings_help = "F1"
 increase_z = "PageUp"

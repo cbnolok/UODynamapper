@@ -87,6 +87,10 @@ pub fn sys_render_keybindings_help(
                     ui.label(format!("{:?}", settings.keybindings.shader_settings));
                     ui.end_row();
 
+                    ui.label("World Scene");
+                    ui.label(format!("{:?}", settings.keybindings.world_scene));
+                    ui.end_row();
+
                     ui.label("Toggle Fullscreen");
                     ui.label("F11 / Alt+Enter");
                     ui.end_row();

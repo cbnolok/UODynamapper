@@ -7,8 +7,8 @@
 
 // --- Preset pickers and window buttons ---
 
-pub(super) const TIME_OF_DAY: &str =
-    "Loads this render style's preset for the time of day. Your edits to the current preset are kept until you save or undo.";
+pub(super) const TIME_OF_DAY_IN_WORLD_SCENE: &str =
+    "Each render style has a preset per time of day. The time of day and the light level are world state, set in the World Scene window; the controls here edit the preset they load.";
 pub(super) const SHOW_ADVANCED: &str =
     "Opens every raw shader value in a second window. Its controls edit the same values as the ones here.";
 pub(super) const RESET_PRESET: &str =
@@ -31,7 +31,7 @@ pub(super) const TEXTURE_FILTER: &str =
 pub(super) const FOG: &str =
     "Adds haze toward the screen edges and the bottom, with slowly drifting cloud patches. On in UOD-Painterly; shape it under Advanced > Fog Params.";
 pub(super) const BRIGHTNESS: &str =
-    "Overall brightness of the scene, Classic's and UOD-Painterly's own look at every time of day; KR-like and Enhanced have none. Night and caves dim through Light Level in every style. In UOD-Painterly, the darker the scene, the more light sources glow.";
+    "Overall brightness of the scene, Classic's and UOD-Painterly's own look at every time of day; KR-like and Enhanced have none. Night and caves dim through the Light Level (World Scene) in every style. In UOD-Painterly, the darker the scene, the more light sources glow.";
 pub(super) const LIGHT_STATIC_INTERACTION: &str =
     "How brightly lamps, torches and other light sources light the ground around them, at any time of day. Visible in Classic and UOD-Painterly, off in Enhanced and KR-like.";
 pub(super) const GRUNGE: &str =
@@ -43,10 +43,8 @@ pub(super) const KR_COLOR_WASH_SCALE: &str =
 
 // --- Client night lighting and shadows (every style; the night overlay and shadows KR-like, Enhanced, UOD-Painterly) ---
 
-pub(super) const CLIENT_LIGHT_LEVEL: &str =
-    "The server's light level: 0 is full day (no change), 12 a night (ServUO's), 26 a dungeon. Every style dims by it as its client does: Classic as the Classic client, multiplying by (32 - level) / 32 with the light.mul lights taking that darkness back; the others through the KR and Enhanced clients' night map, with their light sprites.";
 pub(super) const NIGHT_OVERLAY_STRENGTH: &str =
-    "The night map's tint. 1 is the client; 0 darkens as much without the blue, as UOD-Painterly, which colours its night itself; above 1 tints more. Needs a Light Level above 0; not in Classic, whose client has no night map.";
+    "The night map's tint. 1 is the client; 0 darkens as much without the blue, as UOD-Painterly, which colours its night itself; above 1 tints more. Needs a Light Level above 0 (World Scene); not in Classic, whose client has no night map.";
 pub(super) const NIGHT_OVERLAY_COLOR: &str =
     "The night map's mean colour. The client's keeps its blue; another colour keeps its cloud pattern.";
 pub(super) const NIGHT_OVERLAY_CLIENT: &str =

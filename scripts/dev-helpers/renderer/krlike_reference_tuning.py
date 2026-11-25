@@ -6,7 +6,7 @@ measured per region type (water, grass, sand, rock, snow, stone, wood, foliage) 
 views with the same content are captured with KR-like preset variants and measured the same way.
 
 It reuses the launch machinery of shader_settings_audit.py (isolated assets and cache copies, KDE Desktop 4, the
-F3 panel's Render Style and Time of Day buttons through the control socket). One launch holds up to four
+control socket's `preset` command, the Render Style and Time of Day buttons' code path). One launch holds up to four
 variants, one in each time-of-day slot of their render style; the slot names are only storage.
 
 A variant is a KR-like slot taken from a presets file and changed by `set` (flat `table.key` names, as in

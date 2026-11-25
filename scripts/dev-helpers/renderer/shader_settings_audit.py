@@ -7,8 +7,9 @@ and reports the pixel change. No rendering code is changed: every variant is a v
 settings/shaders/land.toml.
 
 Batching: one app launch holds up to four variants per render style, one in each time-of-day slot. The script
-writes them into the slots, starts on the first one and switches with the F3 panel's Render Style and Time of Day
-buttons through the app-only control socket. Slot names are only storage; the variant's values are what render.
+writes them into the slots, starts on the first one and switches with the control socket's `preset` command, the
+code path of the Render Style (Shading Controls) and Time of Day (World Scene) buttons. Slot names are only storage;
+the variant's values are what render.
 
 Subcommands:
   plan                 build the variant plan (SCRATCH/plan.json) and print the counts
@@ -82,16 +83,10 @@ MODE_BUTTON = {'classic': 'Classic', 'enhanced': 'Enhanced', 'kr': 'KR-like', 'p
 # the same pair, but KR-like lights the night through the client composite and loads a neutral scene multiplier
 # (global_lighting 1) where UOD-Painterly keeps its own, so each group's values need that group's slots.
 SLOT_GROUPS = {'classic': ('classic',), 'enhanced': ('enhanced',), 'kr': ('kr',), 'painterly': ('painterly',)}
-TIME_BUTTON = {'morning': 'Morning', 'afternoon': 'Afternoon', 'night': 'Night', 'cave': 'Cave'}
 
 # Well under two thirds of the 2880 x 1692 screen, or the preview comes up maximized.
 WINDOW = (1024, 768)
 ZOOM = 1.0
-# Logical window pixels of the F3 panel's top-row buttons at WINDOW, ui_scale 1.15 (from `calibrate`).
-PANEL_BUTTONS = {
-    'Classic': (132, 149), 'Enhanced': (204, 149), 'KR-like': (278, 149), 'UOD-Painterly': (367, 149),
-    'Morning': (569, 149), 'Afternoon': (650, 149), 'Night': (721, 149), 'Cave': (774, 149),
-}
 
 # (name, x, y, z, why). Map 0 (Felucca).
 VIEWS = (
@@ -124,11 +119,8 @@ TELEPORT_SETTLE_SECONDS = 2.0
 CAPTURE_TIMEOUT_SECONDS = 60
 CAPTURE_POLL_SECONDS = 0.03
 INPUT_TIMEOUT_SECONDS = 20
-# egui lays a new window out in an invisible sizing pass; give it a few frames before clicking.
-PANEL_OPEN_SETTLE_SECONDS = 0.25
-CLICK_SETTLE_SECONDS = 0.08
-# Window fade-out, uniform push and material refresh after the panel closes.
-PANEL_CLOSE_SETTLE_SECONDS = 0.35
+# Uniform push and material refresh after a preset switch.
+PRESET_SETTLE_SECONDS = 0.35
 VERIFY_TOLERANCE = 1e-4
 MAX_LAUNCH_SECONDS = 270
 
@@ -723,21 +715,11 @@ class Run:
     def key(self, name):
         self.input({'command': 'key', 'key': name, 'state': 'tap'})
 
-    def click(self, label):
-        x, y = PANEL_BUTTONS[label]
-        self.input({'command': 'click', 'x': float(x), 'y': float(y), 'button': 'left', 'state': 'tap'})
-        time.sleep(CLICK_SETTLE_SECONDS)
-
     def select(self, config_id):
-        """Open F3, pick the config's slot with Render Style then Time of Day, close F3, release the pointer."""
+        """Pick the config's slot with the `preset` command, as the Render Style and Time of Day buttons do."""
         mode, period = self.slot_of[config_id]
-        self.key('F3')
-        time.sleep(PANEL_OPEN_SETTLE_SECONDS)
-        self.click(MODE_BUTTON[mode])
-        self.click(TIME_BUTTON[period])
-        self.key('F3')
-        self.input({'command': 'reset_input'})
-        time.sleep(PANEL_CLOSE_SETTLE_SECONDS)
+        self.req({'command': 'preset', 'style': mode, 'time': period})
+        time.sleep(PRESET_SETTLE_SECONDS)
         status = self.wait_in_game()
         self.verify(config_id, status)
 

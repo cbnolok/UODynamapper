@@ -22,7 +22,7 @@ use crate::{
     render::{
         uniform_state::UniformState,
         lighting::client_night::{
-            MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
+            MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
         },
         view::camera::UiCameraResource,
     },
@@ -70,7 +70,7 @@ fn sys_shader_ui_toggle(
 /// One Basic-Controls "Render Style": the preset group it loads, its land shading mode and
 /// post-process visual profile, and its tooltip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RenderStylePreset {
+pub(crate) struct RenderStylePreset {
     label: &'static str,
     preset_group: &'static str,
     shading_mode: u32,
@@ -121,7 +121,7 @@ const RENDER_STYLE_PRESETS: [RenderStylePreset; 4] = [
 
 /// The render style whose preset group the active preset key names. A key from no known
 /// group falls back to the first style with the live shading mode.
-fn active_render_style(u: &UniformState) -> RenderStylePreset {
+pub(crate) fn active_render_style(u: &UniformState) -> RenderStylePreset {
     let group = u.active_preset.split_once('.').map_or(u.active_preset.as_str(), |(group, _)| group);
     RENDER_STYLE_PRESETS
         .into_iter()
@@ -197,7 +197,8 @@ const GLOOM_FADE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=12.0;
 /// The fog pass draws no fog while both fog densities are below this (`fog_pass.wesl`), cloud noise included.
 const FOG_DENSITY_MIN: f32 = 0.001;
 
-const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
+/// The Time of Day buttons, which the World Scene window shows: each loads the active style's preset of its period.
+pub(crate) const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
     ("Morning", ShaderPresetPeriod::Morning),
     ("Afternoon", ShaderPresetPeriod::Afternoon),
     ("Night", ShaderPresetPeriod::Night),
@@ -214,7 +215,7 @@ const TWO_COLUMN_MIN_WIDTH: f32 = 600.0;
 const SECTION_SPACING: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ShaderPresetPeriod {
+pub(crate) enum ShaderPresetPeriod {
     Morning,
     Afternoon,
     Night,
@@ -222,7 +223,7 @@ enum ShaderPresetPeriod {
 }
 
 impl ShaderPresetPeriod {
-    fn from_active_key(key: &str) -> Self {
+    pub(crate) fn from_active_key(key: &str) -> Self {
         match key.split_once('.').map(|(_, period)| period) {
             Some("afternoon") => Self::Afternoon,
             Some("night") => Self::Night,
@@ -292,7 +293,7 @@ fn apply_render_preset(
     u.dirty = true;
 }
 
-fn store_active_and_apply_render_preset(
+pub(crate) fn store_active_and_apply_render_preset(
     u: &mut UniformState,
     presets: &mut LandShaderModePresets,
     style: RenderStylePreset,
@@ -372,7 +373,8 @@ pub fn shading_ui_system(
         .resizable(true)
         .vscroll(true)
         .show(ctx, |ui| {
-            // Render Style and time of day pick the preset, so they share the top row.
+            // Render Style and time of day pick the preset, so they share the top row; the time of day is world
+            // state, picked in the World Scene window.
             ui.horizontal_wrapped(|ui| {
                 // Render Style couples the land shading mode with the matching
                 // post-process visual profile (see RENDER_STYLE_PRESETS) so one pick
@@ -393,18 +395,15 @@ pub fn shading_ui_system(
 
                 ui.separator();
 
-                // ------------------------ Presets -------------------------
-                ui.strong("Time of Day:");
-                for (label, period) in PRESET_PERIOD_BUTTONS {
-                    if with_tip(ui.selectable_label(cur_period == period, label), tips::TIME_OF_DAY).clicked() {
-                        store_active_and_apply_render_preset(
-                            &mut u,
-                            &mut shader_presets,
-                            cur_style,
-                            period,
-                        );
-                    }
-                }
+                let period_label = PRESET_PERIOD_BUTTONS.into_iter()
+                    .find_map(|(label, period)| (period == cur_period).then_some(label)).unwrap_or_default();
+                with_tip(
+                    ui.weak(format!(
+                        "Time of Day: {period_label}, set with the Light Level in World Scene [{:?}]",
+                        settings.keybindings.world_scene
+                    )),
+                    tips::TIME_OF_DAY_IN_WORLD_SCENE,
+                );
             });
             ui.add_space(SECTION_SPACING);
 
@@ -618,7 +617,7 @@ pub fn shading_ui_system(
                 let mut changed = false;
 
                 // Global scene brightness, in the styles with a scene multiplier of their own (Classic and
-                // UOD-Painterly; every style dims at night through its Light Level, under Whole scene).
+                // UOD-Painterly; every style dims at night through its Light Level, in the World Scene window).
                 if u.has_scene_multiplier() {
                     changed |= slider_s(
                         ui,
@@ -1080,8 +1079,8 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
     });
     ui.columns(2, |columns| {
         let ui = &mut columns[0];
-        // Every style dims as its client does, through the light level (and the night map but in Classic); Classic
-        // and UOD-Painterly also keep their own Brightness multiplier.
+        // Every style dims as its client does, through the light level (set in the World Scene window) and the night
+        // map but in Classic; Classic and UOD-Painterly also keep their own Brightness multiplier.
         if u.has_scene_multiplier() {
             changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0, tips::BRIGHTNESS);
         }
@@ -1107,13 +1106,10 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
     changed
 }
 
-/// A style's night lighting: light level, and the night overlay strength and colour where the style has them (all but
-/// Classic).
+/// A style's night overlay strength and colour, where the style has them (all but Classic). Its light level is world
+/// state, set in the World Scene window.
 fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) -> bool {
-    let mut changed = ui
-        .add(egui::Slider::new(&mut lighting.light_level, 0..=MAX_CLIENT_LIGHT_LEVEL).text("Light Level"))
-        .on_hover_text(tips::CLIENT_LIGHT_LEVEL)
-        .changed();
+    let mut changed = false;
     if let Some(strength) = lighting.overlay_strength.as_mut() {
         changed |= slider_s(
             ui,
@@ -1479,6 +1475,7 @@ fn apply_highlights_control(u: &mut UniformState, highlights: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::lighting::client_night::MAX_CLIENT_LIGHT_LEVEL;
 
     fn uniform_state() -> UniformState {
         UniformState {

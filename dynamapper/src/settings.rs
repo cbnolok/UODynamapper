@@ -34,6 +34,8 @@ pub struct Settings {
 #[serde(deny_unknown_fields)]
 pub struct SectKeybindings {
     pub shader_settings: KeyCode,
+    /// Toggles the World Scene window: the time of day, light level, player look and z.
+    pub world_scene: KeyCode,
     pub user_settings: KeyCode,
     pub keybindings_help: KeyCode,
     pub increase_z: KeyCode,

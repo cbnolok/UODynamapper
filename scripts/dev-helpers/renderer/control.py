@@ -168,7 +168,8 @@ def main():
     scroll.add_argument('x', type=float)
     scroll.add_argument('y', type=float)
     actions.add_parser('reset-input', help='Discard pending input and release controller-held keys/buttons')
-    preset = actions.add_parser('preset', help='Switch the render style and time of day, as the shader window does')
+    preset = actions.add_parser('preset', help='Switch the render style and time of day, as the Render Style and '
+                                'Time of Day buttons do')
     preset.add_argument('style', help='classic, enhanced, kr or painterly')
     preset.add_argument('time', help='morning, afternoon, night or cave')
     sources = actions.add_parser('sources', help='Switch the art and land texture sources, as the preferences do')
