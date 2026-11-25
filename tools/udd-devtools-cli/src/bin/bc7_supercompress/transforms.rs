@@ -5,6 +5,7 @@
 //! for byte. The inverse checks the lengths, the mode map and the padding bits, and rejects what a forward pass cannot
 //! have written.
 
+use std::borrow::Cow;
 use std::fmt;
 
 pub const BLOCK_BYTES: usize = 16;
@@ -331,8 +332,8 @@ fn fields_inverse(input: &[u8], raw_len: usize, shuffle: bool, out: &mut Vec<u8>
     check_len(blocks + expected, input.len())?;
 
     // Each mode's two streams, unshuffled into scratch when they were shuffled.
-    let mut prefix_streams: [Vec<u8>; 8] = Default::default();
-    let mut index_streams: [Vec<u8>; 8] = Default::default();
+    let mut prefix_streams: [Cow<[u8]>; 8] = Default::default();
+    let mut index_streams: [Cow<[u8]>; 8] = Default::default();
     let mut at = 0;
     for (streams, lengths, record_len) in [
         (&mut prefix_streams, &prefix_lengths, prefix_bytes as fn(usize) -> usize),
@@ -344,9 +345,9 @@ fn fields_inverse(input: &[u8], raw_len: usize, shuffle: bool, out: &mut Vec<u8>
             streams[mode] = if shuffle {
                 let mut plain = vec![0u8; stored.len()];
                 untranspose_into(stored, record_len(mode), &mut plain);
-                plain
+                Cow::Owned(plain)
             } else {
-                stored.to_vec()
+                Cow::Borrowed(stored)
             };
         }
     }

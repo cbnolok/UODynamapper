@@ -50,6 +50,8 @@ const GAME_DECODE_THREADS: usize = 4;
 /// The bytes of a transformed stream's length when a transform changes it, which a stored payload would need beside
 /// the container's raw size.
 const TRANSFORMED_LENGTH_BYTES: usize = 4;
+/// Pages `sizes --dump` writes.
+const DUMPED_PAGES: usize = 3;
 
 #[derive(Parser)]
 #[command(about = "Lossless supercompression experiments on BC7 mobile animation pages")]
@@ -104,6 +106,9 @@ struct MethodArgs {
     /// Per-page CSV.
     #[arg(long)]
     csv: Option<PathBuf>,
+    /// Writes the trained dictionaries and the first measured pages' blocks here, to check against the zstd tool.
+    #[arg(long)]
+    dump: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -394,6 +399,15 @@ fn sizes(args: &MethodArgs) -> eyre::Result<()> {
     let package = Package::open(&args.target.package, args.target.kind)?;
     let pages = measured_pages(&package, args, &methods);
     let dictionaries = dictionaries(&package, args, &methods)?;
+    if let Some(dir) = &args.dump {
+        std::fs::create_dir_all(dir)?;
+        for (name, dictionary) in &dictionaries {
+            std::fs::write(dir.join(format!("dictionary_{name}.bin")), &dictionary.bytes)?;
+        }
+        for page in pages.iter().take(DUMPED_PAGES) {
+            std::fs::write(dir.join(format!("page_{:05}.bc7", page.index)), package.raw(page)?)?;
+        }
+    }
     let group = args.group.max(1);
     let groups: Vec<&[&Page]> = pages.chunks(group).collect();
     let encode_nanos: Vec<AtomicU64> = methods.iter().map(|_| AtomicU64::new(0)).collect();
