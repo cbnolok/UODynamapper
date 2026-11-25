@@ -1,3 +1,7 @@
+// Proving the in-between thread's closure `Send` walks through `InBetweenMaker` into wgpu's bind groups, deeper than
+// the default limit of 128; newer compilers turn that overflow into a future-incompatibility warning.
+#![recursion_limit = "256"]
+
 use color_eyre::eyre;
 use eframe::egui;
 use uot_gui::{run_native_with_setup, NativeWindow};
