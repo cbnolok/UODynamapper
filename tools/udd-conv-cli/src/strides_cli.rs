@@ -155,7 +155,8 @@ pub enum StridesCommand {
     /// records. Strides of several packages and tables (several client versions) merge; the same client frames with
     /// other values are an error.
     CacheExport {
-        #[arg(required = true)]
+        /// Measured packages; none merges the --merge tables alone.
+        #[arg(required_unless_present = "merges")]
         files: Vec<PathBuf>,
         /// The Classic client folder the Classic packages were packed from.
         #[arg(long)]

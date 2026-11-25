@@ -148,7 +148,15 @@ runs, skips the hashing when the package's records cover every clip of its `stri
 everything again. `--stride-cache` (CLI) or the routing folder's copy (GUI, when it has one) replaces the shipped
 table. `udd-cli tool strides cache-export PACKAGE... [--ccdir] [--ecdir] [--merge TABLE]... [--output]` writes the
 table from measured packages (`measure full` first), the client frames read from the client folder when given, else
-from the sources the package records; the same key with other values is an error.
+from the sources the package records; the same key with other values is an error, and with `--merge` alone it merges
+tables. The shipped table (2026-11-25, 6817 rows, 387 KB) merges four client folders, each packed with Quick Convert's
+settings (BC7, no RDO, Zstd 9) and measured in full: Classic 1914 clips and Classic "fp" (anim6.mul,
+AnimationFrame6.uop) 2073, of which 1725 share their client frames, Enhanced 4125 and Enhanced "fp" 4398, 3968 shared;
+the shared ones measured the same to the bit, so the merge met no conflict. 718 Classic and 1616 Enhanced rows hold no
+stride (measured, none fit), so those clips are not measured again either. A fresh pack of each folder with the table
+then took every stride from it (0 misses; `measure changed` measured nothing in 0.1 to 0.5 s) and exported strides
+byte for byte equal to the measured package's; the stride part of the pack is the source hashing, 1.6 to 6.7 s Classic
+and 7 to 12 s Enhanced at idle priority, against 65 to 92 s and 129 to 182 s of measuring in full.
 The first strides, measured into the table that was bundled in the binary until 2026-11-21, were moved into the
 packages with `strides import --trust-unhashed` from the measurement report, hashed on the packages they were measured
 on, without measuring again. The stride is the median of the side facings that measured (at least two), even when they
