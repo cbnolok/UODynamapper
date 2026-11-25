@@ -276,6 +276,12 @@ These need a person at the GUI or in a running client; the code side is done.
   - Walking over multis (about 3 to 4 days): houses and boats are placed by a server, so none appear today
     (`PlacedMultisRes` is never filled). Place them from a runtime spec and a socket command, and let the walk
     (`world/walk_z.rs`) read their parts as floors, stairs and walls. Only useful to preview houses.
+- Sharpening for mobile frames (not urgent; proposed 2026-11-23): a GPU CAS (AMD's contrast-adaptive sharpening;
+  only the CPU RCAS exists, `apply_rcas` in `uot-image-postprocess/src/upscaling/fsr.rs`) in the sprite shader, at
+  run time and tunable per render style, so it also covers the SPAN 2x frames and the RIFE in-betweens. Likely useful
+  on the soft Enhanced renders; on Classic pixel art drawn nearest it risks halos. Judge with Enhanced before/after
+  clips. Pack-time sharpening or colour changes were rejected: no 1x neural sharpener exists (SPAN downscaled back
+  returns about the input), and colour is already graded per style at run time.
 - Light-source items glow on the Classic paperdoll and the old-style gump paperdoll (the user liked the idea,
   2026-11-06). The Enhanced client's own paperdoll (`Paperdoll.uop`) already has the halo painted into lit items'
   frames (lit lantern 0xA15: a 375x306 frame, mostly partly transparent), so it needs nothing. An item
