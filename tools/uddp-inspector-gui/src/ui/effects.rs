@@ -721,7 +721,9 @@ impl EffectsViewer {
         let Some(selection) = self.selection else {
             return;
         };
-        egui::ScrollArea::vertical().show(ui, |ui| match selection {
+        // Both ways: content wider than the panel scrolls, rather than widening the panel past where it can be dragged
+        // back (a resizable panel takes its content's width).
+        egui::ScrollArea::both().show(ui, |ui| match selection {
             Selection::Root(key) => {
                 ui.heading(key.label());
                 self.ui_preview(ctx, ui, PreviewTarget::Root(key));
@@ -1027,10 +1029,12 @@ impl EffectsViewer {
     }
 }
 
+/// Label and value rows of a two-column grid; a long value (a texture's users) wraps at the grid's right edge, since grid
+/// cells don't wrap by themselves.
 fn grid_rows(ui: &mut egui::Ui, rows: &[(&str, String)]) {
     for (label, value) in rows {
         crate::ui::metadata_label(ui, *label);
-        ui.label(value);
+        ui.add(egui::Label::new(value).wrap());
         ui.end_row();
     }
 }
@@ -1152,6 +1156,28 @@ mod tests {
         assert!(viewer.texture_view.as_ref().unwrap().handle.as_ref().is_some_and(|(level, _, _)| *level == 1));
         viewer.select(Selection::Texture(textures::GONE));
         frame(&ctx, &mut viewer);
+    }
+
+    /// A value as long as the real package's longest "Used by:" list (1241 characters) wraps within the details panel
+    /// instead of widening it.
+    #[test]
+    fn a_long_grid_value_wraps_within_the_panel() {
+        const PANEL_WIDTH: f32 = 300.0;
+        const SCREEN: egui::Vec2 = egui::vec2(800.0, 600.0);
+        const FRAMES: usize = 3;
+        let long_value = vec!["03002012_flare_user_system"; 47].join(", ");
+        let ctx = egui::Context::default();
+        let mut width = 0.0;
+        for _ in 0..FRAMES {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SCREEN)), ..Default::default() };
+            let _ = ctx.run_ui(input, |ui| {
+                ui.allocate_ui(egui::vec2(PANEL_WIDTH, SCREEN.y), |ui| {
+                    crate::ui::metadata_grid("long_value_grid").show(ui, |ui| grid_rows(ui, &[("Used by:", long_value.clone())]));
+                    width = ui.min_rect().width();
+                });
+            });
+        }
+        assert!(width <= PANEL_WIDTH, "the grid is {width} wide in a {PANEL_WIDTH} panel");
     }
 
     #[test]
