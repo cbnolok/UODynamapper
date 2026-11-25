@@ -582,14 +582,15 @@ fn describe_gumps_ec(settings: &AppSettings, output: &Path, summary: &EcGumpsBui
         ),
     };
     format!(
-        "Wrote {} Enhanced gumps to {} ({} single in {}, {} with soft alpha; {} shared with gumps_cc; {} atlas; {} \
-         skipped)",
+        "Wrote {} Enhanced gumps to {} ({} single in {}, {} with soft alpha; {} single and {} paperdoll shared with \
+         gumps_cc; {} atlas; {} skipped)",
         summary.gump_count,
         output.display(),
         summary.single_gump_count,
         single_formats,
         summary.single_soft_alpha_count,
         summary.single_shared_classic_count,
+        summary.paperdoll_shared_classic_count,
         summary.atlas_gump_count,
         summary.skipped_count
     )

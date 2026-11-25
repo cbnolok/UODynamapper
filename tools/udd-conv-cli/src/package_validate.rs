@@ -8,8 +8,8 @@
 //!   which also checks the manifest format versions.
 //!
 //! A gumps package that shares gumps with `gumps_cc` (`pack-ec-gumps --share-with`) is also checked against the
-//! `gumps_cc.uddp` beside it: every shared gump's hash against that package's image. Without one beside it, the report
-//! notes that the package depends on it.
+//! `gumps_cc.uddp` beside it: every shared gump's hash against that package's image, single or on an atlas page.
+//! Without one beside it, the report notes that the package depends on it.
 //!
 //! The Enhanced packages Kingdom Reborn draws differently (`tex_art_ec`, `tex_land_ec`, `tex_aux_ec`, `tilemeta`) are
 //! also checked for their Kingdom Reborn section (`udd_conv::kr_sections`): read by the package's reader, and an
@@ -439,11 +439,14 @@ fn check_shared_classic_gumps(path: &Path, package: &UddpReader, report: &mut Pa
     let differing = shared
         .par_iter()
         .filter_map(|shared| {
-            let problem = match classic.read_single_gump_image(shared.gump_id) {
-                Ok(Some((_, image))) if gump_image_hash(&image) == shared.image_hash => return None,
-                Ok(Some(_)) => "draws it differently".to_string(),
-                Ok(None) => "has no single gump with its id".to_string(),
-                Err(error) => format!("does not decode it: {error:#}"),
+            let problem = if !classic.has_gump(shared.gump_id) {
+                "has no gump with its id".to_string()
+            } else {
+                match classic.read_gump_image(shared.gump_id) {
+                    Ok(image) if gump_image_hash(&image) == shared.image_hash => return None,
+                    Ok(_) => "draws it differently".to_string(),
+                    Err(error) => format!("does not decode it: {error:#}"),
+                }
             };
             Some(format!("shared gump {}: {SHARED_CLASSIC_GUMPS_FILE_NAME} {problem}", shared.gump_id))
         })
@@ -1202,6 +1205,49 @@ mod tests {
                 ),
             ]
         );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A gumps_ec that shares a paperdoll gump passes against the gumps_cc.uddp that holds it on an atlas page, and
+    /// fails when the listed hash isn't that image's.
+    #[test]
+    fn shared_atlas_gumps_are_checked_against_the_gumps_cc_atlas() {
+        use udd_assets::gumps::SharedClassicGump;
+        use udd_conv::gump_atlas::{add_gump_atlas_files, DecodedGump};
+        use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat, SingleGumpWriter};
+        const PAPERDOLL_GUMP: u32 = 50_001;
+        const SIDE: u16 = 2;
+        const ORANGE: [u8; 4] = [248, 128, 8, 255];
+        let dir = scratch_dir("shared_atlas_gumps");
+        let classic_path = dir.join(SHARED_CLASSIC_GUMPS_FILE_NAME);
+        let enhanced_path = dir.join("gumps_ec.uddp");
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        let rgba = ORANGE.repeat(usize::from(SIDE) * usize::from(SIDE));
+        let gump = DecodedGump { gump_id: PAPERDOLL_GUMP, width: SIDE, height: SIDE, upscale_factor: 1, rgba };
+        add_gump_atlas_files(&mut builder, vec![gump], &Default::default()).expect("add the atlas gump");
+        fs::write(&classic_path, builder.build().expect("build package")).expect("write package");
+        let classic = GumpsPackage::load(&classic_path).expect("load gumps_cc");
+        let image_hash = gump_image_hash(&classic.read_gump_image(PAPERDOLL_GUMP).expect("read the atlas gump"));
+        let classic = std::sync::Arc::new(classic);
+        let write_enhanced = |image_hash| {
+            let format = GumpPixelFormat::Rgba8888;
+            let mut writer = SingleGumpWriter::new(format, default_single_gump_compression(format))
+                .with_shared_classic_gumps(classic.clone());
+            writer.list_shared_classic_gump(SharedClassicGump { gump_id: PAPERDOLL_GUMP, image_hash });
+            let mut builder = UddpBuilder::new(LookupMode::SparseId);
+            writer.finish(&mut builder).expect("finish single gumps");
+            add_gump_atlas_files(&mut builder, Vec::new(), &Default::default()).expect("add the atlas manifests");
+            fs::write(&enhanced_path, builder.build().expect("build package")).expect("write package");
+        };
+
+        write_enhanced(image_hash);
+        let report = validate_package(&enhanced_path);
+        assert!(report.passed(), "{:?}", report.failures);
+        assert!(report.notes.iter().any(|note| note.starts_with("1 shared gumps match")), "{:?}", report.notes);
+
+        write_enhanced(!image_hash);
+        let report = validate_package(&enhanced_path);
+        assert_eq!(report.failures[0], format!("shared gump {PAPERDOLL_GUMP}: gumps_cc.uddp draws it differently"));
         fs::remove_dir_all(&dir).ok();
     }
 }

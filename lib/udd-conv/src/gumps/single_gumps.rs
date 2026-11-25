@@ -13,7 +13,8 @@
 //!
 //! A writer given a `gumps_cc` to share with ([`SingleGumpWriter::with_shared_classic_gumps`]) leaves out each gump that
 //! `gumps_cc` draws the same and lists it in the shared Classic gump table instead (the user, 2026-11-06: "i'd keep the
-//! ability to both share cc gumps and pack them into ec gumps file").
+//! ability to both share cc gumps and pack them into ec gumps file"). The same table lists the paperdoll gumps the
+//! caller leaves out for `gumps_cc` ([`SingleGumpWriter::list_shared_classic_gump`]).
 
 use color_eyre::eyre::{self, WrapErr};
 use rayon::prelude::*;
@@ -280,6 +281,13 @@ impl SingleGumpWriter {
         self
     }
 
+    /// Lists `shared`, a gump the caller leaves out for the `gumps_cc` shared with (a paperdoll equipment gump, which
+    /// goes to the atlas pages rather than through this writer), in the shared Classic gump table that [`Self::finish`]
+    /// writes, beside the single gumps the writer leaves out itself.
+    pub fn list_shared_classic_gump(&mut self, shared: SharedClassicGump) {
+        self.shared.push(shared);
+    }
+
     /// Stores the gumps in the Classic colour space ([`is_in_classic_colour_space`]) as `format`, and the others as the
     /// writer's format; the paperdoll body gumps stay RGBA8888 either way. The rule sees the pixels as pushed, after any
     /// upscale pass.
@@ -303,9 +311,9 @@ impl SingleGumpWriter {
         Ok(())
     }
 
-    /// Writes the gumps still waiting and, when gumps were left out, the shared Classic gump table, and logs how many have
-    /// soft alpha when they went to BC1, how many body gumps stayed lossless, how many took the Classic colour space
-    /// format, and how many were shared.
+    /// Writes the gumps still waiting and, when gumps were left out or listed, the shared Classic gump table, sorted by
+    /// id, and logs how many have soft alpha when they went to BC1, how many body gumps stayed lossless, how many took
+    /// the Classic colour space format, and how many were shared.
     pub fn finish(mut self, builder: &mut UddpBuilder) -> eyre::Result<SingleGumpSummary> {
         self.flush(builder)?;
         if self.shared_with.is_some() {

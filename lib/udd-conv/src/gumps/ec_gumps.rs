@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use udd_assets::gumps::GumpsPackage;
+use udd_assets::gumps::{gump_image_hash, GumpsPackage, SharedClassicGump};
 use udd_container::{CompressionFlag, LookupMode, UddpBuilder};
 use uocf::enhanced::image_census::{classify_content, ContentFormat, TgaVerdict};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
@@ -66,9 +66,9 @@ pub struct EcGumpsOptions {
     pub paperdoll_upscale_passes: Vec<UpscalePass>,
     pub single_upscale_passes: Vec<UpscalePass>,
     pub upscale_profile: Option<Arc<UpscaleProfile>>,
-    /// The `gumps_cc.uddp` to share the Classic twins with (`--share-with`): each single gump it draws the same is left
-    /// out and listed in the shared Classic gump table, for Dynamapper to draw from the Classic source. `None` packs
-    /// standalone.
+    /// The `gumps_cc.uddp` to share the Classic twins with (`--share-with`): each single gump it draws the same, and
+    /// each paperdoll equipment gump it has at the same size (`shared_classic_paperdoll_gump`), is left out and listed
+    /// in the shared Classic gump table, for Dynamapper to draw from the Classic source. `None` packs standalone.
     pub share_with: Option<PathBuf>,
 }
 
@@ -146,6 +146,9 @@ pub struct EcGumpsBuildSummary {
     pub single_shared_classic_count: u32,
     /// Single gumps stored although the `--share-with` package holds them, because its copy is lossier.
     pub single_kept_classic_lossier_count: u32,
+    /// Paperdoll equipment gumps left out because the `--share-with` package has them at the same size; `gump_count`
+    /// and `atlas_gump_count` leave them out.
+    pub paperdoll_shared_classic_count: u32,
     pub atlas_gump_count: u32,
     pub skipped_count: u32,
 }
@@ -182,7 +185,11 @@ pub fn convert_ec_gumps_to_uddp_from_sources_with_progress(
         .map(|share_with| load_share_source(share_with, output_path))
         .transpose()?;
     if let Some(share_with) = &options.share_with {
-        log::info!("Leaving out the single gumps this gumps_cc draws the same: {}", share_with.display());
+        log::info!(
+            "Leaving out the single gumps this gumps_cc draws the same and the paperdoll gumps it has at the same \
+             size: {}",
+            share_with.display()
+        );
     }
     if let Some(interface_uop) = find_interface_uop(source_dirs) {
         println!(
@@ -254,6 +261,7 @@ fn convert_ec_gumps_from_interface_uop(
     let mut gump_count = 0u32;
     let mut single_gumps = single_gump_writer(options, shared_with);
     let mut atlas_gumps = Vec::new();
+    let mut paperdoll_shared_classic_count = 0u32;
     let mut skipped_count = 0u32;
 
     let pb = ProgressBar::new(u64::from(options.max_id) + 1);
@@ -284,6 +292,11 @@ fn convert_ec_gumps_from_interface_uop(
 
         match decode_ec_gump_payload(gump_id, format, &payload) {
             Ok(Some(mut decoded)) => {
+                if let Some(shared) = shared_classic_paperdoll_gump(shared_with, &decoded)? {
+                    single_gumps.list_shared_classic_gump(shared);
+                    paperdoll_shared_classic_count += 1;
+                    continue;
+                }
                 // Baked before the upscale passes, on the texels the client reads.
                 if is_enhanced_paperdoll_gump_id(gump_id) {
                     bake_enhanced_paperdoll_rule(&mut decoded);
@@ -332,6 +345,7 @@ fn convert_ec_gumps_from_interface_uop(
         },
         task_progress,
     )?;
+    log_shared_classic_paperdoll_gumps(shared_with, paperdoll_shared_classic_count, atlas_gump_count);
     pb.finish_with_message("EC gumps extracted from Interface.uop");
     build_and_write_package_with_progress(builder, output_path, package_progress)?;
 
@@ -343,6 +357,7 @@ fn convert_ec_gumps_from_interface_uop(
         single_classic_colour_space_count: single_summary.classic_colour_space_count,
         single_shared_classic_count: single_summary.shared_classic_count,
         single_kept_classic_lossier_count: single_summary.kept_classic_lossier_count,
+        paperdoll_shared_classic_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -361,6 +376,7 @@ fn convert_ec_gumps_from_extracted_dir(
     let mut gump_count = 0u32;
     let mut single_gumps = single_gump_writer(options, shared_with);
     let mut atlas_gumps = Vec::new();
+    let mut paperdoll_shared_classic_count = 0u32;
     let mut skipped_count = 0u32;
 
     let pb = ProgressBar::new(sources.len() as u64);
@@ -397,6 +413,11 @@ fn convert_ec_gumps_from_extracted_dir(
         let format = infer_ec_image_format(&payload, source.format);
         match decode_ec_gump_payload(gump_id, format, &payload) {
             Ok(Some(mut decoded)) => {
+                if let Some(shared) = shared_classic_paperdoll_gump(shared_with, &decoded)? {
+                    single_gumps.list_shared_classic_gump(shared);
+                    paperdoll_shared_classic_count += 1;
+                    continue;
+                }
                 // Baked before the upscale passes, on the texels the client reads.
                 if is_enhanced_paperdoll_gump_id(gump_id) {
                     bake_enhanced_paperdoll_rule(&mut decoded);
@@ -445,6 +466,7 @@ fn convert_ec_gumps_from_extracted_dir(
         },
         task_progress,
     )?;
+    log_shared_classic_paperdoll_gumps(shared_with, paperdoll_shared_classic_count, atlas_gump_count);
     pb.finish_with_message("EC gumps extracted from extracted files");
     build_and_write_package_with_progress(builder, output_path, package_progress)?;
 
@@ -456,9 +478,42 @@ fn convert_ec_gumps_from_extracted_dir(
         single_classic_colour_space_count: single_summary.classic_colour_space_count,
         single_shared_classic_count: single_summary.shared_classic_count,
         single_kept_classic_lossier_count: single_summary.kept_classic_lossier_count,
+        paperdoll_shared_classic_count,
         atlas_gump_count,
         skipped_count,
     })
+}
+
+/// The shared Classic gump table entry of a paperdoll equipment gump, as decoded from the Enhanced source before the
+/// bake and any upscale pass, when the `gumps_cc` shared with has that gump at the same logical size; `None` for any
+/// other gump, or with no share source. Interface.uop repeats the Classic paperdoll gumps, and its copies differ from
+/// `gumps_cc`'s by one 5-bit colour step or a few dark fringe texels at most, so the package leaves them out for
+/// Dynamapper to draw `gumps_cc`'s (the user, 2026-11-25). The entry carries the hash of `gumps_cc`'s whole canvas.
+fn shared_classic_paperdoll_gump(
+    shared_with: Option<&Arc<GumpsPackage>>,
+    decoded: &DecodedGump,
+) -> eyre::Result<Option<SharedClassicGump>> {
+    let gump_id = decoded.gump_id;
+    let Some(classic) =
+        shared_with.filter(|classic| is_paperdoll_equipment_gump_id(gump_id) && classic.has_gump(gump_id))
+    else {
+        return Ok(None);
+    };
+    let classic_image = classic
+        .read_gump_image(gump_id)
+        .wrap_err_with(|| format!("read paperdoll gump {gump_id} from the gumps_cc package shared with"))?;
+    let same_size = (classic_image.logical_width, classic_image.logical_height)
+        == (u32::from(decoded.width), u32::from(decoded.height));
+    Ok(same_size.then(|| SharedClassicGump { gump_id, image_hash: gump_image_hash(&classic_image) }))
+}
+
+/// Logs, when sharing, how many paperdoll gumps were left out for `gumps_cc` and how many went to the atlas pages.
+fn log_shared_classic_paperdoll_gumps(shared_with: Option<&Arc<GumpsPackage>>, shared_count: u32, kept_count: u32) {
+    if shared_with.is_some() {
+        log::info!(
+            "{shared_count} paperdoll gumps shared with gumps_cc, left out to be drawn from it; {kept_count} kept"
+        );
+    }
 }
 
 fn unpack_ec_gump_payload(
@@ -974,13 +1029,20 @@ mod tests {
 
     /// An uncompressed 32-bit TGA of `side` x `side` opaque pixels.
     fn solid_tga(side: u16) -> Vec<u8> {
+        keyed_tga(side, side, OPAQUE_BGRA)
+    }
+
+    /// An uncompressed 32-bit TGA of `width` x `height` opaque pixels, the first `first` and the others
+    /// [`OPAQUE_BGRA`]: an Enhanced paperdoll gump keeps its key colour in texel 0.
+    fn keyed_tga(width: u16, height: u16, first: [u8; 4]) -> Vec<u8> {
         let mut tga = vec![0u8; TGA_HEADER_LEN];
         tga[TGA_IMAGE_TYPE_OFFSET] = TGA_UNCOMPRESSED_TRUE_COLOUR;
-        tga[TGA_WIDTH_OFFSET..TGA_WIDTH_OFFSET + 2].copy_from_slice(&side.to_le_bytes());
-        tga[TGA_HEIGHT_OFFSET..TGA_HEIGHT_OFFSET + 2].copy_from_slice(&side.to_le_bytes());
+        tga[TGA_WIDTH_OFFSET..TGA_WIDTH_OFFSET + 2].copy_from_slice(&width.to_le_bytes());
+        tga[TGA_HEIGHT_OFFSET..TGA_HEIGHT_OFFSET + 2].copy_from_slice(&height.to_le_bytes());
         tga[TGA_BITS_PER_PIXEL_OFFSET] = TGA_BITS_PER_PIXEL;
         tga[TGA_DESCRIPTOR_OFFSET] = TGA_DESCRIPTOR_TOP_LEFT_ALPHA8;
-        tga.extend(OPAQUE_BGRA.repeat(usize::from(side) * usize::from(side)));
+        tga.extend(first);
+        tga.extend(OPAQUE_BGRA.repeat(usize::from(width) * usize::from(height) - 1));
         tga
     }
 
@@ -992,6 +1054,77 @@ mod tests {
             fs::write(dir.join(format!("{gump_id:08}.tga")), solid_tga(SYNTHETIC_GUMP_SIDE)).expect("write tga");
         }
         dir
+    }
+
+    /// Sharing with a gumps_cc, a paperdoll gump it has at the same logical size is left out, whatever its pixels, and
+    /// listed with the hash of gumps_cc's image; one it has at another size, or lacks, stays on the atlas pages. The one
+    /// table holds the shared single gumps too, by ascending id. Packed standalone, every gump stays.
+    #[test]
+    fn sharing_leaves_out_the_paperdoll_gumps_gumps_cc_has_at_the_same_size() {
+        use crate::gump_atlas::add_gump_atlas_files;
+        use crate::single_gumps::default_single_gump_compression;
+        const WIDTH: u16 = 3;
+        const HEIGHT: u16 = 2;
+        const SHARED_SINGLE: u32 = 1000;
+        const ENHANCED_SINGLE: u32 = 1001;
+        const SHARED_PAPERDOLL: u32 = 50_001;
+        const RESIZED_PAPERDOLL: u32 = 50_002;
+        const ENHANCED_PAPERDOLL: u32 = 50_003;
+        const KEY_BGRA: [u8; 4] = [KEY[2], KEY[1], KEY[0], u8::MAX];
+        /// The Classic paperdoll gumps' texel, unlike the Enhanced copies'.
+        const CLASSIC_PAPERDOLL_RGBA: [u8; 4] = [8, 16, 24, u8::MAX];
+        let dir = unique_temp_dir("udd-conv-ec-gumps-share-paperdoll");
+        fs::create_dir_all(&dir).expect("create gumpart dir");
+        for gump_id in [SHARED_SINGLE, ENHANCED_SINGLE] {
+            fs::write(dir.join(format!("{gump_id:08}.tga")), solid_tga(SYNTHETIC_GUMP_SIDE)).expect("write tga");
+        }
+        for gump_id in [SHARED_PAPERDOLL, RESIZED_PAPERDOLL, ENHANCED_PAPERDOLL] {
+            fs::write(dir.join(format!("{gump_id:08}.tga")), keyed_tga(WIDTH, HEIGHT, KEY_BGRA)).expect("write tga");
+        }
+
+        let classic_path = dir.join("gumps_cc.uddp");
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        let lossless = GumpPixelFormat::Rgba8888;
+        let mut writer = SingleGumpWriter::new(lossless, default_single_gump_compression(lossless));
+        let side = u32::from(SYNTHETIC_GUMP_SIDE);
+        let [blue, green, red, alpha] = OPAQUE_BGRA;
+        let source_rgba = [red, green, blue, alpha].repeat((side * side) as usize);
+        writer.push(&mut builder, SHARED_SINGLE, side, side, source_rgba).unwrap();
+        writer.finish(&mut builder).unwrap();
+        let classic_paperdoll = |gump_id, width: u16, height: u16| DecodedGump {
+            gump_id,
+            width,
+            height,
+            upscale_factor: 1,
+            rgba: CLASSIC_PAPERDOLL_RGBA.repeat(usize::from(width) * usize::from(height)),
+        };
+        let classic_atlas =
+            vec![classic_paperdoll(SHARED_PAPERDOLL, WIDTH, HEIGHT), classic_paperdoll(RESIZED_PAPERDOLL, HEIGHT, WIDTH)];
+        add_gump_atlas_files(&mut builder, classic_atlas, &GumpAtlasOptions::default()).unwrap();
+        fs::write(&classic_path, builder.build().unwrap()).expect("write gumps_cc");
+
+        let output = dir.join(GUMPS_EC_DEFAULT_OUTPUT);
+        let shared_options = EcGumpsOptions { share_with: Some(classic_path.clone()), ..EcGumpsOptions::default() };
+        let summary = convert_ec_gumps_to_uddp_from_sources(&[dir.clone()], &output, &shared_options).unwrap();
+        assert_eq!((summary.single_shared_classic_count, summary.paperdoll_shared_classic_count), (1, 1));
+        assert_eq!((summary.gump_count, summary.single_gump_count, summary.atlas_gump_count), (3, 1, 2));
+        let classic = GumpsPackage::load(&classic_path).unwrap();
+        let enhanced = GumpsPackage::load(&output).unwrap();
+        let listed = [SHARED_SINGLE, SHARED_PAPERDOLL].map(|gump_id| SharedClassicGump {
+            gump_id,
+            image_hash: gump_image_hash(&classic.read_gump_image(gump_id).unwrap()),
+        });
+        assert_eq!(enhanced.shared_classic_gumps().collect::<Vec<_>>(), listed);
+        assert_eq!(enhanced.available_gump_ids(), [ENHANCED_SINGLE, RESIZED_PAPERDOLL, ENHANCED_PAPERDOLL]);
+        for gump_id in [RESIZED_PAPERDOLL, ENHANCED_PAPERDOLL] {
+            assert!(enhanced.atlas_slot(gump_id).is_some(), "gump {gump_id}");
+        }
+
+        let summary = convert_ec_gumps_to_uddp_from_sources(&[dir.clone()], &output, &EcGumpsOptions::default()).unwrap();
+        assert_eq!((summary.single_shared_classic_count, summary.paperdoll_shared_classic_count), (0, 0));
+        assert_eq!((summary.single_gump_count, summary.atlas_gump_count), (2, 3));
+        assert_eq!(GumpsPackage::load(&output).unwrap().shared_classic_gump_count(), 0);
+        fs::remove_dir_all(&dir).expect("remove gumpart dir");
     }
 
     /// The payload the progress callback panics with to cancel the job.

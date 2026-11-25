@@ -17,8 +17,9 @@
 //! format byte.
 //!
 //! A `gumps_ec` packed with `--share-with` leaves out the single gumps that `gumps_cc` draws the same (the user,
-//! 2026-11-06) and lists each in the shared Classic gump table, with the [`gump_image_hash`] of the `gumps_cc` image it
-//! was checked against. A listed id reads as absent here: the caller draws it from the Classic source.
+//! 2026-11-06) and the paperdoll gumps `gumps_cc` has at the same size (the user, 2026-11-25), and lists each in the
+//! shared Classic gump table, with the [`gump_image_hash`] of the `gumps_cc` image it was checked against. A listed id
+//! reads as absent here: the caller draws it from the Classic source.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
@@ -47,8 +48,8 @@ const RGBA_BYTES: usize = 4;
 /// `u32 width, u32 height, u8 pixel format` before a single gump's pixels.
 pub const SINGLE_GUMP_HEADER_BYTES: usize = 2 * size_of::<u32>() + size_of::<u8>();
 
-/// The shared Classic gump table: the single gumps a `gumps_ec` leaves out because `gumps_cc` draws them the same. Only a
-/// `gumps_ec` packed with `--share-with` carries it.
+/// The shared Classic gump table: the gumps a `gumps_ec` leaves out for `gumps_cc` to draw, single gumps it draws the
+/// same and paperdoll gumps it has at the same size. Only a `gumps_ec` packed with `--share-with` carries it.
 pub const SHARED_CLASSIC_GUMP_TABLE_ID: u32 = 0xE000_0002;
 const SHARED_CLASSIC_GUMP_TABLE_MAGIC: [u8; 4] = *b"GSHC";
 /// 1: `u32 count`, then per gump `u32 gump id, u64 image hash`, sorted by id with no repeats.
@@ -72,7 +73,7 @@ pub fn gump_image_hash(image: &GumpImage) -> u64 {
     hasher.digest()
 }
 
-/// A gump a `gumps_ec` leaves out because `gumps_cc` draws it the same.
+/// A gump a `gumps_ec` leaves out for `gumps_cc` to draw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedClassicGump {
     pub gump_id: u32,
