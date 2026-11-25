@@ -1754,13 +1754,8 @@ pub fn sys_update_art_materials(
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
     let client_view_scale_changed = (current_client_view_scale - *last_client_view_scale).abs()
         > terrain::mesh_material::CLIENT_VIEW_SCALE_EPSILON;
-    let uniforms_changed = last_uniform_snapshot.is_none_or(|snapshot| {
-        snapshot.effects != current_uniform_snapshot.effects
-            || snapshot.lighting != current_uniform_snapshot.lighting
-            || snapshot.sun != current_uniform_snapshot.sun
-            || (snapshot.global_lighting - current_uniform_snapshot.global_lighting).abs()
-                > f32::EPSILON
-    });
+    let uniforms_changed = last_uniform_snapshot
+        .is_none_or(|snapshot| art_uniforms_differ(&snapshot, &current_uniform_snapshot));
     let land_page_bindings =
         land_page_binding_handles(shared_land_material.as_deref(), &land_materials);
 
@@ -1865,6 +1860,16 @@ pub fn sys_update_art_materials(
         *last_uniform_snapshot = Some(current_uniform_snapshot);
     }
     *last_client_view_scale = current_client_view_scale;
+}
+
+/// Whether the art materials' uniforms read anything that differs between `a` and `b`. The land lighting counts: its
+/// sun strength reaches the art (`update_art_material_uniforms`), for the flat water and the projected shadows' depth.
+fn art_uniforms_differ(a: &UniformSnapshot, b: &UniformSnapshot) -> bool {
+    a.effects != b.effects
+        || a.lighting != b.lighting
+        || a.land_lighting.diffuse_strength != b.land_lighting.diffuse_strength
+        || a.sun != b.sun
+        || (a.global_lighting - b.global_lighting).abs() > f32::EPSILON
 }
 
 fn update_art_material_uniforms(
@@ -2163,6 +2168,31 @@ mod tests {
         assert_eq!(shadow_pass_mode(&u), PASS_MODE_SHADOW);
         u.client_shadows = Some(true);
         assert_eq!(shadow_pass_mode(&u), PASS_MODE_CLIENT_SHADOW);
+    }
+
+    #[test]
+    fn a_new_sun_strength_reaches_the_art_materials() {
+        let u = UniformState {
+            effects: terrain::mesh_material::LandEffectsUniform::default(),
+            lighting: terrain::mesh_material::GlobalLightingUniforms::default(),
+            land_lighting: terrain::mesh_material::LandLightingUniforms::default(),
+            global_lighting: 1.0,
+            client_lighting: None,
+            client_shadows: None,
+            local_lights: None,
+            land_texture_variation: None,
+            light_cover: crate::render::lighting::light_cover::LightCover::ClassicUo,
+            player_floor_rule: None,
+            sun: terrain::mesh_material::SunAngles::default(),
+            dirty: false,
+            saved_snapshot: None,
+            active_preset: String::new(),
+        };
+        let before = u.snapshot();
+        assert!(!art_uniforms_differ(&before, &u.snapshot()));
+        let mut stronger_sun = u.snapshot();
+        stronger_sun.land_lighting.diffuse_strength += 0.5;
+        assert!(art_uniforms_differ(&before, &stronger_sun), "the projected shadows and flat water read the sun strength");
     }
 
     #[test]

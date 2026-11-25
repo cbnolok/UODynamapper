@@ -196,6 +196,8 @@ const RIM_POWER_RANGE: std::ops::RangeInclusive<f32> = 0.1..=8.0;
 const GLOOM_FADE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=12.0;
 /// The fog pass draws no fog while both fog densities are below this (`fog_pass.wesl`), cloud noise included.
 const FOG_DENSITY_MIN: f32 = 0.001;
+/// "Sun Strength" (`diffuse_strength`); the presets use 0.54 to 1.35.
+const SUN_STRENGTH_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
 
 /// The Time of Day buttons, which the World Scene window shows: each loads the active style's preset of its period.
 pub(crate) const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
@@ -634,7 +636,7 @@ pub fn shading_ui_system(
                 // Diffuse scales the sun light in every mode: Classic (vertex) multiplies its
                 // precomputed vertex Lambert by it.
                 let is_classic = u.effects.shading_mode == 0;
-                changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, 0.0..=2.0, tips::SUN_STRENGTH);
+                changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, SUN_STRENGTH_RANGE, tips::SUN_STRENGTH);
 
                 // Exposure lives in lighting UBO
                 changed |= slider_s(
@@ -1230,7 +1232,7 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     let per_pixel = gates.is_per_pixel_land;
     // Every shading mode scales its sun light by this, Classic's vertex Lambert included; the client per-vertex model
     // uses it only on flat water.
-    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0, tips::SUN_STRENGTH);
+    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, SUN_STRENGTH_RANGE, tips::SUN_STRENGTH);
     changed |= slider_s(ui, "Sun Azimuth", &mut u.sun.azimuth_degrees, SUN_AZIMUTH_RANGE_DEGREES, tips::SUN_AZIMUTH);
     changed |= slider_s(ui, "Sun Elevation", &mut u.sun.elevation_degrees, SUN_ELEVATION_RANGE_DEGREES, tips::SUN_ELEVATION);
     changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5, tips::TERRAIN_AMBIENT);

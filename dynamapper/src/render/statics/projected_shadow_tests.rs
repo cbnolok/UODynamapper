@@ -1,12 +1,11 @@
 //! art/projected_shadow.wesl, the sprite shadows cast under the sun: who casts, how far the sun's elevation leans them,
 //! and the footprint of a wall's two faces, found per ground point and read through the wall's card.
-use bevy::{asset::{uuid::Uuid, AssetId}, prelude::*,
-    shader::{Shader, ShaderCache, ShaderCacheError, ShaderCacheSource}};
-use wgpu::util::DeviceExt;
+use bevy::prelude::*;
 
 use super::static_batches::{CLIENT_SHADOW_FLAG_CASTS, CLIENT_SHADOW_FLAG_WALL};
 use super::static_placement::StaticDepthClass;
 use crate::render::terrain::mesh_material::SunAngles;
+use crate::util_lib::wesl_compute::run_wesl_compute;
 use crate::util_lib::wesl_source::{wesl_const, wesl_f32_const};
 
 const PROJECTED_SHADOW_WESL: &str = include_str!("../../../assets/shaders/world/art/projected_shadow.wesl");
@@ -47,6 +46,42 @@ fn the_reference_sun_is_the_default_sun() {
     let light = SunAngles::default().light_direction();
     let run = light.xz().length() / light.y;
     assert!((wesl_f32_const(PROJECTED_SHADOW_WESL, "PROJECTED_SHADOW_REFERENCE_SUN_RUN") - run).abs() < 1e-6);
+}
+
+/// The shadows' darkness follows the sun's share of flat ground's light: none without a sun, more with a stronger or
+/// higher sun, less with more ambient light, and all of it with no ambient light.
+#[test]
+#[ignore = "requires a Vulkan adapter; run explicitly for projected shadow changes"]
+fn gpu_the_sun_strength_darkens_the_shadows() {
+    let default_sun = SunAngles::default().light_direction();
+    let low_sun = SunAngles { azimuth_degrees: 315.0, elevation_degrees: 20.0 }.light_direction();
+    // UOD-Painterly's afternoon ambient light and Sun Strength, then the slider's ends and the cases above.
+    let (ambient, strength) = (0.25, 1.35);
+    let cases = [(default_sun, ambient, 0.0), (default_sun, ambient, strength), (default_sun, ambient, 2.0),
+        (low_sun, ambient, strength), (default_sun, 0.5, strength), (default_sun, 0.0, strength)];
+    let inputs: Vec<[f32; 4]> = cases.iter().flat_map(|(light, ambient, strength)|
+        [light.extend(0.0).to_array(), [*ambient, *strength, 0.0, 0.0]]).collect();
+    let actual = run_projected_shadow_compute(r#"
+import package::shaders::world::art::projected_shadow::projected_shadow_sun_share;
+@group(0) @binding(0) var<storage, read> cases: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> result: array<vec4<f32>>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) index: vec3<u32>) {
+    let light = cases[index.x * 2u];
+    let ambient_and_sun = cases[index.x * 2u + 1u];
+    result[index.x] = vec4<f32>(projected_shadow_sun_share(light.xyz, ambient_and_sun.x, ambient_and_sun.y), 0.0,
+        0.0, 0.0);
+}
+"#, &inputs, cases.len(), cases.len());
+    let share: Vec<f32> = actual.iter().map(|result| result[0]).collect();
+    for ((light, ambient, strength), share) in cases.iter().zip(&share) {
+        let sun = strength * light.normalize().y;
+        assert!((share - sun / (ambient + sun)).abs() < TOLERANCE, "{share}");
+    }
+    assert_eq!(share[0], 0.0, "no sun casts no shadow");
+    assert!(share[2] > share[1] && share[1] > share[3], "a stronger sun darkens, a lower one lightens: {share:?}");
+    assert!(share[4] < share[1], "more ambient light lightens: {share:?}");
+    assert!((share[5] - 1.0).abs() < TOLERANCE, "without ambient light the sun is all the light: {share:?}");
 }
 
 /// The Rust mirror of `projected_shadow_step`.
@@ -248,66 +283,10 @@ fn main(@builtin(global_invocation_id) index: vec3<u32>) {{
 /// art/projected_shadow.wesl, over `inputs` (binding 0) and reads `results` vec4s back (binding 1).
 fn run_projected_shadow_compute(source: &str, inputs: &[[f32; 4]], invocations: usize, results: usize)
     -> Vec<[f32; 4]> {
-    bevy::tasks::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor::default()).await.unwrap();
-        let mut shaders = ShaderCache::<String, ()>::new((), |_, source, _| {
-            let ShaderCacheSource::Wgsl(wgsl) = source else {
-                return Err(ShaderCacheError::CreateShaderModule("expected WGSL".into()));
-            };
-            Ok(wgsl)
-        });
-        let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
-        for (index, (source, path)) in [
-            (PROJECTED_SHADOW_WESL, "shaders/world/art/projected_shadow.wesl"),
-            (include_str!("../../../assets/shaders/world/art/art_bindings.wesl"), "shaders/world/art/art_bindings.wesl"),
-            (include_str!("../../../assets/shaders/world/common_bindings.wesl"), "shaders/world/common_bindings.wesl"),
-            (include_str!("../../../assets/shaders/world/uo_coords.wesl"), "shaders/world/uo_coords.wesl"),
-        ].into_iter().enumerate() {
-            shaders.set_shader(id(index as u128 + 1), Shader::from_wesl(source, path));
-        }
-        shaders.set_shader(id(0), Shader::from_wesl(source.to_owned(), "shaders/test/projected_shadow_compute.wesl"));
-        let wgsl = shaders.get(0, id(0), &[]).unwrap();
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("projected shadow compute"), source: wgpu::ShaderSource::Wgsl(wgsl.as_str().into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: None, layout: None, module: &module, entry_point: Some("main"),
-            compilation_options: Default::default(), cache: None,
-        });
-        let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None, contents: bytemuck::cast_slice(inputs), usage: wgpu::BufferUsages::STORAGE,
-        });
-        let bytes = (results * std::mem::size_of::<[f32; 4]>()) as u64;
-        let output = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None, size: bytes, mapped_at_creation: false,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        });
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None, size: bytes, mapped_at_creation: false,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None, layout: &pipeline.get_bind_group_layout(0), entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: input.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
-            ],
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(invocations as u32, 1, 1);
-        }
-        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
-        queue.submit([encoder.finish()]);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        readback.slice(..).map_async(wgpu::MapMode::Read, move |value| sender.send(value).unwrap());
-        device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(20)) }).unwrap();
-        receiver.recv().unwrap().unwrap();
-        let mapped = readback.slice(..).get_mapped_range().unwrap();
-        bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec()
-    })
+    run_wesl_compute(&[
+        (PROJECTED_SHADOW_WESL, "shaders/world/art/projected_shadow.wesl"),
+        (include_str!("../../../assets/shaders/world/art/art_bindings.wesl"), "shaders/world/art/art_bindings.wesl"),
+        (include_str!("../../../assets/shaders/world/common_bindings.wesl"), "shaders/world/common_bindings.wesl"),
+        (include_str!("../../../assets/shaders/world/uo_coords.wesl"), "shaders/world/uo_coords.wesl"),
+    ], source, inputs, invocations, results)
 }

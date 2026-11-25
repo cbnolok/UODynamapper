@@ -61,12 +61,24 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
   NoShadow item, no floor, Background static or EC item surface), so a roof's or a stair's tiles no longer shade the
   tiles beside them. A wall (the light scene's wall class) casts its two faces, the south and the east edge of its
   cell, as a parallelogram along the ground, with its doors and windows read through its art; trees and the other
-  casters keep the card laid on the ground in a soft ellipse. Sun Strength lights the land and leaves the shadows
-  alone. Source: user, 2026-11-25 (roof tiles shaded one another, walls cast round blobs, the sun settings did not
-  move the shadows). Code: `projected_shadow_casts`, `projected_shadow_step`, `wall_shadow_face_point`,
-  `wall_shadow_card_corner` (`sh/art/projected_shadow.wesl`), the `PASS_MODE_SHADOW` branches of `sh/art/main.wesl`.
-  Tests: `projected_shadow_tests.rs`. Known gap: a shadow lies at its caster's base z, so an upper storey's wall
-  casts a band in the air over the storey under it.
+  casters keep the card laid on the ground in a soft ellipse. A shadow is as dark as the sun's share of flat
+  ground's light, Sun Strength × the sun's height ÷ (ambient + that), times its Strength: a stronger or higher sun
+  darkens the shadows, more ambient light lightens them, as a real sun does. UOD-Painterly's Strengths are that
+  share's inverse at their own sun, so the presets' shadows are as dark as before. Source: user, 2026-11-25 (roof
+  tiles shaded one another, walls cast round blobs, the sun settings did not move the shadows; Sun Strength had no
+  visible effect). Code: `projected_shadow_casts`, `projected_shadow_step`, `projected_shadow_sun_share`,
+  `wall_shadow_face_point`, `wall_shadow_card_corner` (`sh/art/projected_shadow.wesl`), the `PASS_MODE_SHADOW`
+  branches of `sh/art/main.wesl`. Tests: `projected_shadow_tests.rs`,
+  `painterly_shadows_and_headroom_look_as_before_at_their_own_sun`. Known gap: a shadow lies at its caster's base z,
+  so an upper storey's wall casts a band in the air over the storey under it.
+- **Sun Strength lights the land in every style.** It is Classic's and UOD-Painterly's sun term, and in KR-like and
+  Enhanced it scales the clients' per-vertex grey, which is all sun light: 1, their presets', is the clients' light.
+  The per-pixel headroom ceiling, 1 − Headroom Reserve (Enhanced: 0.9), rises in proportion to a Sun Strength above
+  1, so the cap no longer swallows the slider (UOD-Painterly's day sun lit flat land to 1.75× the old fixed ceiling,
+  and the slider did nothing from about 0.65 up); UOD-Painterly's day reserves are re-expressed so that the ceiling
+  at its own sun stays 0.85. Source: user, 2026-11-25 (Sun Strength did not look effective). Code:
+  `land_headroom_ceiling` (`sh/land/shading.wesl`), the client per-vertex branch of `shade_land` (`sh/land/main.wesl`).
+  Tests: `painterly_shadows_and_headroom_look_as_before_at_their_own_sun`, `a_new_sun_strength_reaches_the_art_materials`.
 
 - Source: user decisions recorded in [`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md);
   KR client trace [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).

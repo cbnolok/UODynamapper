@@ -14,6 +14,18 @@ import package::shaders::world::land::land_bindings::{LandLightingUniforms, effe
 import package::shaders::world::land::lighting::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom};
 import package::shaders::world::land::noise::noise_2d;
 
+// The Enhanced per-pixel model's fixed headroom reserve (KR shading reads it from grade_params.y).
+const ENHANCED_HEADROOM_RESERVE: f32 = 0.10;
+// The sun strength the headroom ceiling is set at: the clients' sun. A stronger sun raises the ceiling in proportion.
+const LAND_HEADROOM_REFERENCE_SUN: f32 = 1.0;
+
+// The most light the headroom limit lets land take: 1 - reserve up to the reference sun strength, then in proportion
+// to the sun. A fixed ceiling swallowed Sun Strength: UOD-Painterly's day sun lit flat land to 1.75 times the ceiling,
+// so the slider changed nothing on it from about 0.65 to its end.
+fn land_headroom_ceiling(reserve: f32, diffuse_strength: f32) -> f32 {
+  return (1.0 - reserve) * max(diffuse_strength / LAND_HEADROOM_REFERENCE_SUN, 1.0);
+}
+
 // ============================================================================
 // Mode 0: Classic (Gouraud, vertex-lit)
 // ============================================================================
@@ -52,9 +64,8 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
   var energy_rgb = vec3<f32>(ambient_strength + hemi_luma) + diffuse_rgb;
 
   // Headroom limiting via runtime toggle only (prevents bleaching)
-  let headroom_reserve = 0.10;
   if (global_light.grade_params.w >= 0.5) {
-    energy_rgb = min(energy_rgb, vec3<f32>(1.0 - headroom_reserve));
+    energy_rgb = min(energy_rgb, vec3<f32>(land_headroom_ceiling(ENHANCED_HEADROOM_RESERVE, diffuse_strength)));
   }
 
   var color = base_albedo_in * energy_rgb;
@@ -185,7 +196,7 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
 
   var energy_rgb = vec3<f32>(ambient_strength + hemi_luma) + diffuse_rgb;
   if (runtime_headroom_on) {
-    energy_rgb = min(energy_rgb, vec3<f32>(1.0 - headroom_reserve));
+    energy_rgb = min(energy_rgb, vec3<f32>(land_headroom_ceiling(headroom_reserve, diffuse_strength)));
   }
 
   var color = base_albedo_in * energy_rgb;

@@ -36,6 +36,8 @@ const WALL_SHADOW_MIN_VIEW_ACROSS: f32 = 0.0001;
 const WALL_SHADOW_NO_CORNER: vec2<f32> = vec2<f32>(-1.0, -1.0);
 // From a cell's corner to its far (south and east) edges, where a wall's faces stand.
 const WALL_SHADOW_CELL_SIZE: f32 = 1.0;
+// The least light on flat ground the sun's share divides by: no sun and no ambient light.
+const PROJECTED_SHADOW_MIN_GROUND_LIGHT: f32 = 0.000001;
 
 // The EC item surfaces and camera quads (SpriteInstance flat_quad 2 and 3) cast no shadow.
 const PROJECTED_SHADOW_FIRST_EC_QUAD: u32 = 2u;
@@ -53,6 +55,15 @@ fn projected_shadow_casts(depth_class: u32, flat_quad: u32, client_shadow_flags:
     return (depth_class == DEPTH_CLASS_REGULAR || depth_class == DEPTH_CLASS_FOLIAGE)
         && flat_quad < PROJECTED_SHADOW_FIRST_EC_QUAD
         && (client_shadow_flags & PROJECTED_SHADOW_CLIENT_CASTS) != 0u;
+}
+
+// How dark a shadow is: the part of flat ground's light that the sun gives, the light its shadow takes away. The sun
+// lights flat ground by `sun_strength` (Sun Strength) times the height of the sun in the light direction, over the
+// ambient light (Terrain Ambient Light) every point takes. A stronger sun, or a higher one, darkens the shadows toward
+// the shadow's own strength; a weaker or lower one, or more ambient light, lightens them, and no sun casts none.
+fn projected_shadow_sun_share(light_direction: vec3<f32>, ambient_strength: f32, sun_strength: f32) -> f32 {
+    let sun = max(sun_strength, 0.0) * max(normalize(light_direction).y, 0.0);
+    return sun / max(max(ambient_strength, 0.0) + sun, PROJECTED_SHADOW_MIN_GROUND_LIGHT);
 }
 
 // The ground offset, in world units along x and z, of the shadow of a point one world unit above its base: away from

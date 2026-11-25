@@ -89,7 +89,7 @@ pub(super) const WATER_ANIMATION: &str =
 pub(super) const LAND_SHADING: &str =
     "How Enhanced and KR styles light land: smoothly per pixel (UOD-Painterly), or the clients' per-corner grey (KR-like, Enhanced). Classic always uses its own per-corner light.";
 pub(super) const SUN_STRENGTH: &str =
-    "How strongly the sun lights land that faces it: the main light and shade on terrain in Classic and UOD-Painterly. With Client per-vertex land shading (KR-like, Enhanced) it lights only water: land water, flat-water statics and water drawn from Enhanced textures.";
+    "How strongly the sun lights land that faces it, in every render style: the main light and shade on terrain in Classic and UOD-Painterly, and a scale on the clients' per-corner grey in KR-like and Enhanced, where 1 (their presets) is the clients' light. Above 1 it raises the headroom cap with it, and a stronger sun casts darker item shadows.";
 pub(super) const SUN_AZIMUTH: &str =
     "Compass bearing of the sun in degrees, clockwise from north (180 = south). Lights land and art and turns the sprite shadows.";
 pub(super) const SUN_ELEVATION: &str =
@@ -195,11 +195,11 @@ pub(super) const RIM_POWER: &str =
 pub(super) const GRADE_STRENGTH: &str =
     "How much of the colour grading is applied; 0 is the same as Color Grading off.";
 pub(super) const HEADROOM_RESERVE: &str =
-    "How far below white the KR light on land is capped, so sunlit ground does not bleach. KR shading with per-pixel land shading, by day, with Enable Headroom Limit on; greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced caps at a fixed 0.9.";
+    "How far below white the KR light on land is capped, so sunlit ground does not bleach; a Sun Strength above 1 raises the cap in proportion, so the sun still brightens the land. KR shading with per-pixel land shading, with Enable Headroom Limit on; greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced caps at a fixed 0.9 times a Sun Strength above 1.";
 pub(super) const FILL_CHROMA_TINT: &str =
     "How much the sky light's colour tints land in shade. Enhanced and KR per-pixel shading; very faint. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const HEADROOM_LIMIT: &str =
-    "Caps the light on land so sunlit ground keeps its colour instead of washing out. Enhanced and KR shading with per-pixel land shading, by day; turning it off brightens daylit land a lot. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
+    "Caps the light on land so sunlit ground keeps its colour instead of washing out; the cap rises with a Sun Strength above 1. Enhanced and KR shading with per-pixel land shading, by day; turning it off brightens daylit land a lot. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const VIBRANCE: &str =
     "Boosts dull colours more than vivid ones. Needs Color Grading on.";
 pub(super) const SATURATION: &str =
@@ -241,7 +241,7 @@ pub(super) const NORMAL_MAP_STRENGTH: &str =
 pub(super) const KR_TRANSITION_GRIME_STRENGTH: &str =
     "How strong the grime on land borders is. Needs KR Transition Grime on and the KR visual profile.";
 pub(super) const ART_PROJECTED_SHADOW_STRENGTH: &str =
-    "How dark the item shadows are. Needs Projected Shadows on.";
+    "How dark the item shadows can get. The sun's share of the ground's light sets how much of it shows: a stronger or higher sun (Sun Strength, Sun Elevation) darkens them, more Terrain Ambient Light lightens them. Needs Projected Shadows on.";
 pub(super) const ART_PROJECTED_SHADOW_LENGTH: &str =
     "How long the item shadows are under the default sun; a lower sun lengthens them. Needs Projected Shadows on.";
 pub(super) const ART_PROJECTED_SHADOW_SOFTNESS: &str =

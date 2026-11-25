@@ -38,6 +38,7 @@ import package::shaders::world::art::art_bindings::{
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
     client_shadow_logical_offset, CLIENT_SHADOW_TIE_LEVEL_OFFSET};
 import package::shaders::world::art::projected_shadow::{projected_shadow_casts, projected_shadow_step,
+    projected_shadow_sun_share,
     wall_shadow_ground_box, wall_shadow_face_point, wall_shadow_card_corner};
 import package::shaders::world::art::mobile_frames::{mobile_frames_blend, mobile_frames_tap,
     mobile_frames_client_filtered};
@@ -453,7 +454,10 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             let leaf_noise = noise_2d(in.world_pos.xz * 1.35 + uv_in_tile_for_shading * 15.0);
             family_breakup = mix(0.58, 1.10, smoothstep(0.22, 0.92, leaf_noise));
         }
-        let alpha = mask * silhouette * height_profile * depth_profile * family_breakup * clamp(effects.art_projected_shadow_strength, 0.0, 1.0) * in.color.a;
+        // The sun's share of the ground's light: Sun Strength and the sun's height darken the shadows, as a real sun.
+        let sun_share = projected_shadow_sun_share(scene.light_direction, global_light.ambient_strength,
+            global_light.land_diffuse_strength);
+        let alpha = mask * silhouette * height_profile * depth_profile * family_breakup * clamp(effects.art_projected_shadow_strength, 0.0, 1.0) * sun_share * in.color.a;
         if (alpha <= 0.001) {
             discard;
         }

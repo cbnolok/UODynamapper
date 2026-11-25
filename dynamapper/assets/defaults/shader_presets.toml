@@ -34,7 +34,9 @@ default_preset = "classic.morning"
 #
 # --- Intensities & Strengths ---
 # ambient_strength:  Base intensity of ambient light (0.0 to 1.0).
-# diffuse_strength:  Intensity of the main directional light (sun/moon).
+# diffuse_strength:  Intensity of the main directional light (sun/moon): Sun Strength. It lights the land in every
+#                    style (the clients' per-vertex grey times it in KR-like and Enhanced, 1 being the client), raises
+#                    the headroom ceiling above 1, and darkens the projected shadows with its share of the light.
 # specular_strength: Intensity of specular highlights on surfaces.
 # rim_strength:      Intensity of the rim light effect, which highlights edges.
 # fill_strength:     Intensity of the hemispheric fill light.
@@ -59,6 +61,8 @@ default_preset = "classic.morning"
 # exposure:          Overall scene exposure value. In the KR profile curve it is the only pre-scale: the former
 #                    separate KR gain (kr_tonemap_params.x, 0.9) is folded into the UOD-Painterly exposures.
 # grade_params:      Vector of grading parameters: [Strength, Headroom_Reserve, Hemi_Chroma_Tint, Headroom_On(1/0)].
+#                    With Headroom_On, the light on land stops at 1 - Headroom_Reserve times the sun strength, at
+#                    least once: UOD-Painterly's day reserves give the ceiling 0.85 at their sun strength.
 # grade_extra:       Vector of additional grading parameters: [Vibrance, Saturation, Contrast, Split_Strength].
 # grade_chroma_knee: The chroma knee, after Saturation, in linear light: a colour's relative chroma
 #                    c = (max - min) / max of its RGB channels above this knee becomes
@@ -1379,7 +1383,7 @@ kr_land_material_contrast_strength = 0.58
 kr_art_temperature_strength = 0.75
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.22
+art_projected_shadow_strength = 0.2674
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
 art_mottle_strength = 0.0
@@ -1396,7 +1400,7 @@ exposure = 0.927
 ambient_strength = 0.24
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
-grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_params = [0.9, 0.3359375, 0.35, 1.0]
 grade_extra = [0.21, 1.12, 1.10, 0.75]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
@@ -1465,7 +1469,7 @@ kr_land_material_contrast_strength = 0.58
 kr_art_temperature_strength = 0.75
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.24
+art_projected_shadow_strength = 0.2911
 art_projected_shadow_length = 0.44
 art_projected_shadow_softness = 0.62
 art_mottle_strength = 0.0
@@ -1482,7 +1486,7 @@ exposure = 0.954
 ambient_strength = 0.25
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
-grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_params = [1.0, 0.37037, 0.4, 1.0]
 grade_extra = [0.25, 1.14, 1.12, 0.80]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
@@ -1551,7 +1555,7 @@ kr_land_material_contrast_strength = 0.48
 kr_art_temperature_strength = 0.70
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.18
+art_projected_shadow_strength = 0.22
 art_projected_shadow_length = 0.36
 art_projected_shadow_softness = 0.68
 art_mottle_strength = 0.0
@@ -1637,7 +1641,7 @@ kr_land_material_contrast_strength = 0.42
 kr_art_temperature_strength = 0.65
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.16
+art_projected_shadow_strength = 0.1838
 art_projected_shadow_length = 0.28
 art_projected_shadow_softness = 0.74
 art_mottle_strength = 0.0

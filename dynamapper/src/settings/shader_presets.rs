@@ -1846,6 +1846,44 @@ mod tests {
         }
     }
 
+    /// UOD-Painterly's shadow strengths and day headroom reserves before Sun Strength reached them (2026-11-25), slot by
+    /// slot (morning, afternoon, night, cave): the shadows' alpha, then a fixed ceiling of 1 - reserve.
+    const PAINTERLY_FORMER_SHADOW_ALPHAS: [f32; 4] = [0.22, 0.24, 0.18, 0.16];
+    const PAINTERLY_FORMER_HEADROOM_RESERVES: [f32; 4] = [0.15, 0.15, 0.18, 0.2];
+    /// The presets' values are written to four significant digits.
+    const PRESET_VALUE_TOLERANCE: f32 = 5e-4;
+
+    /// The shadows darken with the sun's share of the ground's light (art/projected_shadow.wesl), and the headroom
+    /// ceiling rises with a sun above 1 (land/shading.wesl): UOD-Painterly's strengths and reserves are re-expressed so
+    /// that at their own sun the shadows and the land look as they did.
+    #[test]
+    fn painterly_shadows_and_headroom_look_as_before_at_their_own_sun() {
+        let projected_shadow = include_str!("../../assets/shaders/world/art/projected_shadow.wesl");
+        let land_shading = include_str!("../../assets/shaders/world/land/shading.wesl");
+        let reference_sun =
+            crate::util_lib::wesl_source::wesl_f32_const(land_shading, "LAND_HEADROOM_REFERENCE_SUN");
+        assert!(crate::util_lib::wesl_source::wesl_fn_body(projected_shadow, "projected_shadow_sun_share")
+            .contains("sun / max(max(ambient_strength, 0.0) + sun,"), "the share this test mirrors");
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            let group = &presets.painterly;
+            let slots = [&group.morning, &group.afternoon, &group.night, &group.cave];
+            for ((slot, former_alpha), former_reserve) in
+                slots.into_iter().zip(PAINTERLY_FORMER_SHADOW_ALPHAS).zip(PAINTERLY_FORMER_HEADROOM_RESERVES)
+            {
+                let sun = slot.land_lighting.diffuse_strength * slot.sun.light_direction().normalize().y;
+                let share = sun / (slot.lighting.ambient_strength + sun);
+                let alpha = slot.effects.art_projected_shadow_strength * share;
+                assert!((alpha - former_alpha).abs() < PRESET_VALUE_TOLERANCE, "{alpha}, formerly {former_alpha}");
+
+                let reserve = slot.lighting.grade_params.y;
+                let ceiling = (1.0 - reserve) * (slot.land_lighting.diffuse_strength / reference_sun).max(1.0);
+                assert!((ceiling - (1.0 - former_reserve)).abs() < PRESET_VALUE_TOLERANCE,
+                    "{ceiling}, formerly {}", 1.0 - former_reserve);
+            }
+        }
+    }
+
     /// Enhanced's per-pixel land light is a plain Lambert (shade_mode1_enhanced_fragment): only KR shading reads the
     /// wrap, N.L * (1 - wrap) + wrap, so Enhanced keeps it at its neutral value, as it does the rim colour and the
     /// headroom reserve, which only KR shading reads too.

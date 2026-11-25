@@ -2,6 +2,8 @@ pub mod math;
 pub mod image;
 #[cfg(test)]
 pub mod wesl_source;
+#[cfg(test)]
+pub mod wesl_compute;
 
 #[macro_use]
 pub mod tracked_plugin;

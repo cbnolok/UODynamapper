@@ -766,7 +766,8 @@ fn shade_land(in: LandVertexOutput, tile: TileUniform, ordered_coverage: bool, w
   } else if (land_light.terrain_shading_model == TERRAIN_SHADING_CLIENT_PER_VERTEX) {
     // The KR and Enhanced clients' terrain: the material times the per-vertex
     // half-Lambert grey, with no ambient, fill, rim, specular or relief terms.
-    hdr_rgb = base_albedo * client_shade * bump_light;
+    // The grey is all sun light, so Sun Strength scales it; at 1, the presets', it is the client's.
+    hdr_rgb = base_albedo * client_shade * diffuse_strength * bump_light;
   } else if (shading_mode == 1u) {
     hdr_rgb = shade_mode1_enhanced_fragment(
       base_albedo, in.world_position.xyz, Nw, V, L,
