@@ -10,6 +10,17 @@ use udd_conv::page_compression::{BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, 
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
 
+/// Which client folder the Classic gumps job reads. The Enhanced client ships a copy of the Classic gumps
+/// (`gumpartLegacyMUL.uop`); it is read only when chosen, never as a fallback for a Classic folder without gumps.
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ClassicGumpsClient {
+    /// The Classic client folder (`pack-gumps --ccdir`).
+    #[default]
+    Classic,
+    /// The Enhanced client folder's copy of the Classic gumps (`pack-gumps --ecdir`).
+    EnhancedCopy,
+}
+
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextureOptimization {
     None,
@@ -174,6 +185,8 @@ pub struct AppSettings {
     pub upscale_gumps_cc_single: UpscaleFilter,
     /// The Classic gump files read first (`pack-gumps --uop` for UOP); the other format is the fallback.
     pub gumps_cc_source: SourceFormatPreference,
+    /// The client folder the Classic gumps come from: the Classic one unless the Enhanced copy is chosen.
+    pub gumps_cc_client: ClassicGumpsClient,
     /// The Enhanced single gumps lossy (`pack-ec-gumps --bc7`): BC7, the ones in the Classic colour space BC1.
     pub gumps_ec_bc7: bool,
     /// The Zstd level of the Enhanced single gumps and atlas pages (`pack-ec-gumps --zstd=LEVEL`); `None` keeps the
@@ -277,6 +290,7 @@ impl Default for AppSettings {
             upscale_gumps_cc_paperdoll: UpscaleFilter::None,
             upscale_gumps_cc_single: UpscaleFilter::None,
             gumps_cc_source: SourceFormatPreference::Mul,
+            gumps_cc_client: ClassicGumpsClient::Classic,
             gumps_ec_bc7: true,
             zstd_gumps_ec: None,
             upscale_gumps_ec_paperdoll: UpscaleFilter::None,

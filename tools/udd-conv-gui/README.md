@@ -10,6 +10,8 @@ using the command line.
 On the first screen, choose the client installation folders and an output folder. Select the Enhanced Client folder that contains `Texture.uop`.
 
 - **Convert Classic textures** builds Classic art, land, mobile animations, gumps, and world light masks.
+  Its Classic gumps and mobile animations come from the Classic Client folder only. On the Assets tab, the Classic
+  Gumps card can take the gumps from the Enhanced client's copy (`gumpartLegacyMUL.uop`) instead.
 - **Convert Enhanced textures** builds Enhanced art, land, mobile animations, gumps, effects, and paperdolls. For auxiliary textures, configure both clients and run **Create metadata** first. The converter reads `tilemeta.uddp` from the output folder.
 - **Create metadata** builds hues and, with a Classic Client folder, tile metadata, maps, and statics. Add an Enhanced Client folder to include Enhanced data in the tile metadata and palettes.
 - **Create everything** requires both clients and builds the full set in dependency order.

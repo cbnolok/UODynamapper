@@ -4,7 +4,7 @@ use crate::logic::tasks::{
     paperdoll_ec_sources, single_gump_pixel_format, EcGumpsShare, HuesSource, PAPERDOLL_EC_SOURCE_NAMES,
 };
 use crate::models::{
-    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ComputeDevice, GumpsEcSharing, HueRamp,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, ComputeDevice, GumpsEcSharing, HueRamp,
     StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
@@ -526,6 +526,22 @@ impl UddConvApp {
             ui.add_enabled_ui(!is_busy, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    draw_control_cell(ui, "Client", GUMP_SOURCE_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            for (client, label) in [
+                                (ClassicGumpsClient::Classic, "Classic"),
+                                (ClassicGumpsClient::EnhancedCopy, "Enhanced copy"),
+                            ] {
+                                if ui
+                                    .add(egui::Button::selectable(settings.gumps_cc_client == client, label))
+                                    .on_hover_text(GUMPS_CC_CLIENT_TOOLTIP)
+                                    .clicked()
+                                {
+                                    settings.gumps_cc_client = client;
+                                }
+                            }
+                        });
+                    });
                     draw_control_cell(ui, "Read First", GUMP_SOURCE_CELL_WIDTH, |ui| {
                         ui.horizontal(|ui| {
                             for preference in [SourceFormatPreference::Mul, SourceFormatPreference::Uop] {
@@ -733,6 +749,9 @@ const SOURCE_NOTE_COLOUR: egui::Color32 = egui::Color32::from_rgb(100, 200, 255)
 const GUMPS_COMBINED_TOOLTIP: &str = "Packs gumps_cc.uddp, then gumps_ec.uddp, which shares with the new gumps_cc when \
 Share with gumps_cc is chosen.";
 const GUMPS_RGBA_TOOLTIP: &str = "Lossless RGBA8888: the default.";
+const GUMPS_CC_CLIENT_TOOLTIP: &str = "The client folder the Classic gumps come from: the Classic client (the \
+default), or the copy of the Classic gumps the Enhanced client ships (gumpartLegacyMUL.uop). Only the chosen folder is \
+read; Quick Convert always uses the Classic client.";
 const GUMPS_CC_SOURCE_TOOLTIP: &str = "The Classic gump files read first: gumpart.mul/gumpidx.mul (MUL) or \
 gumpartLegacyMUL.uop (UOP, pack-gumps --uop). The other one is the fallback. verdata.mul patches the MUL files only.";
 const GUMPS_CC_BC1_TOOLTIP: &str = "Every single (non-paperdoll) Classic gump as BC1 (pack-gumps --bc1): lossy, with \
@@ -756,10 +775,10 @@ Interface.uop: a folder holding data/interface/default/textures/gumpart, or a fo
 const GUMPS_EC_MAX_ID_TOOLTIP: &str = "The highest gump id read from Interface.uop (pack-ec-gumps --max-id).";
 const GUMPS_EC_MAX_ID_REFUSAL: &str = "An extracted gumpart folder is read whole; only Interface.uop is read by id.";
 const GUMPS_EC_SHARE_TOOLTIP: &str = "Share with gumps_cc: leave out each single gump the output folder's gumps_cc.uddp \
-draws the same (the Classic gumps Interface.uop repeats) and list it for Dynamapper to draw from the Classic source \
-(pack-ec-gumps --share-with). The package then needs that gumps_cc.uddp, or the Classic client files, to show those \
-gumps. With upscaling, the Classic and Enhanced single gump passes must match, or no gump draws the same and nothing is \
-shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
+draws the same (the Classic gumps Interface.uop repeats), and each paperdoll equipment gump it has at the same size, and \
+list it for Dynamapper to draw from the Classic source (pack-ec-gumps --share-with). The package then needs that \
+gumps_cc.uddp, or the Classic client files, to show those gumps. With upscaling, the Classic and Enhanced single gump \
+passes must match, or no single gump draws the same and none is shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
 
 /// The width of an asset card's progress bar.
 const CARD_PROGRESS_BAR_WIDTH: f32 = 200.0;
@@ -947,7 +966,10 @@ impl EcGumpSource {
 fn gumps_cc_source_label(app: &UddConvApp) -> String {
     let sources = cc_gumps_source_dirs(&app.settings);
     if sources.is_empty() {
-        return "Source: select a Classic or Enhanced source directory".to_string();
+        return match app.settings.gumps_cc_client {
+            ClassicGumpsClient::Classic => "Source: select a Classic source directory".to_string(),
+            ClassicGumpsClient::EnhancedCopy => "Source: select an Enhanced source directory".to_string(),
+        };
     }
     match resolve_classic_gump_source(&sources, app.settings.gumps_cc_source) {
         Ok(source) => format!("Source ({}): {}", source.format.label(), source.primary_path.display()),

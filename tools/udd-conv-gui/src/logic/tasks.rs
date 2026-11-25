@@ -87,8 +87,8 @@ use udd_conv::animation::mobile_strides::{
     measure_package_strides, MeasureOptions, StrideJobProgress, StrideProgress,
 };
 use crate::models::{
-    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, LogLevel, LogMessage,
-    StrideMeasurement, TextureOptimization,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, GumpsEcSharing, LogLevel,
+    LogMessage, StrideMeasurement, TextureOptimization,
 };
 
 struct ConvertingFlagReset {
@@ -406,9 +406,15 @@ fn gump_atlas_compression(zstd_level: Option<i32>) -> CompressionFlag {
     CompressionFlag::ZstdNoDictLevel(zstd_level.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
 }
 
-/// The folders the Classic gumps job reads, as `pack-gumps --ccdir --ecdir` does: the Classic one first.
+/// The folder the Classic gumps job reads: the Classic client's, or the Enhanced client's copy of the Classic gumps
+/// when that is chosen. Never both, so a Classic folder without gumps is reported missing rather than filled from the
+/// Enhanced client.
 pub(crate) fn cc_gumps_source_dirs(settings: &AppSettings) -> Vec<PathBuf> {
-    gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref())
+    let dir = match settings.gumps_cc_client {
+        ClassicGumpsClient::Classic => settings.cc_dir.as_ref(),
+        ClassicGumpsClient::EnhancedCopy => settings.ec_dir.as_ref(),
+    };
+    gather_single_source_dir(dir)
 }
 
 /// The folder the Enhanced gumps job reads, as `pack-ec-gumps --ecdir` does: the extracted gumpart folder when one is
@@ -561,14 +567,15 @@ fn describe_gumps_ec(settings: &AppSettings, output: &Path, summary: &EcGumpsBui
         ),
     };
     format!(
-        "Wrote {} Enhanced gumps to {} ({} single in {}, {} with soft alpha; {} shared with gumps_cc; {} atlas; {} \
-         skipped)",
+        "Wrote {} Enhanced gumps to {} ({} single in {}, {} with soft alpha; {} single and {} paperdoll shared with \
+         gumps_cc; {} atlas; {} skipped)",
         summary.gump_count,
         output.display(),
         summary.single_gump_count,
         single_formats,
         summary.single_soft_alpha_count,
         summary.single_shared_classic_count,
+        summary.paperdoll_shared_classic_count,
         summary.atlas_gump_count,
         summary.skipped_count
     )
@@ -1942,12 +1949,25 @@ mod tests {
     }
 
     #[test]
+    fn classic_gumps_read_one_client_folder_the_classic_one_by_default() {
+        let mut settings = AppSettings::default();
+        settings.cc_dir = Some(PathBuf::from("/uo/classic"));
+        settings.ec_dir = Some(PathBuf::from("/uo/enhanced"));
+        assert_eq!(cc_gumps_source_dirs(&settings), vec![PathBuf::from("/uo/classic")]);
+
+        settings.cc_dir = None;
+        assert!(cc_gumps_source_dirs(&settings).is_empty());
+
+        settings.gumps_cc_client = ClassicGumpsClient::EnhancedCopy;
+        assert_eq!(cc_gumps_source_dirs(&settings), vec![PathBuf::from("/uo/enhanced")]);
+    }
+
+    #[test]
     fn enhanced_gumps_read_the_gumpart_folder_over_the_enhanced_client() {
         let mut settings = AppSettings::default();
         settings.cc_dir = Some(PathBuf::from("/uo/classic"));
         settings.ec_dir = Some(PathBuf::from("/uo/enhanced"));
 
-        assert_eq!(cc_gumps_source_dirs(&settings), vec![PathBuf::from("/uo/classic"), PathBuf::from("/uo/enhanced")]);
         assert_eq!(ec_gumps_source_dirs(&settings), vec![PathBuf::from("/uo/enhanced")]);
 
         settings.gumps_ec_gumpart_dir = Some(PathBuf::from("/extracted/gumpart"));

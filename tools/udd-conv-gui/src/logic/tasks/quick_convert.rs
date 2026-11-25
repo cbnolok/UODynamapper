@@ -264,9 +264,12 @@ mod tests {
             input_uddp_dir: PathBuf::from("separate"),
             bc_encode_device: ComputeDevice::Cpu,
             bc7_rdo_device: ComputeDevice::Gpu,
+            gumps_cc_client: ClassicGumpsClient::EnhancedCopy,
             ..AppSettings::default()
         };
         let quick = quick_settings(&manual, QuickConvertMode::Everything);
+        // Quick Convert reads the Classic gumps from the Classic client only, whatever the manual job chose.
+        assert_eq!(quick.gumps_cc_client, ClassicGumpsClient::Classic);
         assert_eq!(quick.opt_tex_art_cc, TextureOptimization::Bc7Zstd);
         assert_eq!(quick.opt_tex_land_cc, TextureOptimization::None);
         assert_eq!(quick.opt_tex_land_ec, TextureOptimization::Bc7Zstd);

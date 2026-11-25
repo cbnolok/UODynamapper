@@ -46,6 +46,7 @@ gumps_cc_bc1 = true
 upscale_gumps_cc_paperdoll = "None"
 upscale_gumps_cc_single = "None"
 gumps_cc_source = "Mul"
+gumps_cc_client = "Classic"
 gumps_ec_bc7 = true
 upscale_gumps_ec_paperdoll = "None"
 upscale_gumps_ec_single = "None"
