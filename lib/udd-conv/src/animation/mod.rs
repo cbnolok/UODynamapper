@@ -9,4 +9,5 @@ pub mod mobile_anim_ec;
 pub mod mobile_strides;
 pub mod paperdoll_ec;
 pub mod paperdoll_ec_dress;
+pub mod stride_cache;
 pub mod stride_sources;

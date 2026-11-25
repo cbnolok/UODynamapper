@@ -193,6 +193,9 @@ pub struct MobileAnimEcAtlasOptions {
     /// The MobileFrameFilters.kdl to read; when unset, the copy shipped with the tools
     /// ([`crate::conversion_tables::MOBILE_FRAME_FILTERS_KDL`]).
     pub frame_filters_path: Option<PathBuf>,
+    /// The stride cache (MobileStrides.tsv) to fill the clips from; when unset, the copy shipped with the tools
+    /// ([`crate::conversion_tables::MOBILE_STRIDES_TSV`]).
+    pub stride_cache_path: Option<PathBuf>,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -210,6 +213,7 @@ impl Default for MobileAnimEcAtlasOptions {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         }
     }
 }
@@ -419,6 +423,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<MobileAnimEcBuildSummary> {
     validate_options(options)?;
+    let stride_cache = super::stride_cache::load_packer_stride_cache(options.stride_cache_path.as_deref())?;
     let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
     let payload_progress = |progress| payload_progress_reporter.report(progress);
     let total_timer = Instant::now();
@@ -552,7 +557,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     let package_timer = Instant::now();
     finish_streaming_package_with_progress(package, &mut package_progress)?;
     super::mobile_strides::keep_repacked_strides(out_file, &client_dir,
-        |path| udd_assets::MobileAnimEcPackage::load(path), &previous_strides)?;
+        |path| udd_assets::MobileAnimEcPackage::load(path), &previous_strides, &stride_cache)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "EC mobile animation package build and write completed in {:.3}s",
@@ -3754,6 +3759,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -3782,6 +3788,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 5, 5)], &options).unwrap();
@@ -3815,6 +3822,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![sparse_frame(42, 0)], &options).unwrap();
@@ -3844,6 +3852,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
@@ -4245,6 +4254,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
         let mut frames_by_body = sample_sequence_frames();
         frames_by_body.insert(NO_SEQUENCE_BODY, vec![source(0, 0, 1)]);
@@ -4372,6 +4382,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
         let (_, placements) = pack_frames_into_pages(source_frames, &options).unwrap();
         let layout = build_animation_layout(
@@ -4515,6 +4526,7 @@ mod tests {
             metadata_path: None,
             allow_missing_metadata: false,
             frame_filters_path: None,
+            stride_cache_path: None,
         };
         let (pages, placements) = pack_frames_into_pages(vec![half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
         let page = &pages[0];

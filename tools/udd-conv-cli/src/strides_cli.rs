@@ -1,6 +1,7 @@
 //! `udd-cli tool strides`: the mobiles' measured strides in `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp`
 //! (`udd_assets::animation::mobile_strides`): measured (`udd_conv::animation::mobile_strides`), as a text table in
-//! and out, which of them are stale, and the stride clip sources a repack carries them over by.
+//! and out, which of them are stale, the stride clip sources a repack carries them over by, and the stride cache the
+//! packers fill new packages from (`udd_conv::animation::stride_cache`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -9,16 +10,17 @@ use std::time::Instant;
 
 use clap::{Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
-use log::info;
+use log::{info, warn};
 use udd_assets::animation::mobile_strides::{
-    format_stride_table, load_mobile_anim_clips, parse_stride_table, plan_strides, stride_clip_hashes,
-    stride_table_fields, write_package_stride_entries, write_package_strides, MobileStrideRecord, StrideSource,
-    STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    format_stride_table, load_mobile_anim_clips, parse_stride_table, plan_strides, read_package_stride_sources,
+    stride_clip_hashes, stride_table_fields, write_package_stride_entries, write_package_strides,
+    MobileStrideRecord, StrideSource, StrideSourceRecord, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
 use udd_conv::animation::mobile_strides::{
     hash_threads, inspect_side_clips, measure_package_strides, side_tiles_of_pairs, ClipInspection, MeasureOptions,
     StrideMethod, StrideProgress,
 };
+use udd_conv::animation::stride_cache::StrideCache;
 use udd_conv::animation::stride_sources::stride_sources;
 
 /// Which clips `strides measure` measures.
@@ -146,6 +148,29 @@ pub enum StridesCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Write the stride cache the packers fill new packages from (MobileStrides.tsv of the conversion tables): each
+    /// stride the packages hold that was measured on their frames, keyed by package kind, body, action and the hash
+    /// of the client frames the clip was made from, at full precision. Measure the packages first (`measure full`).
+    /// A clip's client frames come from its client folder when given, else from the stride clip sources the package
+    /// records. Strides of several packages and tables (several client versions) merge; the same client frames with
+    /// other values are an error.
+    CacheExport {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// The Classic client folder the Classic packages were packed from.
+        #[arg(long)]
+        ccdir: Option<PathBuf>,
+        /// The Enhanced client folder the Enhanced packages were packed from.
+        #[arg(long)]
+        ecdir: Option<PathBuf>,
+        /// A stride cache to merge in (repeatable): the shipped table, or the export of another client version's
+        /// packages.
+        #[arg(long = "merge")]
+        merges: Vec<PathBuf>,
+        /// By default the standard output.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 pub fn run(command: StridesCommand) -> eyre::Result<()> {
@@ -163,6 +188,9 @@ pub fn run(command: StridesCommand) -> eyre::Result<()> {
         StridesCommand::Status { file, list } => status(&file, list),
         StridesCommand::Sources { files, ccdir, ecdir, output } => {
             sources(&files, ccdir.as_deref(), ecdir.as_deref(), output.as_deref())
+        }
+        StridesCommand::CacheExport { files, ccdir, ecdir, merges, output } => {
+            cache_export(&files, ccdir.as_deref(), ecdir.as_deref(), &merges, output.as_deref())
         }
     }
 }
@@ -421,6 +449,60 @@ fn status(file: &Path, list: bool) -> eyre::Result<()> {
         for (body, action, hash) in &plan.to_measure {
             println!("{body}\t{action}\t{hash:016x}");
         }
+    }
+    Ok(())
+}
+
+/// The client folder of `source` among `ccdir` and `ecdir`, with the option naming it.
+fn client_dir_of<'a>(source: StrideSource, ccdir: Option<&'a Path>, ecdir: Option<&'a Path>)
+    -> (Option<&'a Path>, &'static str) {
+    match source {
+        StrideSource::Classic => (ccdir, "--ccdir"),
+        StrideSource::Enhanced => (ecdir, "--ecdir"),
+    }
+}
+
+fn cache_export(files: &[PathBuf], ccdir: Option<&Path>, ecdir: Option<&Path>, merges: &[PathBuf],
+    output: Option<&Path>) -> eyre::Result<()> {
+    let mut cache = StrideCache::default();
+    for file in files {
+        let started = Instant::now();
+        let package = load_mobile_anim_clips(file)?;
+        let source = package.stride_source();
+        let (client_dir, argument) = client_dir_of(source, ccdir, ecdir);
+        let sources: Vec<StrideSourceRecord> = match client_dir {
+            Some(client_dir) => stride_sources(&*package, client_dir)
+                .wrap_err_with(|| format!("the stride sources of {}", file.display()))?,
+            None => read_package_stride_sources(file)?,
+        };
+        eyre::ensure!(!sources.is_empty(), "{} records no stride clip sources: name its client folder with \
+            {argument}", file.display());
+        let records = package.stride_records();
+        let before = cache.len();
+        let added = cache.add_package(source, records, &sources)
+            .wrap_err_with(|| format!("add the strides of {}", file.display()))?;
+        let measured: BTreeSet<(u32, u16)> = records.iter().map(|record| (record.body_id, record.action_id)).collect();
+        let unmeasured = sources.iter().filter(|clip| !measured.contains(&(clip.body_id, clip.action_id))).count();
+        info!("{}: {added} of {} stride clips with a stride measured on their frames, {} new to the cache; {} \
+            strides of other frames left out, {unmeasured} clips never measured; in {:.1} s.", file.display(),
+            sources.len(), cache.len() - before, records.len() - added, started.elapsed().as_secs_f32());
+        if unmeasured != 0 {
+            warn!("{}: {unmeasured} clips have no stride record and stay to measure on every pack: measure the \
+                package (`udd-cli tool strides measure changed`) before exporting it.", file.display());
+        }
+    }
+    for table in merges {
+        let before = cache.len();
+        cache.merge(StrideCache::load(table)?).wrap_err_with(|| format!("merge {}", table.display()))?;
+        info!("{}: {} strides new to the cache.", table.display(), cache.len() - before);
+    }
+    let text = cache.format();
+    match output {
+        Some(output) => {
+            std::fs::write(output, text).wrap_err_with(|| format!("write {}", output.display()))?;
+            info!("Wrote the {} cached strides to {}.", cache.len(), output.display());
+        }
+        None => print!("{text}"),
     }
     Ok(())
 }

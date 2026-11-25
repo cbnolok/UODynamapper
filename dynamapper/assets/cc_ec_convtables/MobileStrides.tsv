@@ -1,0 +1,10 @@
+# The mobiles' measured walk and run strides, by the client frames they were measured on. The packers
+# (udd-cli pack-mobile-anims and pack-ec-mobile-anims, the converter GUI) give a new package's clip the stride of
+# its row here when the clip's client frames hash the same, so an unmodified client needs no measuring.
+# Generated, do not edit: `udd-cli tool strides cache-export PACKAGE... [--ccdir DIR] [--ecdir DIR] [--merge TABLE]`
+# over packages measured with `udd-cli tool strides measure full`, merging the tables of several client versions.
+# Columns, tab-separated: source, the package (cc Classic, ec Enhanced); body, the server body; action; south,
+# south-west and west, the stride measured on that facing, and stride, their median, which paces the clip; all in
+# side tiles a cycle at full precision, `-` where none measured; source-hash, the XXH64 of the client frames the
+# clip was made from (metadata/stride_sources.bin, docs/dev_wiki/UDDP_FORMATS.md 3.1), 16 hex digits.
+source	body	action	south	south-west	west	stride	source-hash

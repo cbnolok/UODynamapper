@@ -265,6 +265,10 @@ fn resolve_ec_mobile_animations_kdl(exact: Option<PathBuf>, tables: Option<PathB
     bundled_files::resolve(given.as_deref(), EC_MOBILE_ANIMATIONS_KDL)
 }
 
+const STRIDE_CACHE_HELP: &str = "MobileStrides.tsv to fill the clips' strides from where no stride is kept from an \
+earlier package (--output, --strides-from): those measured before on the same client frames. Default: the copy \
+shipped with the tools.";
+
 const FRAME_FILTERS_HELP: &str = "MobileFrameFilters.kdl to read: the cleanup filter each body's frames get. Default: \
 the copy shipped with the tools.";
 
@@ -1061,6 +1065,8 @@ enum Commands {
         frame_filters_kdl: Option<PathBuf>,
         #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one, or are made from the same client frames (by the stride sources it records). The package replaced at --output is looked at in any case.")]
         strides_from: Option<PathBuf>,
+        #[arg(long = "stride-cache", help = STRIDE_CACHE_HELP)]
+        stride_cache: Option<PathBuf>,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
@@ -1099,6 +1105,8 @@ enum Commands {
         upscale_profile: Option<PathBuf>,
         #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one, or are made from the same client frames (by the stride sources it records). The package replaced at --output is looked at in any case.")]
         strides_from: Option<PathBuf>,
+        #[arg(long = "stride-cache", help = STRIDE_CACHE_HELP)]
+        stride_cache: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
     /// art and land pages are lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too. Each holds its Kingdom
@@ -1740,6 +1748,7 @@ where
             upscale_profile,
             frame_filters_kdl,
             strides_from,
+            stride_cache,
         } => {
             // The Classic package holds only the Classic client's animations, never the Enhanced folder's.
             let paths = collect_cc_source_dirs(&source_dir_args)?;
@@ -1768,6 +1777,7 @@ where
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
                     frame_filters_path: frame_filters_kdl,
+                    stride_cache_path: stride_cache,
                 },
             )?;
             if let Some(strides_from) = strides_from {
@@ -1817,6 +1827,7 @@ where
             upscale_passes,
             upscale_profile,
             strides_from,
+            stride_cache,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
@@ -1846,6 +1857,7 @@ where
                     frame_filters_path: resolve_frame_filters_kdl(frame_filters_kdl, tables.as_deref()),
                     metadata_path: Some(resolve_ec_mobile_animations_kdl(ec_mobile_animations_kdl, tables)?),
                     allow_missing_metadata: false,
+                    stride_cache_path: stride_cache,
                 },
             )?;
             if let Some(strides_from) = strides_from {

@@ -1,7 +1,8 @@
 //! The mobiles' measured strides in the animation packages (`udd_assets::animation::mobile_strides`): what a repack
 //! keeps of the strides measured on the package it replaces (those whose clip's frames still hash the same or are made
-//! from the same client frames, [`super::stride_sources`]; the others, and the new clips, get none until measured
-//! again), and the measurement itself, with the measurers of
+//! from the same client frames, [`super::stride_sources`]), what it takes from the stride cache for the clips those
+//! leave without one ([`super::stride_cache`]: measured on the same client frames before, for an unmodified client
+//! every clip; the others get none until measured), and the measurement itself, with the measurers of
 //! `uot_gpu_compute::strides`: the planted foot's on the CPU (the default), or the flow's on the GPU.
 //!
 //! [`measure_strides`] hashes every clip of a package on all threads, and measures the clips whose frames are new or
@@ -29,6 +30,7 @@ use udd_assets::animation::mobile_strides::{
 };
 use uot_gpu_compute::strides::planted_foot::{inspect_clip, measure_planted_foot};
 pub use uot_gpu_compute::strides::planted_foot::{side_tiles_of_pairs, ClipInspection, PairInspection};
+use super::stride_cache::StrideCache;
 use super::stride_sources::stride_sources;
 use uot_gpu_compute::strides::{Measurement, StrideClip, StrideFrame, StrideMeasurer};
 
@@ -59,18 +61,33 @@ pub fn strides_before_repack(path: &Path) -> PreviousStrides {
     })
 }
 
+/// What a repack's package got of strides: those kept from before ([`carry_strides`]), those taken from the stride
+/// cache for the clips still without one, and how many clips with frames have none (a `changed` measurement measures
+/// them).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeptStrides {
+    pub kept: usize,
+    pub cached: usize,
+    pub missing: usize,
+}
+
 /// Stores in the package at `path`, just packed from the client files in `client_dir` and loaded by `load`, its
-/// stride clips' sources ([`stride_sources`]) and those strides of `previous` that hold for its clips
-/// ([`carry_strides`]), over its own strides of the same clips. Gives how many were kept. The package is rewritten,
-/// its other entries copied as stored.
+/// stride clips' sources ([`stride_sources`]), those strides of `previous` that hold for its clips
+/// ([`carry_strides`]), over its own strides of the same clips, and for the clips still without a stride those of
+/// `cache` measured on the same client frames. The package is rewritten, its other entries copied as stored.
 pub fn keep_repacked_strides<P: MobileAnimClips + Sync>(path: &Path, client_dir: &Path,
-    load: impl FnOnce(&Path) -> eyre::Result<P>, previous: &PreviousStrides) -> eyre::Result<usize> {
+    load: impl FnOnce(&Path) -> eyre::Result<P>, previous: &PreviousStrides, cache: &StrideCache)
+    -> eyre::Result<KeptStrides> {
+    let started = Instant::now();
     let package = load(path).wrap_err_with(|| format!("load {} to record its stride sources", path.display()))?;
+    let source = package.stride_source();
     let sources = stride_sources(&package, client_dir)
         .wrap_err_with(|| format!("record the stride sources of {}", path.display()))?;
     let own = package.stride_records().to_vec();
     drop(package);
-    keep_strides(path, own, &sources, previous, true)
+    info!("{}: the sources of {} stride clips read from {} in {:.1} s", path.display(), sources.len(),
+        client_dir.display(), started.elapsed().as_secs_f32());
+    keep_strides(path, own, &sources, previous, Some((source, cache)), true)
 }
 
 /// Stores in the package at `path` those strides of `previous` that hold for its clips, by the stride clip sources it
@@ -83,7 +100,7 @@ pub fn keep_strides_from(path: &Path, previous: &PreviousStrides) -> eyre::Resul
     let sources = read_package_stride_sources(path)?;
     eyre::ensure!(!sources.is_empty(), "{} records no stride clip sources: repack it, or record them with `udd-cli \
         tool strides sources`", path.display());
-    keep_strides(path, read_package_strides(path)?, &sources, previous, false)
+    keep_strides(path, read_package_strides(path)?, &sources, previous, None, false).map(|kept| kept.kept)
 }
 
 /// Carries matching strides from the destination package into a staged replacement before it is installed.
@@ -92,9 +109,11 @@ pub fn keep_staged_strides(staged: &Path, destination: &Path) -> eyre::Result<us
 }
 
 /// Stores in the package at `path`, whose strides are `own` and whose stride clips are `sources`, the strides of
-/// `previous` that hold for them, and with `write_sources` its stride clip sources.
+/// `previous` that hold for them, then for the clips still without a stride those of the `cache` of its package kind,
+/// and with `write_sources` its stride clip sources.
 fn keep_strides(path: &Path, own: Vec<MobileStrideRecord>, sources: &[StrideSourceRecord],
-    previous: &PreviousStrides, write_sources: bool) -> eyre::Result<usize> {
+    previous: &PreviousStrides, cache: Option<(StrideSource, &StrideCache)>, write_sources: bool)
+    -> eyre::Result<KeptStrides> {
     let kept = carry_strides(&previous.records, &previous.sources, sources);
     let unchanged: HashSet<(u32, u16, u64)> = previous.records.iter()
         .map(|record| (record.body_id, record.action_id, record.clip_hash)).collect();
@@ -103,18 +122,48 @@ fn keep_strides(path: &Path, own: Vec<MobileStrideRecord>, sources: &[StrideSour
     let mut records: BTreeMap<(u32, u16), MobileStrideRecord> = own.iter()
         .map(|record| ((record.body_id, record.action_id), *record)).collect();
     records.extend(kept.iter().map(|record| ((record.body_id, record.action_id), *record)));
-    let records: Vec<MobileStrideRecord> = records.into_values().collect();
     if !previous.records.is_empty() {
         info!("{}: kept {} of {} strides measured before, {carried} of them on new frames made from the same client \
             frames; {} were measured on other frames or clips now gone and need measuring again", path.display(),
             kept.len(), previous.records.len(), previous.records.len() - kept.len());
     }
+    let mut counts = KeptStrides { kept: kept.len(), ..Default::default() };
+    if let Some((source, cache)) = cache {
+        let fill = cache.fill(source, sources, |clip| has_stride(&records, clip));
+        counts.cached = fill.records.len();
+        records.extend(fill.records.iter().map(|record| ((record.body_id, record.action_id), *record)));
+    }
+    counts.missing = sources.iter().filter(|clip| !has_stride(&records, clip)).count();
+    if cache.is_some() {
+        info!("{}: of {} stride clips, {} kept a stride from before, {} took one from the stride cache and {} have \
+            none (`udd-cli tool strides measure changed` measures them)", path.display(), sources.len(), counts.kept,
+            counts.cached, counts.missing);
+    }
+    let records: Vec<MobileStrideRecord> = records.into_values().collect();
     let strides_changed = records != own;
     if strides_changed || write_sources {
         write_package_stride_entries(path, path, strides_changed.then_some(records.as_slice()),
             write_sources.then_some(sources))?;
     }
-    Ok(kept.len())
+    Ok(counts)
+}
+
+/// Whether `records`, by body and action, hold a stride measured on the frames of `clip`.
+fn has_stride(records: &BTreeMap<(u32, u16), MobileStrideRecord>, clip: &StrideSourceRecord) -> bool {
+    records.get(&(clip.body_id, clip.action_id)).is_some_and(|record| record.clip_hash == clip.clip_hash)
+}
+
+/// How many of the stride clips the package at `path` records the sources of (`metadata/stride_sources.bin`) have no
+/// stride measured on their frames: after a pack, what a `changed` measurement would measure, read without hashing
+/// a clip. `None` when the package records no sources.
+pub fn clips_without_strides(path: &Path) -> eyre::Result<Option<usize>> {
+    let sources = read_package_stride_sources(path)?;
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    let strides: HashSet<(u32, u16, u64)> = read_package_strides(path)?.iter()
+        .map(|record| (record.body_id, record.action_id, record.clip_hash)).collect();
+    Ok(Some(sources.iter().filter(|clip| !strides.contains(&(clip.body_id, clip.action_id, clip.clip_hash))).count()))
 }
 
 /// The text report of a package's strides: `mobile_strides_<cc|ec>.tsv`.

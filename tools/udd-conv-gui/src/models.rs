@@ -28,14 +28,15 @@ pub enum TextureOptimization {
     Bc7Zstd,
 }
 
-/// Whether a mobile animation job measures the walk and run strides of the package it wrote, on the GPU (`udd-cli
-/// tool strides measure`). The repack keeps the strides of the clips whose frames did not change either way.
+/// Whether a mobile animation job measures the walk and run strides of the package it wrote (`udd-cli tool strides
+/// measure`). Either way the repack keeps the strides of the clips whose frames did not change, and fills the others
+/// from the stride cache where they are made from client frames measured before.
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StrideMeasurement {
     Off,
-    /// The new and changed clips (`measure changed`).
+    /// The clips still without a stride (`measure changed`): none for an unmodified client.
     Changed,
-    /// Every clip again (`measure full`; tens of minutes).
+    /// Every clip again (`measure full`; minutes).
     Full,
 }
 

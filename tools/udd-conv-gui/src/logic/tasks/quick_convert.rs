@@ -10,6 +10,11 @@ use crate::models::QuickConvertMode;
 
 use super::*;
 
+/// What Quick Convert measures of the strides once a mobile animation package has those of the package it replaces
+/// and of the stride cache: the clips still without one. Its packers measure nothing themselves (their settings say
+/// [`StrideMeasurement::Off`]), so the carry-over comes first.
+const QUICK_STRIDE_MEASUREMENT: StrideMeasurement = StrideMeasurement::Changed;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PackageJob {
     TileMeta,
@@ -83,9 +88,12 @@ impl PackageJob {
             let pack = || {
                 self.pack(settings, temp, progress)?;
                 progress.panic_if_cancelled();
-                // The packer normally reads those records at its own output path. Carry them across staging.
+                // The packer normally reads those records at its own output path. Carry them across staging, over
+                // the stride cache's, then measure the clips neither gave a stride (none for an unmodified client).
                 if matches!(self, Self::MobileCc | Self::MobileEc) {
                     keep_staged_strides(temp, output)?;
+                    progress.panic_if_cancelled();
+                    measure_strides_after_packing(temp, QUICK_STRIDE_MEASUREMENT, progress)?;
                     progress.panic_if_cancelled();
                 }
                 Ok(())

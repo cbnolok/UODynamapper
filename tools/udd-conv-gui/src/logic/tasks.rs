@@ -79,12 +79,13 @@ use udd_conv_cli::{
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
 use udd_conv::conversion_tables::{
-    EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, MOBILE_FRAME_FILTERS_KDL, TERRAIN_TRANSCODE_KDL,
+    EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, MOBILE_FRAME_FILTERS_KDL, MOBILE_STRIDES_TSV,
+    TERRAIN_TRANSCODE_KDL,
 };
 use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
 use udd_conv::animation::mobile_strides::{
-    measure_package_strides, MeasureOptions, StrideJobProgress, StrideProgress,
+    clips_without_strides, measure_package_strides, MeasureOptions, StrideJobProgress, StrideProgress,
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, GumpsEcSharing, LogLevel,
@@ -337,6 +338,14 @@ fn conversion_table(settings: &AppSettings, file: BundledFile) -> eyre::Result<P
     bundled_files::resolve(given.as_deref(), file)
 }
 
+/// The stride cache: the routing folder's copy when it has one, else the copy shipped with the tools, so that a
+/// routing folder made before the cache existed still packs with it.
+fn stride_cache_table(settings: &AppSettings) -> eyre::Result<PathBuf> {
+    let given = settings.dynamapper_routing_dir.as_deref().map(|dir| MOBILE_STRIDES_TSV.in_dir(dir))
+        .filter(|path| path.is_file());
+    bundled_files::resolve(given.as_deref(), MOBILE_STRIDES_TSV)
+}
+
 fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
     if upscale_filter_active(filter) {
         vec![UpscalePass::from(filter)]
@@ -354,8 +363,9 @@ const VALIDATING_PROGRESS: f32 = 0.99;
 /// The label of the stride measurement step of the mobile animation jobs on their bar.
 const STRIDES_STEP_LABEL: &str = "Strides";
 
-/// Measures the strides of the mobile animation package just written at `output` as `measurement` says, the clips of
-/// unchanged frames keeping theirs (the repack kept them). Gives what it did, for the job's message.
+/// Measures the strides of the mobile animation package just written at `output` as `measurement` says, the clips
+/// that have one (kept by the repack or taken from the stride cache) keeping it unless it measures them all. Gives
+/// what it did, for the job's message.
 fn measure_strides_after_packing(output: &Path, measurement: StrideMeasurement, progress: &AssetProgressReporter)
     -> eyre::Result<String> {
     let everything = match measurement {
@@ -363,6 +373,11 @@ fn measure_strides_after_packing(output: &Path, measurement: StrideMeasurement, 
         StrideMeasurement::Changed => false,
         StrideMeasurement::Full => true,
     };
+    // Every clip has its stride: nothing to measure, so the clips need not be hashed again.
+    if !everything && clips_without_strides(output)? == Some(0) {
+        log::info!("{}: every stride clip has its stride; nothing to measure", output.display());
+        return Ok("; every stride clip has its stride".to_string());
+    }
     progress.set_step(0.0, format!("{STRIDES_STEP_LABEL}: loading the package"));
     let report = |step: StrideProgress| {
         if let Some(now) = StrideJobProgress::of(step) {
@@ -1112,6 +1127,7 @@ fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetPr
             upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
             upscale_profile,
             frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
+            stride_cache_path: Some(stride_cache_table(settings)?),
         },
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
         |build_progress| progress.build_progress(build_progress),
@@ -1170,6 +1186,7 @@ fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetPr
             metadata_path,
             allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
             frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
+            stride_cache_path: Some(stride_cache_table(settings)?),
         },
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
         |build_progress| progress.build_progress(build_progress),

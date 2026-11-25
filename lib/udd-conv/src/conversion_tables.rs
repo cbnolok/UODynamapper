@@ -32,9 +32,15 @@ pub const MOBILE_FRAME_FILTERS_KDL: BundledFile =
 pub const TILEMETA_OVERRIDES_KDL: BundledFile =
     conversion_table(udd_assets::tilemeta_overrides::TILEMETA_OVERRIDES_FILE_NAME);
 
+/// The strides measured on earlier packages, by the client frames of their clips, that the packers fill new packages
+/// from (`crate::animation::stride_cache`).
+pub const MOBILE_STRIDES_TSV: BundledFile =
+    conversion_table(crate::animation::stride_cache::STRIDE_CACHE_FILE_NAME);
+
 /// Every table above, for the checks that the source checkout holds them.
 pub const ALL_CONVERSION_TABLES: &[BundledFile] = &[TERRAIN_TRANSCODE_KDL, EC_TERRAIN_OVERRIDES_KDL,
-    EC_SURFACE_OVERRIDES_KDL, EC_MOBILE_ANIMATIONS_KDL, MOBILE_FRAME_FILTERS_KDL, TILEMETA_OVERRIDES_KDL];
+    EC_SURFACE_OVERRIDES_KDL, EC_MOBILE_ANIMATIONS_KDL, MOBILE_FRAME_FILTERS_KDL, TILEMETA_OVERRIDES_KDL,
+    MOBILE_STRIDES_TSV];
 
 #[cfg(test)]
 mod tests {

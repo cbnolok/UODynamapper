@@ -134,6 +134,21 @@ before it existed (3 s for the Classic test package, 16 s plus 9 s writing for t
 so on 2026-11-23, its exported strides unchanged; a repack of copies with other filters on a few bodies (Classic 1, 9,
 200 median or highlight; Enhanced dragon 12/59 back to highlight, 1 none, 200 median) kept all 1914 and 4125 strides,
 18 and 14 of them carried to new hashes, the exported values equal.
+
+The stride cache (2026-11-25, `udd_conv::animation::stride_cache`) spares a fresh pack the measuring: the conversion
+tables ship `MobileStrides.tsv`, every stride measured on the packages of the client versions at hand, keyed by
+package kind, body, action and the clip's source hash, at full `f32` precision (Rust's shortest round-trip text), so
+it holds for any pixel format, Zstd level, RDO, frame filter or scale, as the carry-over does, and a modified client's
+clips just miss. Every packer (`pack-mobile-anims`, `pack-ec-mobile-anims`, the GUI jobs, Quick Convert) fills from
+it in `keep_repacked_strides`, on the source hashes it computes anyway. Precedence, per clip: a stride carried from
+the package replaced (or `--strides-from`, or Quick Convert's destination, carried after the pack into the staged
+copy) wins, since it was kept for these very frames and may be a measurement the user chose; the cache fills the
+clips still without one; the measure option then measures what neither gave (`Changed clips`, which Quick Convert
+runs, skips the hashing when the package's records cover every clip of its `stride_sources.bin`), or `All clips`
+everything again. `--stride-cache` (CLI) or the routing folder's copy (GUI, when it has one) replaces the shipped
+table. `udd-cli tool strides cache-export PACKAGE... [--ccdir] [--ecdir] [--merge TABLE]... [--output]` writes the
+table from measured packages (`measure full` first), the client frames read from the client folder when given, else
+from the sources the package records; the same key with other values is an error.
 The first strides, measured into the table that was bundled in the binary until 2026-11-21, were moved into the
 packages with `strides import --trust-unhashed` from the measurement report, hashed on the packages they were measured
 on, without measuring again. The stride is the median of the side facings that measured (at least two), even when they

@@ -160,7 +160,8 @@ app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 app_assets_unread := "regression_fixtures" +\
     " cc_ec_convtables/TerrainTranscode.kdl cc_ec_convtables/EcTerrainOverrides.kdl" +\
     " cc_ec_convtables/EcSurfaceOverrides.kdl cc_ec_convtables/EcMobileAnimations.kdl" +\
-    " cc_ec_convtables/MobileFrameFilters.kdl cc_ec_convtables/TilemetaOverrides.kdl"
+    " cc_ec_convtables/MobileFrameFilters.kdl cc_ec_convtables/TilemetaOverrides.kdl" +\
+    " cc_ec_convtables/MobileStrides.tsv"
 app_assets_unread_ext := "md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
 # The end-user tools. uocf-devtools-cli and udd-devtools-cli stay out: opt-in research and diagnostics.
