@@ -1,4 +1,4 @@
-//! Hover texts for the Land Shader Controls window and the Advanced Raw Shader Knobs window.
+//! Hover texts for the Shading Controls window and the Advanced Raw Shader Knobs window.
 //!
 //! One text per setting: where a setting has a control in both windows, both use the same text. Each says what the
 //! control does, which presets and times of day show it, what it needs, and whether it acts with only one of the

@@ -1180,7 +1180,7 @@ def report():
 # usual, then strong-metrics, strong-report and strong-sheets read it.
 #
 # Beyond values exceed the F3 sliders, which clamp the values they draw (egui's default SliderClamping::Always).
-# The rig binary is therefore built with the slider helpers of land_shader.rs set to SliderClamping::Edits, a
+# The rig binary is therefore built with the slider helpers of shading.rs set to SliderClamping::Edits, a
 # rig-only change that draws the same frames. Every capture is verified against its slot, so a clamped value fails
 # the launch.
 
@@ -1221,7 +1221,7 @@ WASH_SCALE_BEYOND = 480.0
 # times past it.
 FILL_BEYOND_GAIN = 3.0
 # The Advanced window edits Rim Color as numbers up to 2 (HDR_COLOR_RANGE) and Rim Power with a 0.1..8 slider
-# (RIM_POWER_RANGE in dialogs/land_shader.rs); the shader floors the power at 0.1, the widest rim.
+# (RIM_POWER_RANGE in dialogs/shading.rs); the shader floors the power at 0.1, the widest rim.
 RIM_COLOR_MAX = 2.0
 RIM_POWER_MIN = 0.1
 RIM_POWER_ONE = 1.0

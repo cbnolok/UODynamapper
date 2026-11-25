@@ -10,7 +10,7 @@
 use crate::settings::{ClientTextureSource, LandTextureSource, Settings};
 use crate::render::uniform_state::UniformState;
 use crate::render::pipeline_readiness::WaitingRenderPipelines;
-use crate::ui::dialogs::land_shader::switch_render_preset;
+use crate::ui::dialogs::shading::switch_render_preset;
 use crate::render::view::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM};
 use crate::render::statics::static_source::StaticArtSourceState;
 use crate::world::caves::{CaveSurroundings, CaveView};

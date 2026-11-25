@@ -57,7 +57,7 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
 
 - Source: user decisions recorded in [`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md);
   KR client trace [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).
-- Code: `RENDER_STYLE_PRESETS` (`dynamapper/src/ui/dialogs/land_shader.rs`); the `preset_group_*` predicates
+- Code: `RENDER_STYLE_PRESETS` (`dynamapper/src/ui/dialogs/shading.rs`); the `preset_group_*` predicates
   in `dynamapper/src/settings/shader_presets.rs` (`preset_group_has_scene_multiplier`, `preset_group_has_night_map`,
   `preset_group_draws_light_sprites`, `preset_group_follows_kr_light_rules`, `preset_group_uses_client_shadows`,
   `preset_group_has_player_floor_rule`, `preset_group_has_land_texture_variation`); `validate_preset_lighting`.

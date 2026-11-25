@@ -134,7 +134,7 @@ files, so one preview can visit several styles, times and sources
 (`controls/dev_control/settings.rs`):
 
 - `{"command":"preset","style":"kr","time":"night"}`: the shader window's
-  style and time buttons (`land_shader::switch_render_preset`, which stores the
+  style and time buttons (`shading::switch_render_preset`, which stores the
   live slot in the in-memory presets and applies the target, as a click does).
 - `{"command":"sources","art":"ec","land":"kr"}`: the preferences' art and land
   texture sources (`cc`/`ec`; `cc`/`ec`/`kr`). The land texture images and every

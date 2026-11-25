@@ -1,4 +1,4 @@
-// Land shader live UI (Bevy 0.16 + egui)
+// Shading Controls window (Bevy + egui): the render style and its shading (land, art and whole-scene effects)
 // - Controls LandEffectsUniform and LandLightingUniform as used by your WGSL
 // - Writes to material assets so Bevy re-uploads uniforms automatically
 // - Shading modes:
@@ -35,26 +35,26 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 mod tips;
 
-/// Resource that tracks whether the land shader panel is visible.
+/// Resource that tracks whether the Shading Controls window is visible.
 /// Toggled by the keybinding; also closed when egui's own close button is used.
 #[derive(Resource, Default)]
-pub struct LandShaderUiState {
+pub struct ShadingUiState {
     pub open: bool,
     pub advanced_open: bool,
 }
 
 // Plugin that draws the UI and applies changes to materials.
-pub struct LandUiPlugin {
+pub struct ShadingUiPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(LandUiPlugin);
+impl_tracked_plugin!(ShadingUiPlugin);
 
-impl Plugin for LandUiPlugin {
+impl Plugin for ShadingUiPlugin {
     fn build(&self, app: &mut App) {
         // Draw UI in the egui pass
-        app.init_resource::<LandShaderUiState>()
+        app.init_resource::<ShadingUiState>()
             .add_observer(sys_shader_ui_toggle)
-            .add_systems(EguiPrimaryContextPass, land_ui_system)
+            .add_systems(EguiPrimaryContextPass, shading_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, crate::render::terrain::sys_push_land_uniforms_if_dirty);
     }
@@ -62,7 +62,7 @@ impl Plugin for LandUiPlugin {
 
 fn sys_shader_ui_toggle(
     _trigger: On<ActionToggleShaderSettings>,
-    mut state: ResMut<LandShaderUiState>,
+    mut state: ResMut<ShadingUiState>,
 ) {
     state.open = !state.open;
 }
@@ -324,7 +324,7 @@ pub(crate) fn switch_render_preset(
 }
 
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
-/// Placed to the right of the main Land Shader Controls window (whose default
+/// Placed to the right of the main Shading Controls window (whose default
 /// pos is `SHADER_WINDOW_DEFAULT_POS`) so the long list of low-level sliders opens as a side
 /// panel instead of stretching the main window past the screen height.
 const ADVANCED_WINDOW_DEFAULT_POS: [f32; 2] = [
@@ -337,14 +337,14 @@ const ADVANCED_WINDOW_GAP: f32 = 12.0;
 // Renders a window with controls for mode, toggles, intensities, colors,
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
 
-pub fn land_ui_system(
+pub fn shading_ui_system(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut u: ResMut<UniformState>,
     mut shader_presets: ResMut<LandShaderModePresets>,
     factory_shader_presets: Res<FactoryShaderPresets>,
     settings: ResMut<Settings>,
-    mut ui_state: ResMut<LandShaderUiState>,
+    mut ui_state: ResMut<ShadingUiState>,
     mut was_open: Local<bool>,
 ) {
     // Early return if not open. We allow one extra pass if was_open was true 
@@ -358,7 +358,7 @@ pub fn land_ui_system(
     };
 
     let title = format!(
-        "Land Shader Controls [{:?}]",
+        "Shading Controls [{:?}]",
         settings.keybindings.shader_settings
     );
     let mut window_open = ui_state.open;

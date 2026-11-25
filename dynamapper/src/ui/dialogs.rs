@@ -5,7 +5,7 @@ pub mod paperdoll_ec;
 pub mod paperdoll_menu;
 pub mod preferences;
 pub mod teleport;
-pub mod land_shader;
+pub mod shading;
 
 use crate::render::view::camera::UiCameraResource;
 use crate::impl_tracked_plugin;
@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use gump::GumpDialogPlugin;
 use keybindings_help::KeybindingsHelpPlugin;
-use land_shader::LandUiPlugin;
+use shading::ShadingUiPlugin;
 use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
 
@@ -31,7 +31,7 @@ impl Plugin for DialogsPlugin {
             PreferencesDialogPlugin {
                 registered_by: "DialogsPlugin",
             },
-            LandUiPlugin {
+            ShadingUiPlugin {
                 registered_by: "DialogsPlugin",
             },
             KeybindingsHelpPlugin {

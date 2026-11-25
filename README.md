@@ -60,7 +60,7 @@ Britain's square in the same afternoon light and from the same camera position.
 
 | [Zoom range](docs/SHOWCASE.md#zoom-range) | [Paperdolls](docs/SHOWCASE.md#paperdolls) | [Live settings](docs/SHOWCASE.md#live-settings) |
 | --- | --- | --- |
-| ![Britain at the wide end of the camera zoom range](docs/images/showcase/world-zoom-wide.webp) | ![Two Enhanced paperdoll rendering modes](docs/images/showcase/ui-paperdolls.webp) | ![Land Shader Controls over Britain at night](docs/images/showcase/ui-settings.webp) |
+| ![Britain at the wide end of the camera zoom range](docs/images/showcase/world-zoom-wide.webp) | ![Two Enhanced paperdoll rendering modes](docs/images/showcase/ui-paperdolls.webp) | ![Shading Controls over Britain at night](docs/images/showcase/ui-settings.webp) |
 
 Explore with orthographic or free perspective cameras, pick visible map objects, or reveal the player's floor while keeping nearby roofs and their lights visible. Floors and roofs can clip a glow while doors and windows still let light out. The shader panel saves edits per style and time of day. The paperdoll lets you preview equipment and hues and override what a robe covers. Dynamapper loads map chunks in the background and streams texture pages as the scene needs them.
 

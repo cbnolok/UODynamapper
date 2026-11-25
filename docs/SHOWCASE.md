@@ -139,9 +139,9 @@ The same outfit in both Enhanced paperdoll modes. The 3D-style frames show the l
 
 ## Live settings
 
-![Land Shader Controls showing the KR-like night preset over Britain](images/showcase/ui-settings.webp)
+![Shading Controls showing the KR-like night preset over Britain](images/showcase/ui-settings.webp)
 
-Open Land Shader Controls with **F3** to switch styles and times of day, and tune lighting and materials for the active preset.
+Open Shading Controls with **F3** to switch styles and times of day, and tune lighting and materials for the active preset.
 
 ![Graphics options with separate art and terrain choices, animation controls, and building and cave visibility](images/showcase/ui-graphics-options.webp)
 

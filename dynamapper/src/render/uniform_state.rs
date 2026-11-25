@@ -1,6 +1,6 @@
 //! The live shader uniforms: what the land, art, lighting and post-process passes read this frame, with the active
 //! preset they came from and the snapshot Undo restores. The shader presets (`settings::shader_presets`) build it at
-//! startup and save from it; the land shader panel edits it.
+//! startup and save from it; the Shading window edits it.
 use crate::render::lighting::light_cover::{LightCover, LightCoverRule};
 use crate::render::terrain::mesh_material::{
     local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,

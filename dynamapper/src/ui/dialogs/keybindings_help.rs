@@ -83,7 +83,7 @@ pub fn sys_render_keybindings_help(
                     ui.label(format!("{:?}", settings.keybindings.user_settings));
                     ui.end_row();
 
-                    ui.label("Shader Settings");
+                    ui.label("Shading Controls");
                     ui.label(format!("{:?}", settings.keybindings.shader_settings));
                     ui.end_row();
 
