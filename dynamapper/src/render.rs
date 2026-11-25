@@ -11,6 +11,8 @@ pub mod shader_compiles;
 pub mod statics;
 pub mod view;
 pub mod world_draw_hold;
+#[cfg(test)]
+mod shading_reach_tests;
 
 use crate::prelude::*;
 use bevy::prelude::*;

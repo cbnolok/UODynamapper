@@ -196,6 +196,11 @@ const RIM_POWER_RANGE: std::ops::RangeInclusive<f32> = 0.1..=8.0;
 const GLOOM_FADE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=12.0;
 /// The fog pass draws no fog while both fog densities are below this (`fog_pass.wesl`), cloud noise included.
 const FOG_DENSITY_MIN: f32 = 0.001;
+/// "KR Color Wash" strength: past 0.75 (KR_COLOR_WASH_KNEE in postprocess/kr_color_wash.wesl) the wash grows fast.
+const KR_COLOR_WASH_STRENGTH_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.5;
+/// "KR Color Wash Scale" in world tiles: the size of the wash's patches. The minimum is the shader's
+/// KR_COLOR_WASH_MIN_SCALE; the presets' 64 to 80 make patches wider than the screen.
+const KR_COLOR_WASH_SCALE_RANGE: std::ops::RangeInclusive<f32> = 4.0..=160.0;
 /// "Sun Strength" (`diffuse_strength`); the presets use 0.54 to 1.35.
 const SUN_STRENGTH_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
 
@@ -906,8 +911,8 @@ pub fn shading_ui_system(
                 changed |= texture_filter_row(ui, &mut u);
                 changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0, tips::SHARPENING);
                 changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash, tips::KR_COLOR_WASH);
-                changed |= slider_s(ui, "KR Color Wash Strength", &mut u.effects.kr_color_wash_strength, 0.0..=1.5, tips::KR_COLOR_WASH_STRENGTH);
-                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0, tips::KR_COLOR_WASH_SCALE);
+                changed |= slider_s(ui, "KR Color Wash Strength", &mut u.effects.kr_color_wash_strength, KR_COLOR_WASH_STRENGTH_RANGE, tips::KR_COLOR_WASH_STRENGTH);
+                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, KR_COLOR_WASH_SCALE_RANGE, tips::KR_COLOR_WASH_SCALE);
                 changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
 
                 ui.separator();
@@ -1102,8 +1107,8 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
 
         let ui = &mut columns[1];
         changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0, tips::GRUNGE);
-        changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, 0.0..=1.5, tips::KR_COLOR_WASH);
-        changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0, tips::KR_COLOR_WASH_SCALE);
+        changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, KR_COLOR_WASH_STRENGTH_RANGE, tips::KR_COLOR_WASH);
+        changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, KR_COLOR_WASH_SCALE_RANGE, tips::KR_COLOR_WASH_SCALE);
     });
     changed
 }
@@ -1871,5 +1876,14 @@ mod tests {
             .map(|style| style.preset_group)
             .collect();
         assert_eq!(groups, crate::settings::shader_presets::KR_PROFILE_PRESET_GROUPS);
+    }
+
+    /// The KR Color Wash sliders end where the shader does: its strength curve's end and its smallest patch size.
+    #[test]
+    fn the_kr_color_wash_sliders_match_the_shader() {
+        use crate::util_lib::wesl_source::wesl_f32_const;
+        let wash = include_str!("../../../assets/shaders/postprocess/kr_color_wash.wesl");
+        assert_eq!(*KR_COLOR_WASH_STRENGTH_RANGE.end(), wesl_f32_const(wash, "KR_COLOR_WASH_STRENGTH_MAX"));
+        assert_eq!(*KR_COLOR_WASH_SCALE_RANGE.start(), wesl_f32_const(wash, "KR_COLOR_WASH_MIN_SCALE"));
     }
 }

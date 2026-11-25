@@ -38,6 +38,27 @@ const ART_LOCAL_LIGHT_FLAT_TOP_CATCH: f32 = 1.0 / (1.0 + ART_LOCAL_LIGHT_TOP_CAT
 // the mottle's offset): its centre, for every pixel. A flat static has no top, foot or sides; ramped over each sprite,
 // those profiles lit every tile of a continuous floor or ground on its own, a step at each tile edge.
 const ART_FLAT_SHADING_UV: vec2<f32> = vec2<f32>(0.5, 0.5);
+// Shadow Shape and Light Catch without Fake Normals (Classic, Enhanced) take their strength up to the knee, above the
+// Classic presets' 0.12 and 0.08, so the presets look as before; past it the amount rises, flat where it starts, to
+// these at the slider's end: a foot about two thirds darker, a top about twice as bright. With the strength itself the
+// slider's end darkened a wall's foot by a third and brightened its top by half, gradients that the tiling of wall
+// pieces hides.
+const ART_PLAIN_KNEE: f32 = 0.15;
+const ART_PLAIN_SHADOW_MAX_AMOUNT: f32 = 1.85;
+const ART_PLAIN_CATCH_MAX_AMOUNT: f32 = 2.0;
+// Contact Shadows without Fake Normals (Classic, Enhanced): the ground's shadow at an upright sprite's foot, walls (the
+// Background class) included, darkening its lower part, from ART_CONTACT_FOOT_START of its height down, in full from
+// ART_CONTACT_FOOT_FULL (a wall's face meets the ground along the tile's lower edges, from three quarters of the
+// sprite down), by up to ART_CONTACT_FOOT_DEPTH at strength 1; flat art, which has no foot, takes none. The
+// fake-normal path has its own contact terms; before 2026-11-25 the slider did nothing without them.
+const ART_CONTACT_FOOT_START: f32 = 0.4;
+const ART_CONTACT_FOOT_FULL: f32 = 0.85;
+const ART_CONTACT_FOOT_DEPTH: f32 = 0.7;
+// Mottle's gain on its per-class profiles: at the slider's end (1.5) a wall's patches typically shift its value by an
+// eighth, a roof's by a third. Without it the patches moved the colour by a few percent, too little to see.
+const ART_MOTTLE_GAIN: f32 = 3.0;
+// The mottle never darkens or brightens a pixel by more than this share of its colour.
+const ART_MOTTLE_MAX_SHIFT: f32 = 0.45;
 // SpriteInstance is_wet_flags bit: the upright card shows flat art, a floor or a flat roof. Keep in sync with
 // STATIC_FLAG_FLAT_ART in statics_collect.rs.
 const STATIC_FLAG_FLAT_ART: u32 = 1u << 11u;
@@ -99,6 +120,15 @@ fn art_fake_normal(uv_in_tile: vec2<f32>, depth_class: u32, is_ground_art: bool)
     return normalize(vec3<f32>(side_slope, vertical, face));
 }
 
+// The amount of Shadow Shape or Light Catch without Fake Normals for a strength on its 0..1 slider: the strength up to
+// ART_PLAIN_KNEE, then rising faster, to `max_amount` at 1.
+fn art_plain_amount(strength: f32, max_amount: f32) -> f32 {
+    let s = clamp(strength, 0.0, 1.0);
+    let past_knee = max(s - ART_PLAIN_KNEE, 0.0);
+    let span = 1.0 - ART_PLAIN_KNEE;
+    return s + (max_amount - 1.0) / (span * span) * past_knee * past_knee;
+}
+
 fn apply_art_surface_shading(
     rgb: vec3<f32>,
     uv_in_tile: vec2<f32>,
@@ -135,12 +165,15 @@ fn apply_art_surface_shading(
     let side_contact = 1.0 - smoothstep(0.0, 0.18, min(shading_uv.x, 1.0 - shading_uv.x));
     let contact_noise = 1.0 + (noise_2d(world_pos.xz * 0.25) - 0.5) * 0.16 * mottle_strength;
 
+    // The plain shading, without Fake Normals; the fake-normal block below starts over from `rgb`.
+    let plain_shadow = art_plain_amount(shadow_strength, ART_PLAIN_SHADOW_MAX_AMOUNT);
+    let plain_catch = art_plain_amount(highlight_strength, ART_PLAIN_CATCH_MAX_AMOUNT);
     var out_rgb = rgb;
-    out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
+    out_rgb *= max(1.0 - plain_shadow * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise, 0.0);
     // Global light catch belongs to its own strength control. Local-light
     // intensity must not brighten every sprite when the collector is empty.
     // 0.5 preserves the existing response at neutral interaction intensity 1.
-    out_rgb += rgb * light_color * vertical_light * highlight_strength * 0.5;
+    out_rgb += rgb * light_color * vertical_light * plain_catch * 0.5;
     // Atmosphere tint uses `lower_occlusion` (a per-V-coordinate gradient) which is
     // only meaningful on an upright billboard. On flat floor/ground/background tiles
     // it would darken/tint by an arbitrary vertical gradient, so skip it there.
@@ -259,6 +292,11 @@ fn apply_art_surface_shading(
         out_rgb = mix(out_rgb, art_saturate(out_rgb, saturation_profile), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
     }
 
+    if (enable_art_fake_normals != 1u && !is_ground_art && !flat_art && depth_class != ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
+        let foot = smoothstep(ART_CONTACT_FOOT_START, ART_CONTACT_FOOT_FULL, shading_uv.y) * contact_noise;
+        out_rgb *= 1.0 - clamp(foot * contact_strength * ART_CONTACT_FOOT_DEPTH, 0.0, 1.0);
+    }
+
     if (enable_art_fake_normals != 1u && local_light_rgba.a > 0.001) {
         out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static
             * art_local_light_catch(shading_uv, flat_art);
@@ -276,8 +314,9 @@ fn apply_art_surface_shading(
 
         let broad_mottle = noise_2d(world_pos.xz * 0.55 + shading_uv * 2.0);
         let fine_mottle = noise_2d(world_pos.xz * 2.8 + shading_uv * 17.0);
-        let mottle = ((broad_mottle - 0.5) + (fine_mottle - 0.5) * 0.35) * mottle_profile * mottle_strength;
-        out_rgb *= 1.0 + mottle;
+        let mottle = ((broad_mottle - 0.5) + (fine_mottle - 0.5) * 0.35) * mottle_profile * mottle_strength
+            * ART_MOTTLE_GAIN;
+        out_rgb *= 1.0 + clamp(mottle, -ART_MOTTLE_MAX_SHIFT, ART_MOTTLE_MAX_SHIFT);
     }
 
     return max(out_rgb, vec3<f32>(0.0));

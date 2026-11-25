@@ -1884,6 +1884,26 @@ mod tests {
         }
     }
 
+    /// Without Fake Normals, Shadow Shape and Light Catch keep their former amount up to a knee (art/shading.wesl,
+    /// `art_plain_amount`): every preset without Fake Normals lies below it, so it looks as before.
+    #[test]
+    fn classic_art_strengths_lie_below_the_plain_knee() {
+        let art_shading = include_str!("../../assets/shaders/world/art/shading.wesl");
+        let knee = crate::util_lib::wesl_source::wesl_f32_const(art_shading, "ART_PLAIN_KNEE");
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for group in [&presets.classic, &presets.enhanced, &presets.kr, &presets.painterly] {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    let effects = &slot.effects;
+                    if effects.enable_art_fake_normals == 0 {
+                        assert!(effects.art_shadow_strength <= knee && effects.art_highlight_strength <= knee,
+                            "{} {}", effects.art_shadow_strength, effects.art_highlight_strength);
+                    }
+                }
+            }
+        }
+    }
+
     /// Enhanced's per-pixel land light is a plain Lambert (shade_mode1_enhanced_fragment): only KR shading reads the
     /// wrap, N.L * (1 - wrap) + wrap, so Enhanced keeps it at its neutral value, as it does the rim colour and the
     /// headroom reserve, which only KR shading reads too.

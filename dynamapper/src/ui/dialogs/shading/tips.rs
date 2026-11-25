@@ -37,9 +37,9 @@ pub(super) const LIGHT_STATIC_INTERACTION: &str =
 pub(super) const GRUNGE: &str =
     "Lays a dirt and wear texture over land and items. Strong in UOD-Painterly at every time; the Enhanced amount is too light to see.";
 pub(super) const KR_COLOR_WASH: &str =
-    "Adds large, soft patches of colour variation over land and items, like a painted wash. Needs the KR visual profile (KR-like, UOD-Painterly); at the UOD-Painterly amount it is very faint, from about 1.5 it shows as broad blotches.";
+    "Adds large, soft patches of warmer and cooler colour and lighter and darker value over land and items, like a painted wash. Needs the KR visual profile (KR-like, UOD-Painterly). Up to 0.75 it stays faint, as in UOD-Painterly's presets; past it the patches grow fast, and at 1.5 they shift the value by up to 40% and take the wash colours in full.";
 pub(super) const KR_COLOR_WASH_SCALE: &str =
-    "Size of the colour wash patches; larger values make bigger patches. Needs KR Color Wash on and matters only at a strong wash.";
+    "Size of the colour wash patches, in tiles. The presets' 64 to 80 make patches wider than the screen, so the wash only changes as you travel; 4 to 20 shows several patches at once. Needs KR Color Wash on.";
 
 // --- Client night lighting and shadows (every style; the night overlay and shadows KR-like, Enhanced, UOD-Painterly) ---
 
@@ -121,13 +121,13 @@ pub(super) const NORMAL_MAPS: &str =
 // --- Standard and KR-style art ---
 
 pub(super) const ART_SHADOW_SHAPE: &str =
-    "Darkens the shaded side of items and buildings to give them volume. Clear in UOD-Painterly, too light to see in Classic; greyed out in KR-like, where Client Shadows replace it.";
+    "Darkens the lower part of items and buildings to give them volume; at 1 a wall's foot is about two thirds darker. Clear in UOD-Painterly, subtle at the Classic presets' 0.12; greyed out in KR-like, where Client Shadows replace it.";
 pub(super) const ART_CONTACT_SHADOWS: &str =
-    "Darkens items where they meet the ground. Needs Fake Normals on (UOD-Painterly); greyed out in KR-like, where Client Shadows replace it.";
+    "Darkens the lower part of items and buildings toward the ground, their foot by up to 70% at 1; each wall piece darkens at its own foot, so upper storeys band at high values; with Fake Normals on (UOD-Painterly) it also follows their guessed shape. Off in the Classic presets; greyed out in KR-like, where Client Shadows replace it.";
 pub(super) const ART_MOTTLE: &str =
-    "Adds blotchy light and dark patches over items such as roofs and tree canopies, in every render style. Off in every preset; visible from about 1.0.";
+    "Adds blotchy light and dark patches over items, strongest on roofs and tree canopies, in every render style. Off in every preset; at 1.5 a wall's patches differ by about an eighth, a roof's by about a third.";
 pub(super) const ART_LIGHT_CATCH: &str =
-    "Brightens the sunlit side of items and buildings. Clear in UOD-Painterly; too light to see in Classic.";
+    "Brightens the upper, sunlit part of items and buildings in the light's colour; at 1 their tops are about twice as bright. Clear in UOD-Painterly, subtle at the Classic presets' 0.08.";
 pub(super) const ART_ATMOSPHERE_TINT: &str =
     "Fades upright items toward the Atmosphere Tint colour (Advanced > Lighting Colors) for a sense of depth. Clear in UOD-Painterly; too light to see in Classic.";
 pub(super) const KR_ART_TEMPERATURE: &str =
@@ -135,7 +135,7 @@ pub(super) const KR_ART_TEMPERATURE: &str =
 pub(super) const ART_PROJECTED_SHADOWS: &str =
     "Casts a soft shadow from each item onto the ground. On in UOD-Painterly; greyed out in KR-like, where Client Shadows replace it.";
 pub(super) const ART_FAKE_NORMALS: &str =
-    "Shades items as if they had depth, guessing their shape from the sprite. On in UOD-Painterly; Contact Shadows and Temperature need it.";
+    "Shades items as if they had depth, guessing their shape from the sprite. On in UOD-Painterly; Temperature needs it.";
 
 // --- Advanced: effects and modes ---
 
@@ -235,7 +235,7 @@ pub(super) const STATIC_LIGHT_DECALS: &str =
 pub(super) const SHARPENING: &str =
     "Sharpens land textures, in every render style. 0 in every preset; even 0.5 changes most of the frame.";
 pub(super) const KR_COLOR_WASH_STRENGTH: &str =
-    "How strong the colour wash is. Needs KR Color Wash on and the KR visual profile.";
+    "How strong the colour wash is: faint up to 0.75, then fast stronger. Needs KR Color Wash on and the KR visual profile.";
 pub(super) const NORMAL_MAP_STRENGTH: &str =
     "How strong the land bumps are: how far a bump map tilts the surface, or how deep the bumps derived from a texture are. Needs Land Bump Maps on.";
 pub(super) const KR_TRANSITION_GRIME_STRENGTH: &str =

@@ -78,7 +78,29 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
   and the slider did nothing from about 0.65 up); UOD-Painterly's day reserves are re-expressed so that the ceiling
   at its own sun stays 0.85. Source: user, 2026-11-25 (Sun Strength did not look effective). Code:
   `land_headroom_ceiling` (`sh/land/shading.wesl`), the client per-vertex branch of `shade_land` (`sh/land/main.wesl`).
-  Tests: `painterly_shadows_and_headroom_look_as_before_at_their_own_sun`, `a_new_sun_strength_reaches_the_art_materials`.
+  Tests: `painterly_shadows_and_headroom_look_as_before_at_their_own_sun`, `gpu_the_headroom_ceiling_rises_with_the_sun`,
+  `a_new_sun_strength_reaches_the_art_materials`.
+- **The art shading controls reach every style that shows them.** Without Fake Normals (Classic, Enhanced), Shadow
+  Shape and Light Catch keep their strength as their amount up to a knee at 0.15, above the Classic presets' 0.12 and
+  0.08, and rise past it to 1.85 and 2 at the slider's end: a wall's foot about two thirds darker, its top about twice
+  as bright. With the strength itself the end of the slider darkened a foot by a third and brightened a top by half,
+  gradients the tiling of wall pieces hid. Contact Shadows, which did nothing without Fake Normals, darkens an upright
+  sprite's lower part toward its foot, from 40 % of its height and in full from 85 % (where a wall meets the ground
+  along the tile's lower edges), by up to 70 % at 1; each wall piece darkens at its own foot, so upper storeys band at
+  high values. Flat art, which has no foot, takes none. Mottle's patches are three times their former amplitude,
+  about ±⅛ on a wall and ±⅓ on a roof at 1.5. Every preset keeps its look: Contact Shadows is 0 wherever Fake
+  Normals are off, Mottle is 0 everywhere, and the fake-normal path (UOD-Painterly) is unchanged. Source: user, 2026-11-25 (Shadow Shape, Contact Shadows, Mottle and Light Catch showed
+  no effect on Classic art). Code: `apply_art_surface_shading`, `art_plain_amount` (`sh/art/shading.wesl`). Tests:
+  `gpu_the_art_controls_change_classic_art_plainly`, `gpu_shadow_shape_and_light_catch_keep_the_classic_presets`,
+  `gpu_mottle_breaks_up_the_art_plainly` (`dynamapper/src/render/shading_reach_tests.rs`),
+  `classic_art_strengths_lie_below_the_plain_knee`.
+- **The KR Color Wash shows past its knee.** Up to 0.75, above every preset's strength, the wash's amount is the
+  strength, a shift of a few percent at most, so the presets look as before; past it the amount rises to 10 at 1.5,
+  where the patches shift the value by up to 0.4 and take the warm or the cool wash's colour in full. The
+  patches are Scale tiles wide; the presets' 64 to 80 are wider than the screen, so the wash changes only as you
+  travel, and the slider now goes down to 4. Source: user, 2026-11-25 (the wash did not look effective). Code:
+  `kr_color_wash_amount` (`dynamapper/assets/shaders/postprocess/kr_color_wash.wesl`). Tests:
+  `gpu_the_kr_color_wash_keeps_the_presets_and_shows_past_the_knee`, `the_kr_color_wash_sliders_match_the_shader`.
 
 - Source: user decisions recorded in [`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md);
   KR client trace [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).
