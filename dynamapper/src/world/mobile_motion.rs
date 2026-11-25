@@ -79,7 +79,7 @@ pub fn direction_of_step(delta: IVec2) -> Option<u8> {
 }
 
 /// A body's facing and movement.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug)]
 pub struct MobileMotion {
     /// 0..`DIRECTION_COUNT`, as `direction_of_step`.
     pub facing: u8,
@@ -89,23 +89,33 @@ pub struct MobileMotion {
     step_secs: f32,
     /// The seconds since the movement last changed: the time into the clip shown.
     clip_secs: f32,
+    /// How many times faster than the client the body steps (the player's movement speed): its step times are the
+    /// client's divided by it.
+    speed: f32,
+}
+
+impl Default for MobileMotion {
+    fn default() -> Self {
+        Self { facing: 0, movement: Movement::default(), since_step: 0.0, step_secs: 0.0, clip_secs: 0.0, speed: 1.0 }
+    }
 }
 
 impl MobileMotion {
-    /// A step by `delta`, running or walking, mounted or not.
-    pub fn step(&mut self, delta: IVec2, run: bool, mounted: bool) {
+    /// A step by `delta`, running or walking, mounted or not, `speed` times faster than the client steps.
+    pub fn step(&mut self, delta: IVec2, run: bool, mounted: bool, speed: f32) {
         if let Some(facing) = direction_of_step(delta) {
             self.facing = facing;
         }
         let movement = if run { Movement::Run } else { Movement::Walk };
         self.set_movement(movement);
         self.since_step = 0.0;
-        self.step_secs = step_secs(movement, mounted);
+        self.speed = speed;
+        self.step_secs = step_secs(movement, mounted) / speed;
     }
 
-    /// The time a step of the current movement takes, as `step_secs`.
+    /// The time a step of the current movement takes, as `step_secs` at the speed of the last step.
     pub fn step_secs(&self, mounted: bool) -> f32 {
-        step_secs(self.movement, mounted)
+        step_secs(self.movement, mounted) / self.speed
     }
 
     /// The seconds into the clip of the current movement.
@@ -151,7 +161,7 @@ mod tests {
     #[test]
     fn a_body_stands_once_its_step_is_long_past() {
         let mut motion = MobileMotion::default();
-        motion.step(IVec2::new(1, 0), true, false);
+        motion.step(IVec2::new(1, 0), true, false, 1.0);
         assert_eq!((motion.facing, motion.movement), (2, Movement::Run));
         motion.tick(STEP_SECS_RUN, MobileStop::HalfStepLater, false);
         assert_eq!(motion.movement, Movement::Run);
@@ -165,7 +175,7 @@ mod tests {
     fn a_body_stopping_at_once_stands_as_its_step_ends_unless_a_step_is_held() {
         const PAST_THE_STEP_SECS: f32 = STEP_SECS_WALK * 1.1;
         let mut motion = MobileMotion::default();
-        motion.step(IVec2::new(1, 0), false, false);
+        motion.step(IVec2::new(1, 0), false, false, 1.0);
         motion.tick(PAST_THE_STEP_SECS, MobileStop::AtOnce, true);
         assert_eq!(motion.movement, Movement::Walk);
         motion.tick(0.0, MobileStop::AtOnce, false);
@@ -173,14 +183,26 @@ mod tests {
     }
 
     #[test]
+    fn a_faster_body_takes_shorter_steps_and_stands_sooner() {
+        const SPEED: f32 = 4.0;
+        let mut motion = MobileMotion::default();
+        motion.step(IVec2::new(1, 0), false, false, SPEED);
+        assert_eq!(motion.step_secs(false), STEP_SECS_WALK / SPEED);
+        motion.tick(STEP_SECS_WALK / SPEED, MobileStop::AtOnce, true);
+        assert_eq!(motion.movement, Movement::Walk);
+        motion.tick(STEP_SECS_WALK / SPEED, MobileStop::AtOnce, false);
+        assert_eq!(motion.movement, Movement::Stand);
+    }
+
+    #[test]
     fn steps_of_one_movement_keep_its_clip_running() {
         let mut motion = MobileMotion::default();
-        motion.step(IVec2::new(0, 1), false, false);
+        motion.step(IVec2::new(0, 1), false, false, 1.0);
         motion.tick(STEP_SECS_WALK, MobileStop::HalfStepLater, false);
-        motion.step(IVec2::new(1, 1), false, false);
+        motion.step(IVec2::new(1, 1), false, false, 1.0);
         assert_eq!(motion.facing, 3);
         assert_eq!(motion.clip_secs(), STEP_SECS_WALK);
-        motion.step(IVec2::new(1, 1), true, false);
+        motion.step(IVec2::new(1, 1), true, false, 1.0);
         assert_eq!(motion.clip_secs(), 0.0);
     }
 }

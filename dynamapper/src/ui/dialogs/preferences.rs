@@ -6,6 +6,7 @@ use crate::{
     app::present_mode_for_vsync,
     render::{mobiles::{in_between::MobileInBetweenFrames, upscales::MobileUpscale}, view::camera::UiCameraResource},
     world::mobile_motion::MobileStop,
+    world::player_movement::MOVEMENT_SPEED_MULTIPLIER_RANGE,
     render::mobiles::pace::MobileWalkPace,
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},
@@ -88,6 +89,13 @@ pub struct PreferencesDialogState {
     pub apply_timer: Timer,
 }
 
+impl PreferencesDialogState {
+    /// Whether choices made in the dialog still wait for `apply_timer` to reach the settings.
+    fn apply_pending(&self) -> bool {
+        !self.apply_timer.is_paused() && !self.apply_timer.is_finished()
+    }
+}
+
 impl Default for PreferencesDialogState {
     fn default() -> Self {
         let fps_preset_idx = FPS_PRESETS
@@ -168,7 +176,9 @@ fn sys_sync_settings_to_state(
     mut initialized: Local<bool>,
     mut wireframe_config: ResMut<WireframeConfig>,
 ) {
-    let should_sync = !*initialized || (!state.open && settings.is_changed());
+    // Choices still waiting to be applied are kept: the settings change on every step of the player (its position
+    // is saved), and the dialog closed before they apply would show and apply the old values again.
+    let should_sync = !*initialized || (!state.open && !state.apply_pending() && settings.is_changed());
 
     if should_sync {
         state.movement_speed_multiplier = settings.app.input.movement_speed_multiplier;
@@ -615,8 +625,8 @@ pub fn sys_render_preferences_dialog(
                                     if ui
                                         .add(egui::Slider::new(
                                             &mut state.movement_speed_multiplier,
-                                            0.1..=500.0,
-                                        ))
+                                            MOVEMENT_SPEED_MULTIPLIER_RANGE,
+                                        ).logarithmic(true))
                                         .changed()
                                     {
                                         state.apply_timer.reset();
@@ -987,5 +997,41 @@ pub fn sys_render_preferences_dialog(
     // Bevy's change detection on every frame, which can be expensive.
     if state.open != window_open {
         state.open = window_open;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A choice made just before the dialog closes reaches the settings although they change meanwhile, as they do
+    /// on every step of the player; once applied, the dialog follows the settings again.
+    #[test]
+    fn a_pending_choice_survives_settings_changes_after_the_dialog_closes() {
+        let mut app = App::new();
+        app.insert_resource(crate::settings::bundled_settings())
+            .init_resource::<PreferencesDialogState>()
+            .init_resource::<WireframeConfig>()
+            .add_systems(Update, sys_sync_settings_to_state);
+        app.update();
+        assert!(app.world().resource::<PreferencesDialogState>().show_overlay);
+
+        // The overlay unchecked, then the dialog closed before the choice applies, while the player walks.
+        let mut state = app.world_mut().resource_mut::<PreferencesDialogState>();
+        state.show_overlay = false;
+        state.apply_timer.reset();
+        state.apply_timer.unpause();
+        state.open = false;
+        app.world_mut().resource_mut::<Settings>().session_state.world.last_p.x += 1;
+        app.update();
+        assert!(!app.world().resource::<PreferencesDialogState>().show_overlay, "the pending choice was reverted");
+
+        // Applied: a later change of the settings shows in the dialog again.
+        let mut state = app.world_mut().resource_mut::<PreferencesDialogState>();
+        let apply_after = state.apply_timer.duration();
+        state.apply_timer.tick(apply_after);
+        app.world_mut().resource_mut::<Settings>().app.performance.show_overlay = true;
+        app.update();
+        assert!(app.world().resource::<PreferencesDialogState>().show_overlay);
     }
 }

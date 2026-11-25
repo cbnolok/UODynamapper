@@ -16,6 +16,10 @@ use bevy::window::PrimaryWindow;
 /// Base delay between tiles at speed multiplier 1.0 (20 steps per second).
 const BASE_MOVE_COOLDOWN: f32 = 0.05;
 
+/// The movement speed multiplier the preferences offer (`SectInput::movement_speed_multiplier`); a saved value
+/// outside it moves at its nearest end.
+pub const MOVEMENT_SPEED_MULTIPLIER_RANGE: std::ops::RangeInclusive<f32> = 0.1..=500.0;
+
 pub struct PlayerMovementPlugin {
     pub registered_by: &'static str,
 }
@@ -71,7 +75,7 @@ const MAX_SLIDE_CELLS: f32 = 2.0;
 const MOUSE_RUN_SPEED_MULTIPLIER: f32 = 2.0;
 
 /// Whether the player is drawn as a body, and whether it rides: then it moves at the client's pace
-/// (`mobile_motion::step_secs`) instead of the free speed of the marker.
+/// (`mobile_motion::step_secs`) times the movement speed, instead of the free speed of the marker.
 fn drawn_body(settings: &Settings) -> Option<bool> {
     let world = &settings.core.world;
     (world.player_body != 0 && !world.hide_player).then_some(world.player_mount_body != 0)
@@ -238,6 +242,23 @@ fn parse_vertical_movement(keyboard_input: &Res<ButtonInput<KeyCode>>, settings:
     v_dir
 }
 
+/// The player's movement speed multiplier from the settings, within `MOVEMENT_SPEED_MULTIPLIER_RANGE`.
+fn movement_speed(settings: &Settings) -> f32 {
+    settings.app.input.movement_speed_multiplier
+        .clamp(*MOVEMENT_SPEED_MULTIPLIER_RANGE.start(), *MOVEMENT_SPEED_MULTIPLIER_RANGE.end())
+}
+
+/// The time between two steps of the player at movement speed `speed`: a drawn body (`drawn_body`, whether it rides)
+/// steps at the client's pace for walking or running, the marker at the base pace times the input's own speed
+/// (`MoveDirection::speed_multiplier`).
+fn step_interval(body: Option<bool>, run: bool, speed: f32, input_speed: f32) -> std::time::Duration {
+    let secs = match body {
+        Some(mounted) => step_secs(if run { Movement::Run } else { Movement::Walk }, mounted) / speed,
+        None => BASE_MOVE_COOLDOWN / (speed * input_speed),
+    };
+    std::time::Duration::from_secs_f32(secs)
+}
+
 fn sys_player_move(
     time: Res<Time>,
     mut cooldown: ResMut<MoveCooldown>,
@@ -249,69 +270,64 @@ fn sys_player_move(
     ground: GroundData,
 ) {
     let body = drawn_body(&settings);
-    if let Some(mounted) = body {
-        // A drawn body steps at the client's pace for its movement.
-        let movement = if move_dir.run { Movement::Run } else { Movement::Walk };
-        let duration = std::time::Duration::from_secs_f32(step_secs(movement, mounted));
-        if cooldown.0.duration() != duration {
-            cooldown.0.set_duration(duration);
-        }
-        cooldown.0.tick(time.delta());
-    } else {
-        if cooldown.0.duration().as_secs_f32() != BASE_MOVE_COOLDOWN {
-            cooldown.0.set_duration(std::time::Duration::from_secs_f32(BASE_MOVE_COOLDOWN));
-        }
-        let multiplier = settings.app.input.movement_speed_multiplier * move_dir.speed_multiplier;
-        cooldown.0.tick(time.delta().mul_f32(multiplier));
+    let speed = movement_speed(&settings);
+    let interval = step_interval(body, move_dir.run, speed, move_dir.speed_multiplier);
+    if cooldown.0.duration() != interval {
+        cooldown.0.set_duration(interval);
     }
+    cooldown.0.tick(time.delta());
+    // Every step the frame's time holds: one a frame would cap the speed at the frame rate.
+    let steps = cooldown.0.times_finished_this_tick();
 
     // Only move if cooldown finished and a direction is pressed
-    if cooldown.0.just_finished() {
+    if steps > 0 {
         let smooth_movement = settings.app.input.smooth_movement;
         if let Some(dir) = move_dir.dir {
-            for (mut transform, mut player, motion) in query.iter_mut() {
-                let current_pos = player
-                    .current_pos
-                    .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
-                // A drawn body follows the ground, turns beside a corner it cannot cut and stops where the client
-                // blocks the step, facing it, as the client walks.
-                let (dir, ground_z) = match body.map_or(BodyStep::Unknown, |_| ground.step(current_pos, dir)) {
-                    BodyStep::Walk(dir, z) => (dir, Some(z)),
-                    BodyStep::Blocked => {
-                        if let (Some(mut motion), Some(facing)) = (motion, direction_of_step(dir)) {
-                            motion.facing = facing;
+            for (mut transform, mut player, mut motion) in query.iter_mut() {
+                for _ in 0..steps {
+                    let current_pos = player
+                        .current_pos
+                        .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
+                    // A drawn body follows the ground, turns beside a corner it cannot cut and stops where the client
+                    // blocks the step, facing it, as the client walks.
+                    let (dir, ground_z) = match body.map_or(BodyStep::Unknown, |_| ground.step(current_pos, dir)) {
+                        BodyStep::Walk(dir, z) => (dir, Some(z)),
+                        BodyStep::Blocked => {
+                            if let (Some(motion), Some(facing)) = (motion.as_deref_mut(), direction_of_step(dir)) {
+                                motion.facing = facing;
+                            }
+                            break;
                         }
-                        continue;
-                    }
-                    BodyStep::Unknown => (dir, None),
-                };
-                if let (Some(mut motion), Some(mounted)) = (motion, body) {
-                    motion.step(dir, move_dir.run, mounted);
-                }
-                // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
-                let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
-                if !smooth_movement {
-                    transform.translation += delta;
-                }
-
-                // Sync the UO coordinate state
-                let (max_x, max_y) =
-                    if let Some(meta) = world_geo_data.maps.get(&(current_pos.m as u32)) {
-                        (meta.width, meta.height)
-                    } else {
-                        (u16::MAX as u32, u16::MAX as u32)
+                        BodyStep::Unknown => (dir, None),
                     };
-                let mut next_pos = advance_horizontal_position(current_pos, dir, max_x, max_y);
-                if let Some(z) = ground_z {
-                    next_pos.z = z;
-                    if !smooth_movement {
-                        transform.translation.y = crate::world::coords::scale_uo_z_to_bevy_units(f32::from(z));
+                    if let (Some(motion), Some(mounted)) = (motion.as_deref_mut(), body) {
+                        motion.step(dir, move_dir.run, mounted, speed);
                     }
-                }
-                let old_map = player.current_pos.map(|p| p.m);
-                player.current_pos = Some(next_pos);
-                if old_map != Some(next_pos.m) {
-                    chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+                    // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
+                    let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
+                    if !smooth_movement {
+                        transform.translation += delta;
+                    }
+
+                    // Sync the UO coordinate state
+                    let (max_x, max_y) =
+                        if let Some(meta) = world_geo_data.maps.get(&(current_pos.m as u32)) {
+                            (meta.width, meta.height)
+                        } else {
+                            (u16::MAX as u32, u16::MAX as u32)
+                        };
+                    let mut next_pos = advance_horizontal_position(current_pos, dir, max_x, max_y);
+                    if let Some(z) = ground_z {
+                        next_pos.z = z;
+                        if !smooth_movement {
+                            transform.translation.y = crate::world::coords::scale_uo_z_to_bevy_units(f32::from(z));
+                        }
+                    }
+                    let old_map = player.current_pos.map(|p| p.m);
+                    player.current_pos = Some(next_pos);
+                    if old_map != Some(next_pos.m) {
+                        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+                    }
                 }
             }
             // NOTE: Do NOT call cooldown.0.reset() for a Repeating timer if we want to preserve
@@ -448,6 +464,44 @@ fn slide_towards(from: Vec3, target: Vec3, max_cells: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::mobile_motion::{STEP_SECS_MOUNTED_RUN, STEP_SECS_WALK};
+    use std::time::Duration;
+
+    #[test]
+    fn the_movement_speed_divides_every_step_time() {
+        const SPEED: f32 = 4.0;
+        const MOUSE_SPEED: f32 = MOUSE_RUN_SPEED_MULTIPLIER;
+        let secs = |interval: Duration| interval.as_secs_f32();
+        assert!((secs(step_interval(None, false, SPEED, 1.0)) - BASE_MOVE_COOLDOWN / SPEED).abs() < 1e-6);
+        assert!((secs(step_interval(None, false, SPEED, MOUSE_SPEED)) - BASE_MOVE_COOLDOWN / (SPEED * MOUSE_SPEED)).abs()
+            < 1e-6);
+        // A drawn body walks and runs at the client's pace times the speed, on foot or riding.
+        assert!((secs(step_interval(Some(false), false, SPEED, 1.0)) - STEP_SECS_WALK / SPEED).abs() < 1e-6);
+        assert!((secs(step_interval(Some(true), true, SPEED, 1.0)) - STEP_SECS_MOUNTED_RUN / SPEED).abs() < 1e-6);
+    }
+
+    /// A frame takes every step its time holds: at one step a frame, the speed stopped at the frame rate.
+    #[test]
+    fn a_frame_takes_every_step_its_time_holds() {
+        const FRAMES_PER_SEC: u32 = 30;
+        const SPEED: f32 = 4.0;
+        let interval = step_interval(None, false, SPEED, 1.0);
+        let mut cooldown = Timer::new(interval, TimerMode::Repeating);
+        let frame = Duration::from_secs(1) / FRAMES_PER_SEC;
+        let steps: u32 = (0..FRAMES_PER_SEC).map(|_| cooldown.tick(frame).times_finished_this_tick()).sum();
+        let expected = (SPEED / BASE_MOVE_COOLDOWN).round() as u32;
+        assert!(steps + 1 >= expected && steps <= expected, "{steps} steps in a second, expected {expected}");
+        assert!(steps > FRAMES_PER_SEC);
+    }
+
+    #[test]
+    fn a_saved_movement_speed_out_of_range_moves_at_its_nearest_end() {
+        let mut settings = crate::settings::bundled_settings();
+        settings.app.input.movement_speed_multiplier = 0.0;
+        assert_eq!(movement_speed(&settings), *MOVEMENT_SPEED_MULTIPLIER_RANGE.start());
+        settings.app.input.movement_speed_multiplier = f32::MAX;
+        assert_eq!(movement_speed(&settings), *MOVEMENT_SPEED_MULTIPLIER_RANGE.end());
+    }
 
     #[test]
     fn a_stepping_body_rises_with_its_slide() {
