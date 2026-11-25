@@ -775,10 +775,10 @@ Interface.uop: a folder holding data/interface/default/textures/gumpart, or a fo
 const GUMPS_EC_MAX_ID_TOOLTIP: &str = "The highest gump id read from Interface.uop (pack-ec-gumps --max-id).";
 const GUMPS_EC_MAX_ID_REFUSAL: &str = "An extracted gumpart folder is read whole; only Interface.uop is read by id.";
 const GUMPS_EC_SHARE_TOOLTIP: &str = "Share with gumps_cc: leave out each single gump the output folder's gumps_cc.uddp \
-draws the same (the Classic gumps Interface.uop repeats), and each paperdoll equipment gump it has at the same size, and \
-list it for Dynamapper to draw from the Classic source (pack-ec-gumps --share-with). The package then needs that \
-gumps_cc.uddp, or the Classic client files, to show those gumps. With upscaling, the Classic and Enhanced single gump \
-passes must match, or no single gump draws the same and none is shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
+draws the same (the Classic gumps Interface.uop repeats) and list it for Dynamapper to draw from the Classic source \
+(pack-ec-gumps --share-with). The package then needs that gumps_cc.uddp, or the Classic client files, to show those \
+gumps. With upscaling, the Classic and Enhanced single gump passes must match, or no gump draws the same and nothing is \
+shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
 
 /// The width of an asset card's progress bar.
 const CARD_PROGRESS_BAR_WIDTH: f32 = 200.0;
