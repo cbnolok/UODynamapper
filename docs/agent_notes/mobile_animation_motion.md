@@ -557,7 +557,7 @@ whatever its size); large bodies upscale in tiles without growing the workspace.
   Balanced `never`. Written in the file's header and the Preferences hover text.
 - **One decision point**: `MobileUpscales::body_upscales(key, packages, rife, mode)` and its `body_choice`; the size
   rule's canvases are found only when Balanced asks for an unlisted body. A package that carries a body's 2× frames
-  (pack-time upscaling, planned) answers before it.
+  (pack-time upscaling, below) passes the size rule; Off and a Balanced `never` still keep it at 1×.
 - **Tiles** (uot-gpu-compute `upscale::tiles`): a canvas larger than its workspace is cut into windows of the
   workspace's size (256×256, `UPSCALE_TILE_SIDE`, the largest multiple of 8 within 260×260), each keeping as its core
   only what lies at least the network's reach inside its inner edges: 21 pixels, one per 3×3 convolution (1 + 3×6 + 1
@@ -642,6 +642,73 @@ Kept at run time: RIFE and SPAN both fit the shared 2 ms budget with frame time 
 2.8 GB. Ahead of time, RIFE ×2 alone (+2.7 GB) is the only option of the size of one more package, and it would
 still remove the run-time choice. A frame too large for the run-time SPAN canvas (above 256², the stygian) would be
 the case for a few upscales made ahead of time.
+
+### Packed 2× frames, opt-in (2026-11-23)
+
+The user's decision: the converter may make SPAN 2× frames ahead of time, opt-in, with a warning, typically for the
+smallest Classic bodies; the package keeps its 1× frames, and RIFE in-betweens are still made at 1× and upscaled at
+run time. Format: [UDDP_FORMATS.md §3.2](../dev_wiki/UDDP_FORMATS.md#32-packed-2x-frames).
+
+- **Converter** (`udd_conv::animation::mobile_prescale`): a pass over a written package, run last by both packers
+  (`--prescale`, `--prescale-max-side <px>`, the converter GUI's "Prescale 2x (not recommended)") and by
+  `udd-cli tool prescale-mobile-anims` on a package as it is (`--compare` adds the checks below). Bodies: those
+  `MobilePrescale.kdl` lists as `always` by in-game body id, and with a maximum side each body whose largest stored
+  frame fits it, but those listed `never`; a body is followed to its stored frames and taken whole. It upscales the
+  stored 1× frames as the pages decode, with uot-gpu-compute's `FrameUpscaler` on the workspace the renderer's job
+  would use (the canvas of the clip's largest frame, tiles past 260²), Classic alpha snapped, and stores each canvas
+  on 4-texel block corners in pages of the package's format, BC7 by the packer's encoder. Pages are compressed as
+  they are made, so the pass holds only stored bytes (under 1 GB resident at 64 px). Every other entry, the strides
+  and stride sources included, is copied as stored.
+- **Renderer** (`MobileUpscales`): a sequence wanted whose clip the package holds at 2× reads it on the background
+  pool and writes it into the sequence's room in the upscaled pages: a clip is ready with no job, a RIFE sequence's
+  job upscales only its in-betweens (every `factor`th frame is the packed key frame). Same modes and magnification
+  hysteresis: Off shows 1×, a Balanced `never` keeps 1×, and a body whose package holds all its clips at 2× passes
+  the size rule. A sequence stored in parts, or packed frames that are not its canvases, upscale at run time.
+
+Measured on the Radeon 880M with the size rule alone, on copies of three Classic test packages the user's
+converter wrote in turn (`uodynamapper-scratch/prescale/out/*.log`; time is the tool's, nearly all of it the per-frame
+upscale, and other agents' converters, strides measures and builds shared the CPU and GPU during most runs, so the
+times are loose). The current one (2026-11-25) is BC7, 826.3 MiB:
+
+| max side | frame sets | frames | 2× pages | package after | increase | time |
+|---:|---:|---:|---:|---:|---:|---:|
+| 48 | 487 | 591,942 | 244 | 1161.9 MiB | +335.6 MiB, +40.6 % | 614 s |
+| 64 | 598 | 723,191 | 362 | 1300.3 MiB | +474.1 MiB, +57.4 % | 728 s |
+| 96 | 743 | 847,307 | 609 | 1603.1 MiB | +776.9 MiB, +94.0 % | 1068 s |
+| 128 | 829 | 885,499 | 787 | 1823.7 MiB | +997.5 MiB, +120.7 % | 1105 s |
+
+The 2026-11-23 package (BC7 without RDO, Zstd 9, 942.9 MiB, with about 75 bodies the Classic packer took from the
+Enhanced folder's AnimationFrame5/6.uop) gave, at 32 (with `--compare`, which upscales every frame twice), 48 and 128
+px: 478,789 / 688,739 / 1,041,477 frames, +19.5 % / +41.0 % / +124.3 %, in 611 / 490 / 1095 s. The 2026-11-22
+package had RGBA8888 pages (878.7 MiB, Zstd), so its 2× pages took four times the bytes before compression: at 48 /
+64 / 96 px the same frames as the current package grew it by +127.1 % / +179.0 % / +288.8 % (1995.4 / 2451.9 / 3416.6
+MiB, in 1510 s on an earlier build under load / 1264 / 1732 s). Every prescaled copy validated, and a prescaled copy
+keeps the strides entries as stored (1914 clips unchanged on the 11-22 package; the current package holds none, so
+`strides status` counts its 1914 clips new on the prescaled copy).
+
+- **The same frames as at run time**: the packed 2× canvases are the run-time upscale itself (the same
+  `FrameUpscaler`, on the same workspace canvas the renderer's job lays out, Classic alpha snapped), so before the page
+  encode they are the frames the renderer would make on the same device (the GPU test
+  `prescaled_frames_are_the_upscale_of_the_stored_frames_and_go_when_none_is_chosen` reads a prescaled RGBA package
+  back texel for texel against `FrameUpscaler`, and the renderer's tests leave packed frames that are not its canvases
+  to the run time). What differs is the page encode: the converter's BC7 (the packer's encoder) and not the
+  renderer's GPU BC7 of its upscaled atlas. `--compare` at 32 px on the 11-23 package measured both: the BC7 page
+  changes 238,237,717 of 507,533,944 2× texels at PSNR 35.53 dB against the upscaled canvases, the usual BC7 loss.
+  Upscaled on each frame's own canvas instead of the clip's workspace, 21,973,086 texels (4.3 %) differ, at most by
+  255 steps (Classic alpha snapped the other way at an edge): the reason the pass uses the clip's workspace as the
+  renderer does.
+- **In game** (map 1 at 2111,790, zoom 0.5 = 2×, Balanced, the 11-22 package prescaled at 64 px): the bird
+  (Classic 6, a 24×16 canvas) was at 2× from its package 0.18 s after first drawn (the 2× page read and decoded on the
+  pool) and 0.03 s for a clip whose page was read; the human 400, not packed, upscaled at run time in 0.03 s (timings
+  from a build with the upscale log lines raised to info, not committed: the INFO tracing filter hides the `debug!`
+  ones in every build). With RIFE ×2 the bird's in-betweens were upscaled at run time beside its packed frames
+  (0.21-0.31 s a sequence), no packed frames left out; the four styles drew the packed bird at the 1× placement, and
+  Off at 1×. Clip:
+  `uodynamapper-scratch/prescale/bird-packed-2x-walk.mp4`.
+- **Verdict**: kept opt-in and not recommended. The smallest bodies, which the size rule picks, already upscale at
+  run time in a few hundredths of a second, so packing them saves no visible time, while their borders make their
+  2× frames the costliest per texel; the large bodies, whose run-time upscale takes seconds in tiles, are where it
+  would show, and they are the largest on disk (an `always` entry for a few of them is the use that makes sense).
 
 ## Faster networks: GPU kernels and CPU inference (measured 2026-11-22)
 

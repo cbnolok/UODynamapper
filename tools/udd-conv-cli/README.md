@@ -86,6 +86,18 @@ command-line tool; absolute paths are used as given. Packers never write into
 `--ccdir` / `--ecdir` unless an output path explicitly points there. `pack-radar --outdir`
 puts the output file name in that folder instead.
 
+### Prescaled 2x mobile frames (not recommended)
+
+`pack-mobile-anims` and `pack-ec-mobile-anims` accept `--prescale` (the bodies
+`MobilePrescale.kdl` lists as `always`; `--prescale-kdl` reads another copy) and
+`--prescale-max-side <PIXELS>` (also each body whose largest frame is at most that size,
+but those listed as `never`): the package then also holds the SPAN 2x frames of those
+bodies, beside its 1x frames, which Dynamapper draws instead of upscaling them at run
+time. Off by default: Dynamapper makes the same frames at run time, and the package grows
+a lot (the Classic bodies of at most 48 pixels a side add 41 % to a BC7 Classic package,
+127 % to one of RGBA pages).
+`udd-cli tool prescale-mobile-anims` does the same to a package already packed.
+
 ### Upscale profiles
 
 Image packers that support upscale passes also accept `--upscale-profile
@@ -168,6 +180,7 @@ Inspects, extracts, and edits `.uddp` and `.uddpi` package files.
 | `apply-tilemeta-overrides` | Apply `TilemetaOverrides.kdl` (the bundled one in `cc_ec_convtables/`, or `--overrides`) to a packed `tilemeta.uddp` and write `<stem>.overridden.uddp` beside it (or `--output`, which may be the package itself). The overrides change the Enhanced item flags and lights; `kr-light` takes the light from the package's own Kingdom Reborn section, so no client folder is needed, and a package without that section is refused. A package the overrides were applied to before gets the clients' values back first. `pack-tilemeta` and the `pack` commands apply the bundled file whenever they nest the Kingdom Reborn section. |
 | `import-csv` | Import edited CSV metadata into a rebuilt package. |
 | `strides` | The mobiles' measured walk and run strides of a `mobile_anim_cc.uddp` or `mobile_anim_ec.uddp`. `strides measure changed\|full FILE...` measures them with RIFE on the GPU and stores them in the packages: it hashes every clip on all threads, starts the GPU only when a clip needs measuring, measures `changed` the clips whose frames are new or changed since their stride was measured (a clip sharing the frames of one kept or measured takes its measurement) or `full` every clip, drops the strides of clips gone, and rewrites a package only when its strides changed (in place through a `.partial` file, or into `--output DIR`); `--body N` (repeatable) measures only those bodies, `--report DIR` writes `mobile_strides_<cc\|ec>.tsv`. It prints each clip measured, then a summary and the timings. `strides export` / `import` write and read the strides as a tab-separated table (`import` skips rows whose hash no longer matches the frames; rows without one need `--trust-unhashed`), `strides status` counts the unchanged, changed, new and removed (`--list` names the clips to measure). `strides sources FILE... --ccdir DIR --ecdir DIR` records in packages packed before the entry existed the client frames each stride clip was made from (`metadata/stride_sources.bin`, which the packers write), by which a repack carries the strides over to new frames of the same client frames, such as after a `MobileFrameFilters.kdl` change; the strides are unchanged. |
+| `prescale-mobile-anims` | Pack SPAN 2x frames made ahead of time into a `mobile_anim_cc.uddp` or `mobile_anim_ec.uddp`, beside its frames, replacing those it had (`--max-side`, `--kdl`, `--output`; `--compare` also reports how far the packed frames are from the run-time ones). Not recommended; see "Prescaled 2x mobile frames" above. |
 | `diff` | Compare two packages or two metadata CSV files. |
 | `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. The Kingdom Reborn section of `tex_art_ec`, `tex_land_ec` and `tex_aux_ec` is read too, and fails when missing (a `tilemeta` without one is noted); a `tilemeta` with one must record the digest of this build's `TilemetaOverrides.kdl`, and fails with the `apply-tilemeta-overrides` command to run when it records none or another; each overlay must find every id it leaves to the package holding it (the land section also at that package's slot), and the Kingdom Reborn item lights their textures. A package of the earlier standalone Kingdom Reborn layout fails with the repack message. Exits non-zero when any fails. |
 
