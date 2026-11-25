@@ -15,7 +15,7 @@ const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
 pub struct PrescaleArgs {
     /// Also pack 2x frames made ahead of time beside the frames, for the bodies MobilePrescale.kdl lists as "always".
     /// Not recommended: the renderer makes the same 2x frames at run time, and the package grows a lot (the Classic
-    /// bodies of at most 48 pixels a side add 127 % to the Classic package).
+    /// bodies of at most 48 pixels a side add 41 % to a BC7 Classic package, 127 % to one of RGBA pages).
     #[arg(long)]
     pub prescale: bool,
     /// With --prescale implied: also every body whose largest stored frame is at most this many pixels wide and high

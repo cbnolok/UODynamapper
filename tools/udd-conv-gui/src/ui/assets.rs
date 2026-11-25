@@ -728,8 +728,8 @@ const PRESCALE_DEFAULT_MAX_SIDE: u16 = 64;
 const PRESCALE_MAX_SIDE_RANGE: std::ops::RangeInclusive<u16> = 1..=512;
 const PRESCALE_TOOLTIP: &str = "Not recommended: also pack 2x frames made ahead of time beside the frames, which \
 Dynamapper then draws instead of upscaling them at run time. Dynamapper makes the same 2x frames at run time; packed, \
-they grow the package a lot (the Classic bodies of at most 48 pixels a side add 127 % to the Classic package). On, the bodies MobilePrescale.kdl lists as \
-always; with Max side, also each body whose largest frame is at most that many pixels wide and high (the smallest \
+they grow the package a lot (the Classic bodies of at most 48 pixels a side add 41 % to a BC7 Classic package, \
+127 % to one of RGBA pages). On, the bodies MobilePrescale.kdl lists as always; with Max side, also each body whose largest frame is at most that many pixels wide and high (the smallest \
 Classic bodies), but those listed as never.";
 
 /// The prescale step of a mobile animation card: off by default, with its warning.

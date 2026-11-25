@@ -1,8 +1,8 @@
 //! The 2x frames of a mobile animation package made ahead of time (`--prescale`), stored beside its 1x frames
 //! ([`udd_assets::animation::mobile_upscaled`]). Off by default and not recommended: Dynamapper makes the same 2x
 //! frames at run time; packed, they grow the package a lot (4 times the texels of the frames chosen and their border:
-//! the Classic bodies of at most 48 pixels a side add 127 % to the Classic package), for bodies whose run-time upscale
-//! would show for a moment on screen.
+//! the Classic bodies of at most 48 pixels a side add 41 % to a BC7 Classic package, 127 % to one of RGBA pages),
+//! for bodies whose run-time upscale would show for a moment on screen.
 //!
 //! The stage runs on a package already written (the packers call it last; `udd-cli tool prescale-mobile-anims` on a
 //! package as it is): it upscales the stored 1x frames, as decoded from the pages, which is what the renderer upscales
