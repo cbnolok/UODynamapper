@@ -38,6 +38,9 @@ pub const SETTINGS_KEY: &str = "uddp_inspector_settings";
 #[serde(default)]
 pub struct AppSettings {
     pub last_package_dir: Option<PathBuf>,
+    /// The folder searched for the companion packages a package lacks beside it: a tilemeta's image packages
+    /// (`tex_art_ec`, `tex_aux_ec`, `tex_land_ec`) and an effects package's `hues.uddp`.
+    pub companion_package_dir: Option<PathBuf>,
     /// The background of the Content Preview image (a gump, art, a texture or an atlas) and of the image window.
     pub preview_background: uot_gui::ImageBackground,
 }
@@ -70,6 +73,10 @@ pub struct InspectorApp {
     /// The RIFE in-betweens of the selected clip.
     pub in_betweens: crate::ui::in_betweens::InBetweenPreview,
     pub gumps_package: Option<Arc<GumpsPackage>>,
+    /// The image packages of an open tilemeta, which its texture refs' images are read from.
+    pub tilemeta_image_holders: Option<crate::logic::tilemeta_refs::ImageHolders>,
+    /// The texture ref whose image the preview shows: item id and ref index.
+    pub selected_texture_ref: Option<(u32, usize)>,
     pub selected_mobile_anim_index: usize,
     pub selected_mobile_anim_frame_index: usize,
     pub mobile_anim_is_playing: bool,
@@ -134,6 +141,8 @@ impl InspectorApp {
             strides_panel: None,
             in_betweens: Default::default(),
             gumps_package: None,
+            tilemeta_image_holders: None,
+            selected_texture_ref: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -621,7 +630,11 @@ impl InspectorApp {
                 self.mobile_anim_tree_order = MobileAnimTreeOrder::BodyType;
                 self.mobile_anim_tree_collapse_revision = 0;
                 self.detect_virtual_entries(&reader, &path);
-                self.effects_viewer = crate::ui::effects::EffectsViewer::open(&path, &reader);
+                self.effects_viewer = crate::ui::effects::EffectsViewer::open(
+                    &path,
+                    &reader,
+                    self.settings.companion_package_dir.as_deref(),
+                );
 
                 self.package = Some(reader);
                 self.remember_package_dir(&path);
@@ -667,6 +680,8 @@ impl InspectorApp {
         self.virtual_entries.clear();
         self.virtual_material_entries.clear();
         self.atlas_pages.clear();
+        self.tilemeta_image_holders = None;
+        self.selected_texture_ref = None;
 
         match load_atlas_package(reader) {
             Some(Ok(package)) => {
@@ -710,9 +725,10 @@ impl InspectorApp {
             return;
         }
 
-        let tilemeta_entries = self.detect_tilemeta_virtual_entries(reader, package_path);
+        let (tilemeta_entries, holders) = self.detect_tilemeta_virtual_entries(reader, package_path);
         if !tilemeta_entries.is_empty() {
             self.virtual_entries = tilemeta_entries;
+            self.tilemeta_image_holders = holders;
             return;
         }
 
@@ -977,15 +993,22 @@ impl InspectorApp {
         }
     }
 
-    pub fn detect_tilemeta_virtual_entries(&self, reader: &UddpReader, package_path: &Path) -> Vec<VirtualEntry> {
+    /// The land and item entries of a tilemeta, and the image packages its texture refs were looked up in (`None`
+    /// when the texture-ref view could not read the package).
+    pub fn detect_tilemeta_virtual_entries(
+        &self,
+        reader: &UddpReader,
+        package_path: &Path,
+    ) -> (Vec<VirtualEntry>, Option<crate::logic::tilemeta_refs::ImageHolders>) {
         let mut entries = Vec::new();
-        // The texture-ref view reads the whole package and the image packages beside it.
+        // The texture-ref view reads the whole package and its image packages.
         let tilemeta = udd_assets::TileMetaPackage::from_uddp_package(reader.clone()).ok();
-        let holders = match (&tilemeta, package_path.parent()) {
-            (Some(_), Some(directory)) => crate::logic::tilemeta_refs::ImageHolders::load_beside(directory),
-            _ => crate::logic::tilemeta_refs::ImageHolders::default(),
-        };
-        let image_packages = holders.loaded_names();
+        let holders = tilemeta.as_ref().map(|_| {
+            crate::logic::tilemeta_refs::ImageHolders::load(
+                package_path,
+                self.settings.companion_package_dir.as_deref(),
+            )
+        });
 
         if let Some(data) = self.read_file_by_path(reader, TILEMETA_LAND_ENTRY_PATH) {
             if let Some(land_tiles) = read_pod_records::<TileMetaLandTile>(&data) {
@@ -1019,7 +1042,10 @@ impl InspectorApp {
                     let name = tile.name_ascii().to_string();
                     let (texture_refs, main_texture) = tilemeta
                         .as_ref()
-                        .map(|tilemeta| crate::logic::tilemeta_refs::item_texture_refs(tilemeta, tile.tile_id, &holders))
+                        .zip(holders.as_ref())
+                        .map(|(tilemeta, holders)| {
+                            crate::logic::tilemeta_refs::item_texture_refs(tilemeta, tile.tile_id, holders)
+                        })
                         .unwrap_or_default();
                     VirtualEntry {
                         id: tile.tile_id,
@@ -1058,14 +1084,56 @@ impl InspectorApp {
                             cc_offset_y: 0,
                             texture_refs,
                             main_texture,
-                            image_packages: image_packages.clone(),
                         }),
                     }
                 }));
             }
         }
 
-        entries
+        (entries, holders)
+    }
+
+    /// Show the image of texture ref `index` of item `tile_id` in the preview.
+    pub fn show_texture_ref_image(&mut self, ctx: &egui::Context, tile_id: u32, index: usize) {
+        self.selected_texture_ref = Some((tile_id, index));
+        let Some(tex_ref) = self.active_virtual_entries().iter().find_map(|entry| match &entry.data {
+            VirtualEntryData::TileMetaItem(info) if entry.id == tile_id => info.texture_refs.get(index).cloned(),
+            _ => None,
+        }) else {
+            return;
+        };
+        let image = self
+            .tilemeta_image_holders
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("no image packages loaded"))
+            .and_then(|holders| holders.ref_image(tile_id, &tex_ref));
+        match image {
+            Ok(image) => self.set_preview_image(
+                ctx,
+                &format!("tilemeta_ref_{tile_id}_{index}"),
+                [usize::from(image.width), usize::from(image.height)],
+                &image.rgba,
+                format!(
+                    "Item {tile_id} texture {} ({}, {}x{}, from {})",
+                    tex_ref.texture_id, tex_ref.stable_role, image.width, image.height, tex_ref.image_holder
+                ),
+            ),
+            Err(error) => {
+                self.preview_texture = None;
+                self.preview_text = Some(format!(
+                    "Item {tile_id} texture {} ({}): {error:#}",
+                    tex_ref.texture_id, tex_ref.image_holder
+                ));
+            }
+        }
+    }
+
+    /// Set the companion package folder and reopen the open package, so its views look the companions up again.
+    pub fn set_companion_package_dir(&mut self, dir: Option<PathBuf>) {
+        self.settings.companion_package_dir = dir;
+        if let Some(path) = self.package_path.clone() {
+            self.open_package(path);
+        }
     }
 
     pub fn detect_gump_virtual_entries(
@@ -1408,6 +1476,7 @@ impl InspectorApp {
                         self.preview_text = Some(render_tilemeta_land_preview(ventry.id, &info));
                     }
                     VirtualEntryData::TileMetaItem(info) => {
+                        self.selected_texture_ref = None;
                         self.preview_texture = None;
                         self.preview_text = Some(render_tilemeta_item_preview(ventry.id, &info));
                     }
@@ -1914,6 +1983,8 @@ mod tests {
             strides_panel: None,
             in_betweens: Default::default(),
             gumps_package: None,
+            tilemeta_image_holders: None,
+            selected_texture_ref: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -2268,6 +2339,8 @@ mod tests {
             strides_panel: None,
             in_betweens: Default::default(),
             gumps_package: None,
+            tilemeta_image_holders: None,
+            selected_texture_ref: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -2387,6 +2460,8 @@ mod tests {
             strides_panel: None,
             in_betweens: Default::default(),
             gumps_package: None,
+            tilemeta_image_holders: None,
+            selected_texture_ref: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -2469,6 +2544,8 @@ mod tests {
             strides_panel: None,
             in_betweens: Default::default(),
             gumps_package: None,
+            tilemeta_image_holders: None,
+            selected_texture_ref: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -2788,6 +2865,8 @@ mod tests {
             strides_panel: None,
             in_betweens: Default::default(),
             gumps_package: None,
+            tilemeta_image_holders: None,
+            selected_texture_ref: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,

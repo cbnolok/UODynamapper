@@ -264,7 +264,7 @@ impl InspectorApp {
         }
     }
 
-    fn ui_details_virtual(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui, _idx: usize) {
+    fn ui_details_virtual(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, _idx: usize) {
         let Some(v_idx) = self.selected_virtual_idx else {
             return;
         };
@@ -586,34 +586,57 @@ impl InspectorApp {
             }
         });
         if let VirtualEntryData::TileMetaItem(info) = &ventry.data {
-            ui_tilemeta_texture_refs(ui, ventry.id, info);
+            let image_packages =
+                self.tilemeta_image_holders.as_ref().map_or(&[][..], |holders| holders.loaded_paths.as_slice());
+            let selected = self.selected_texture_ref.filter(|(tile_id, _)| *tile_id == ventry.id).map(|(_, index)| index);
+            if let Some(index) = ui_tilemeta_texture_refs(ui, ventry.id, info, image_packages, selected) {
+                self.show_texture_ref_image(ctx, ventry.id, index);
+            }
         }
     }
 }
 
-/// The item's texture refs, one row each.
-fn ui_tilemeta_texture_refs(ui: &mut egui::Ui, tile_id: u32, info: &crate::models::TileMetaItemInfo) {
+/// The item's texture refs, one row each, with the image packages they were looked up in; returns the index of the
+/// ref whose texture id was clicked to show its image.
+fn ui_tilemeta_texture_refs(
+    ui: &mut egui::Ui,
+    tile_id: u32,
+    info: &crate::models::TileMetaItemInfo,
+    image_packages: &[std::path::PathBuf],
+    selected: Option<usize>,
+) -> Option<usize> {
     ui.add_space(DETAILS_SECTION_SPACING_LARGE);
     ui.label(egui::RichText::new(format!("Texture Refs ({})", info.texture_refs.len())).strong());
-    ui.label(if info.image_packages.is_empty() {
-        "Image packages beside the tilemeta: none found".to_string()
+    if image_packages.is_empty() {
+        ui.label("Image packages: none found beside the tilemeta or in the package folder");
     } else {
-        format!("Image packages beside the tilemeta: {}", info.image_packages.join(", "))
-    });
+        ui.label("Image packages:");
+        for path in image_packages {
+            ui.add(egui::Label::new(path.display().to_string()).wrap());
+        }
+    }
     if info.texture_refs.is_empty() {
         ui.label("No tileart texture refs.");
-        return;
+        return None;
     }
+    ui.label("Click a texture id to show its image.");
+    let mut clicked = None;
     egui::ScrollArea::horizontal().id_salt(("tilemeta_refs_scroll", tile_id)).show(ui, |ui| {
         egui::Grid::new(("tilemeta_refs", tile_id)).striped(true).show(ui, |ui| {
             for header in TEXTURE_REF_COLUMNS {
                 ui.label(egui::RichText::new(header).strong());
             }
             ui.end_row();
-            for tex_ref in &info.texture_refs {
+            for (index, tex_ref) in info.texture_refs.iter().enumerate() {
                 ui.label(tex_ref.block_index.to_string());
                 ui.label(tex_ref.item_index.to_string());
-                ui.label(tex_ref.texture_id.to_string());
+                if tex_ref.image_holder.has_image() {
+                    if ui.selectable_label(selected == Some(index), tex_ref.texture_id.to_string()).clicked() {
+                        clicked = Some(index);
+                    }
+                } else {
+                    ui.label(tex_ref.texture_id.to_string());
+                }
                 ui.label(tex_ref.stable_role);
                 ui.label(&tex_ref.physical_package);
                 ui.label(&tex_ref.logical_family);
@@ -621,11 +644,12 @@ fn ui_tilemeta_texture_refs(ui: &mut egui::Ui, tile_id: u32, info: &crate::model
                 ui.label(yes_no(tex_ref.auxiliary));
                 ui.label(format!("{:.3}", tex_ref.stretch));
                 ui.label(yes_no(tex_ref.is_main));
-                ui.label(&tex_ref.image_holder);
+                ui.label(tex_ref.image_holder.to_string());
                 ui.end_row();
             }
         });
     });
+    clicked
 }
 
 const TEXTURE_REF_COLUMNS: [&str; 11] = [

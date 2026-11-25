@@ -69,6 +69,25 @@ impl eframe::App for InspectorApp {
                         self.open_package(path);
                     }
                 }
+                if ui
+                    .button("📂 Package folder...")
+                    .on_hover_text(
+                        "Where companion packages are looked up when they are not beside the opened package: \
+                         a tilemeta's tex_art_ec, tex_aux_ec and tex_land_ec, an effects package's hues.uddp",
+                    )
+                    .clicked()
+                {
+                    if let Some(dir) = uot_gui::pick_folder() {
+                        self.set_companion_package_dir(Some(dir));
+                    }
+                }
+                if let Some(dir) = self.settings.companion_package_dir.clone() {
+                    ui.label(dir.to_string_lossy());
+                    if ui.small_button("✖").on_hover_text("Clear the package folder").clicked() {
+                        self.set_companion_package_dir(None);
+                    }
+                }
+                ui.separator();
                 if let Some(path) = &self.package_path {
                     ui.label(egui::RichText::new(path.to_string_lossy()).strong());
                 }

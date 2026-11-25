@@ -67,13 +67,13 @@ impl AtlasPackage {
                     .pages()
                     .iter()
                     .map(|page| {
-                        let info = AtlasPageInfo {
+                        let info = atlas_page_info(
                             atlas_width,
                             atlas_height,
-                            used_width: page.used_width,
-                            used_height: page.used_height,
-                            pixel_format: atlas_pixel_format(page.pixel_format),
-                        };
+                            page.used_width,
+                            page.used_height,
+                            page.pixel_format,
+                        );
                         (page.page_index, info)
                     })
                     .collect()
@@ -176,6 +176,17 @@ struct AtlasSlot {
     width: u16,
     height: u16,
     upscale: Option<(u16, u16)>,
+}
+
+/// The page of an atlas package of `atlas_width` by `atlas_height` pages.
+pub fn atlas_page_info(
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    pixel_format: PagePixelFormat,
+) -> AtlasPageInfo {
+    AtlasPageInfo { atlas_width, atlas_height, used_width, used_height, pixel_format: atlas_pixel_format(pixel_format) }
 }
 
 fn atlas_pixel_format(format: PagePixelFormat) -> AtlasPixelFormat {

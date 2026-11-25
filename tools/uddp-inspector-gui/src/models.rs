@@ -158,8 +158,6 @@ pub struct TileMetaItemInfo {
     pub texture_refs: Vec<TileMetaTextureRefInfo>,
     /// The role-aware main-texture choice.
     pub main_texture: Option<TileMetaMainTextureInfo>,
-    /// Image packages found beside the tilemeta, which the refs' image holders were looked up in.
-    pub image_packages: Vec<&'static str>,
 }
 
 /// One tileart texture ref of a `tilemeta` item.
@@ -176,8 +174,8 @@ pub struct TileMetaTextureRefInfo {
     pub stretch: f32,
     /// This ref is the main-texture choice.
     pub is_main: bool,
-    /// The package beside the tilemeta that holds the image.
-    pub image_holder: String,
+    /// The image package that holds the image.
+    pub image_holder: crate::logic::tilemeta_refs::ImageHolder,
 }
 
 /// The role-aware main-texture choice of a `tilemeta` item.

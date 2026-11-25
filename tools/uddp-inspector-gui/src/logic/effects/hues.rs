@@ -10,7 +10,7 @@ use udd_assets::hues::{HUES_TEXTURE_HEIGHT, HUES_TEXTURE_WIDTH};
 use uocf::enhanced::hues::hues_atlas_hash;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
-/// File name of the hues package next to `effects_ec.uddp`.
+/// File name of the hues package `effects_ec.uddp` looks up as a companion.
 pub const HUES_PACKAGE_FILE_NAME: &str = "hues.uddp";
 
 /// A loaded atlas and where it came from.
@@ -26,12 +26,6 @@ impl HueAtlas {
         let hue = u16::try_from(hue).ok()?;
         self.names.as_ref()?.hue_name(hue)
     }
-}
-
-/// `hues.uddp` next to `package_path`, if there is one.
-pub fn sibling_hues_package(package_path: &Path) -> Option<PathBuf> {
-    let path = package_path.parent()?.join(HUES_PACKAGE_FILE_NAME);
-    path.is_file().then_some(path)
 }
 
 pub fn load_hues_package(path: &Path) -> Result<HueAtlas, String> {

@@ -141,7 +141,7 @@ fn real_package_every_entry_previews() {
     for name in PACKAGES {
         let path = package_path(name);
         let reader = UddpReader::load(&path).expect("package container");
-        let viewer = EffectsViewer::open(&path, &reader).expect("an effects package");
+        let viewer = EffectsViewer::open(&path, &reader, None).expect("an effects package");
         assert!(viewer.open_error().is_none(), "{name}: {:?}", viewer.open_error());
         let (package, reader) = open(name);
         let model = EffectsModel::build(&package, &reader);

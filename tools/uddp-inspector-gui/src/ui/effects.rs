@@ -13,7 +13,8 @@ use udd_assets::effects_ec::SYSTEM_KIND_NIF;
 use udd_container::UddpReader;
 use uocf::enhanced::hues::{HUES_UOP_NAME, MAX_EC_HUES};
 
-use crate::logic::effects::hues::{HueAtlas, load_hues_package, load_hues_uop, sibling_hues_package};
+use crate::logic::companions::find_companion;
+use crate::logic::effects::hues::{HUES_PACKAGE_FILE_NAME, HueAtlas, load_hues_package, load_hues_uop};
 use crate::logic::effects::model::{
     EffectsModel, PackageVersions, RootKey, RootRow, SYSTEM_FLAG_NAMES, TEXTURE_FLAG_NAMES, TreeNode, flag_names,
     matches_filter, read_package_versions, system_kind_name, texture_source_name,
@@ -155,8 +156,9 @@ pub struct EffectsViewer {
 }
 
 impl EffectsViewer {
-    /// The viewer of `reader` when it is an effects package (has `metadata/package.bin`).
-    pub fn open(path: &Path, reader: &UddpReader) -> Option<Self> {
+    /// The viewer of `reader` when it is an effects package (has `metadata/package.bin`), with the `hues.uddp` beside
+    /// `path` or in `companion_dir`.
+    pub fn open(path: &Path, reader: &UddpReader, companion_dir: Option<&Path>) -> Option<Self> {
         let versions = read_package_versions(reader)?;
         let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             EffectsEcPackage::from_reader(reader.clone()).map(|package| {
@@ -169,7 +171,7 @@ impl EffectsViewer {
             Ok(Err(error)) => (None, None, Some(format!("{error:#}"))),
             Err(_) => (None, None, Some("the package is corrupt (reading it panicked)".to_owned())),
         };
-        let hue_atlas = match sibling_hues_package(path).map(|hues| load_hues_package(&hues)) {
+        let hue_atlas = match find_companion(path, companion_dir, HUES_PACKAGE_FILE_NAME).map(|hues| load_hues_package(&hues)) {
             Some(Ok(atlas)) => HueAtlasState::Loaded(atlas),
             Some(Err(error)) => HueAtlasState::Failed(error),
             None => HueAtlasState::None,
@@ -1093,7 +1095,7 @@ mod tests {
 
     fn viewer(package: TestPackage) -> EffectsViewer {
         let reader = UddpReader::open(package.into_bytes()).unwrap();
-        EffectsViewer::open(Path::new(FAKE_PATH), &reader).expect("an effects package")
+        EffectsViewer::open(Path::new(FAKE_PATH), &reader, None).expect("an effects package")
     }
 
     fn frame(ctx: &egui::Context, viewer: &mut EffectsViewer) {

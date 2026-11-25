@@ -1,3 +1,4 @@
+pub mod companions;
 pub mod decoding;
 pub mod discovery;
 pub mod rendering;
