@@ -21,6 +21,7 @@ use uocf::classic::anim::{AnimFrame, AnimMap};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::enhanced::animationframe::AnimationFrame;
 use uocf::uop_container::package::{LoadMode, UopPackage};
+use uocf::utils::path::find_file_ignoring_case;
 
 use super::mobile_anim_cc::CLASSIC_ANIMATIONFRAME_FILES;
 use super::mobile_anim_ec::ec_source_frames;
@@ -88,9 +89,7 @@ fn classic_frame_digests(wanted: &BTreeSet<ClipFrameSource>, client_dir: &Path)
     for animation in animations.keys() {
         if let ClassicAnimation::Uop { file_index, .. } = *animation {
             if let std::collections::hash_map::Entry::Vacant(entry) = uop_packages.entry(file_index) {
-                let path = CLASSIC_ANIMATIONFRAME_FILES.get(usize::from(file_index))
-                    .map(|name| client_dir.join(name))
-                    .ok_or_else(|| eyre::eyre!("no AnimationFrame file has index {file_index}"))?;
+                let path = classic_animationframe_path(client_dir, file_index)?;
                 entry.insert(UopPackage::load_with_mode(&path, LoadMode::Lazy)
                     .wrap_err_with(|| format!("load {}", path.display()))?);
             }
@@ -118,6 +117,15 @@ fn classic_frame_digests(wanted: &BTreeSet<ClipFrameSource>, client_dir: &Path)
         }).collect()
     }).collect::<eyre::Result<Vec<_>>>()?;
     Ok(digests.into_iter().flatten().collect())
+}
+
+/// The Classic `AnimationFrame<file_index + 1>.uop` of `client_dir`, its name matched ignoring ASCII case as the
+/// packer finds it (a client may ship `animationframe2.uop`).
+fn classic_animationframe_path(client_dir: &Path, file_index: u8) -> eyre::Result<PathBuf> {
+    let name = CLASSIC_ANIMATIONFRAME_FILES.get(usize::from(file_index))
+        .ok_or_else(|| eyre::eyre!("no AnimationFrame file has index {file_index}"))?;
+    find_file_ignoring_case(client_dir, name)
+        .ok_or_else(|| eyre::eyre!("{} has no {name}: the package was not packed from it", client_dir.display()))
 }
 
 /// The [`source_frame_digest`] of each of the Enhanced frames `wanted`, decoded from `client_dir` as the packer
@@ -158,4 +166,28 @@ fn enhanced_frame_digests(wanted: &BTreeSet<ClipFrameSource>, client_dir: &Path)
         }).collect()
     }).collect::<eyre::Result<Vec<_>>>()?;
     Ok(digests.into_iter().flatten().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Classic client folder with lowercase file names (such as Classic 7.0.20.0's `animationframe2.uop`) has its
+    /// AnimationFrame files found on a case-sensitive file system.
+    #[test]
+    fn a_classic_animationframe_file_is_found_whatever_its_case() {
+        const LOWERCASE_INDEX: u8 = 1;
+        const CAPITALISED_INDEX: u8 = 2;
+        const MISSING_INDEX: u8 = 3;
+        let dir = std::env::temp_dir().join(format!("udd_conv_stride_sources_case_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["animationframe2.uop", "AnimationFrame3.uop"] {
+            std::fs::write(dir.join(name), []).unwrap();
+        }
+        let found = |index| classic_animationframe_path(&dir, index).map(|path| path.file_name().unwrap().to_owned());
+        assert_eq!(found(LOWERCASE_INDEX).unwrap(), "animationframe2.uop");
+        assert_eq!(found(CAPITALISED_INDEX).unwrap(), "AnimationFrame3.uop");
+        assert!(found(MISSING_INDEX).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
