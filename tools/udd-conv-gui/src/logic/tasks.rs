@@ -1064,9 +1064,15 @@ fn pack_tilemeta(settings: &AppSettings, output: &Path, progress: &AssetProgress
     Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
 }
 
+/// The folder the Classic mobile animation job reads, as `pack-mobile-anims --ccdir` does: the Classic client folder
+/// alone, so the package holds only the Classic client's animations, never the Enhanced folder's.
+pub(crate) fn mobile_anim_cc_source_dirs(settings: &AppSettings) -> Vec<PathBuf> {
+    gather_cc_source_dirs(settings.cc_dir.as_ref())
+}
+
 fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
-    let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
-    if sources.is_empty() { eyre::bail!("No source dirs"); }
+    let sources = mobile_anim_cc_source_dirs(settings);
+    if sources.is_empty() { eyre::bail!("No Classic source dir configured"); }
     ensure_output_parent(output)?;
     format_log::asset_settings(settings, AssetPackTask::MobileAnimCc);
 
@@ -1921,6 +1927,18 @@ mod tests {
         assert_eq!(ec.paperdoll_upscale_passes, vec![UpscalePass::from(UpscaleFilter::Hq2xTrue)]);
         assert_eq!(ec.single_upscale_passes, vec![UpscalePass::from(UpscaleFilter::Mmpx2x)]);
         assert_eq!(ec.max_id, MAX_ID);
+    }
+
+    #[test]
+    fn classic_mobile_animations_read_only_the_classic_folder() {
+        let mut settings = AppSettings::default();
+        settings.cc_dir = Some(PathBuf::from("/uo/classic"));
+        settings.ec_dir = Some(PathBuf::from("/uo/enhanced"));
+
+        assert_eq!(mobile_anim_cc_source_dirs(&settings), vec![PathBuf::from("/uo/classic")]);
+
+        settings.cc_dir = None;
+        assert!(mobile_anim_cc_source_dirs(&settings).is_empty());
     }
 
     #[test]

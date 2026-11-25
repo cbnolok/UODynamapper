@@ -522,6 +522,17 @@ fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
+/// The Classic client folder alone, for packages that hold only the Classic client's files (the Classic mobile
+/// animations): `--ecdir` is not read.
+fn collect_cc_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
+    let ccdir = args
+        .ccdir
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("--ccdir is required for Classic source files"))?;
+    validate_source_dir(ccdir, "--ccdir")?;
+    Ok(vec![ccdir.clone()])
+}
+
 fn collect_ec_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
     let ecdir = args
         .ecdir
@@ -1730,7 +1741,8 @@ where
             frame_filters_kdl,
             strides_from,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
+            // The Classic package holds only the Classic client's animations, never the Enhanced folder's.
+            let paths = collect_cc_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let output_format =
                 resolve_mobile_anim_output_format(
@@ -2762,6 +2774,33 @@ mod tests {
 
         let _ = fs::remove_dir_all(ccdir);
         let _ = fs::remove_dir_all(ecdir);
+    }
+
+    #[test]
+    fn collect_cc_source_dirs_uses_only_cc_root() {
+        let ccdir = temp_dir("cc_only_cc_root");
+        let ecdir = temp_dir("cc_only_ec_root");
+        let dirs = collect_cc_source_dirs(&SourceDirArgs {
+            ccdir: Some(ccdir.clone()),
+            ecdir: Some(ecdir.clone()),
+        })
+        .expect("collect cc dirs");
+
+        assert_eq!(dirs, vec![ccdir.clone()]);
+
+        let _ = fs::remove_dir_all(ccdir);
+        let _ = fs::remove_dir_all(ecdir);
+    }
+
+    #[test]
+    fn collect_cc_source_dirs_rejects_ec_only_root() {
+        let error = collect_cc_source_dirs(&SourceDirArgs {
+            ccdir: None,
+            ecdir: Some(PathBuf::from("/ec")),
+        })
+        .expect_err("ec-only roots must not satisfy Classic source loading");
+
+        assert!(error.to_string().contains("--ccdir is required"));
     }
 
     #[test]
