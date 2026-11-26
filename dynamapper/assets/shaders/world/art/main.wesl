@@ -41,9 +41,12 @@ import package::shaders::world::art::projected_shadow::{projected_shadow_casts, 
     projected_shadow_sun_share,
     wall_shadow_ground_box, wall_shadow_face_point, wall_shadow_card_corner};
 import package::shaders::world::art::mobile_frames::{mobile_frames_blend, mobile_frames_tap,
-    mobile_frames_client_filtered};
-import package::shaders::world::art::mobile_sharpen::{mobile_sharpening_on, mobile_sharpen, mobile_sharpen_tap_offset,
-    MOBILE_SHARPEN_WINDOW_TAPS, MOBILE_SHARPEN_CENTRE_TAP};
+    mobile_frames_client_filtered, mobile_frame_alone_tap, mobile_frame_alone_client_filtered};
+import package::shaders::world::art::mobile_sharpen::{mobile_sharpening_on, mobile_sharpening_strength, mobile_sharpen,
+    mobile_sharpen_tap_offset, MOBILE_SHARPEN_WINDOW_TAPS, MOBILE_SHARPEN_CENTRE_TAP, MOBILE_SHARPEN_NORTH_TAP,
+    MOBILE_SHARPEN_WEST_TAP, MOBILE_SHARPEN_EAST_TAP, MOBILE_SHARPEN_SOUTH_TAP};
+import package::shaders::world::art::mobile_edges::{mobile_alpha_contrast_on, mobile_alpha_contrast, mobile_contour_on,
+    mobile_contour, mobile_outline_on, mobile_outline};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
@@ -272,15 +275,28 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
 
 // One tap of the sprite's page, from its atlas (art/atlas_pages.wesl). A mobile's two frames, blended while they
 // crossfade (art/mobile_frames.wesl), lie in one of the mobiles' frame atlases: the RGBA8 one bound as the first atlas,
-// the BC7 one as the Enhanced (draw.rs).
+// the BC7 one as the Enhanced (draw.rs). A mobile's frame takes its filter's alpha contrast, and on a card padded for
+// an outline reads transparent outside the frame (art/mobile_edges.wesl).
 fn sprite_page_tap(page: ArtPage, uv: vec2<f32>, instance_index: u32) -> vec4<f32> {
     @if(MOBILE_FRAMES) {
         let crossfade = mobile_instances[instance_index].crossfade;
+        let frame_filter = mobile_instances[instance_index].frame_filter;
         if (mobile_frames_blend(crossfade)) {
             if (page.enhanced) {
-                return mobile_frames_tap(art_atlas_enhanced, art_atlas_sampler, page.layer, uv, crossfade);
+                return mobile_frames_tap(art_atlas_enhanced, art_atlas_sampler, page.layer, uv, crossfade, frame_filter);
             }
-            return mobile_frames_tap(art_atlas, art_atlas_sampler, page.layer, uv, crossfade);
+            return mobile_frames_tap(art_atlas, art_atlas_sampler, page.layer, uv, crossfade, frame_filter);
+        }
+        if (frame_filter.padding_texels != 0u) {
+            if (page.enhanced) {
+                return mobile_frame_alone_tap(art_atlas_enhanced, art_atlas_sampler, page.layer, uv, crossfade,
+                    frame_filter);
+            }
+            return mobile_frame_alone_tap(art_atlas, art_atlas_sampler, page.layer, uv, crossfade, frame_filter);
+        }
+        if (mobile_alpha_contrast_on(frame_filter)) {
+            return mobile_alpha_contrast(art_page_sample(art_atlas, art_atlas_enhanced, art_atlas_sampler, page, uv),
+                frame_filter);
         }
     }
     return art_page_sample(art_atlas, art_atlas_enhanced, art_atlas_sampler, page, uv);
@@ -292,13 +308,26 @@ fn sprite_page_client_filtered(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, 
     uv_dx: vec2<f32>, uv_dy: vec2<f32>, client_view_scale: f32, instance_index: u32) -> vec4<f32> {
     @if(MOBILE_FRAMES) {
         let crossfade = mobile_instances[instance_index].crossfade;
+        let frame_filter = mobile_instances[instance_index].frame_filter;
         if (mobile_frames_blend(crossfade)) {
             if (page.enhanced) {
                 return mobile_frames_client_filtered(art_atlas_enhanced, page.layer, uv, uv_min, uv_max, crossfade,
-                    uv_dx, uv_dy, client_view_scale);
+                    uv_dx, uv_dy, client_view_scale, frame_filter);
             }
             return mobile_frames_client_filtered(art_atlas, page.layer, uv, uv_min, uv_max, crossfade, uv_dx, uv_dy,
-                client_view_scale);
+                client_view_scale, frame_filter);
+        }
+        if (frame_filter.padding_texels != 0u) {
+            if (page.enhanced) {
+                return mobile_frame_alone_client_filtered(art_atlas_enhanced, page.layer, uv, uv_min, uv_max,
+                    crossfade, uv_dx, uv_dy, client_view_scale, frame_filter);
+            }
+            return mobile_frame_alone_client_filtered(art_atlas, page.layer, uv, uv_min, uv_max, crossfade, uv_dx,
+                uv_dy, client_view_scale, frame_filter);
+        }
+        if (mobile_alpha_contrast_on(frame_filter)) {
+            return mobile_alpha_contrast(art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, uv_min,
+                uv_max, wrap, uv_dx, uv_dy, client_view_scale), frame_filter);
         }
     }
     return art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, uv_min, uv_max, wrap, uv_dx, uv_dy,
@@ -333,26 +362,68 @@ fn projected_shadow_coverage(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv
         ) * 0.08;
 }
 
-// A mobile's colour `centre` at `uv` sharpened by its style's strength (art/mobile_sharpen.wesl). The window's other
-// taps lie a texel of the page apart, each taken as the fragment took `centre`: the client's filter, or the nearest
-// texel of the card, both inside the card's span `uv_min`..`uv_max` and, while two frames blend, each frame's own
-// rectangle.
-fn mobile_sharpened(centre: vec4<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
-    uv_dx: vec2<f32>, uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+// A mobile's tap `tap` of the 3x3 window around `uv` (art/mobile_sharpen.wesl), a texel of the page from the
+// fragment's, taken as the fragment took its colour: the client's filter, or the nearest texel of the card, both
+// inside the card's span `uv_min`..`uv_max` and, while two frames blend, each frame's own rectangle.
+fn mobile_window_tap(tap: u32, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, uv_dx: vec2<f32>,
+    uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    let tap_uv = uv + mobile_sharpen_tap_offset(tap) / atlas_size;
+    if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+        return sprite_page_client_filtered(page, tap_uv, uv_min, uv_max, false, uv_dx, uv_dy,
+            scene.client_view_scale, instance_index);
+    }
+    return sprite_page_tap(page, pixel_art_atlas_nearest_uv(tap_uv, uv_min, uv_max, atlas_size), instance_index);
+}
+
+// The window around a mobile's colour `centre` at `uv`, its other taps by mobile_window_tap.
+fn mobile_window(centre: vec4<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
+    uv_dx: vec2<f32>, uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32)
+    -> array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS> {
     var window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>;
     for (var tap = 0u; tap < MOBILE_SHARPEN_WINDOW_TAPS; tap++) {
-        let tap_uv = uv + mobile_sharpen_tap_offset(tap) / atlas_size;
         if (tap == MOBILE_SHARPEN_CENTRE_TAP) {
             window[tap] = centre;
-        } else if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
-            window[tap] = sprite_page_client_filtered(page, tap_uv, uv_min, uv_max, false, uv_dx, uv_dy,
-                scene.client_view_scale, instance_index);
         } else {
-            window[tap] = sprite_page_tap(page, pixel_art_atlas_nearest_uv(tap_uv, uv_min, uv_max, atlas_size),
-                instance_index);
+            window[tap] = mobile_window_tap(tap, page, uv, uv_min, uv_max, uv_dx, uv_dy, atlas_size, instance_index);
         }
     }
-    return mobile_sharpen(window, effects.mobile_sharpening);
+    return window;
+}
+
+// Alpha `alpha` of the window's tap `tap` around `uv`, or 0 when the tap lies outside the card `uv_min`..`uv_max`
+// (where the clamped tap reads the card's own edge): a silhouette cut by the card's edge has an edge there.
+fn mobile_card_alpha(alpha: f32, tap: u32, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
+    atlas_size: vec2<f32>) -> f32 {
+    let tap_uv = uv + mobile_sharpen_tap_offset(tap) / atlas_size;
+    return select(0.0, alpha, all(tap_uv >= uv_min) && all(tap_uv < uv_max));
+}
+
+// The cross around `uv` (north, west, east, south), in the window's order.
+const MOBILE_CROSS_TAPS = array<u32, 4>(MOBILE_SHARPEN_NORTH_TAP, MOBILE_SHARPEN_WEST_TAP, MOBILE_SHARPEN_EAST_TAP,
+    MOBILE_SHARPEN_SOUTH_TAP);
+
+// The alphas of the cross around `uv` out of `window`, by mobile_card_alpha: the contour's.
+fn mobile_cross_alpha(window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>, uv: vec2<f32>, uv_min: vec2<f32>,
+    uv_max: vec2<f32>, atlas_size: vec2<f32>) -> vec4<f32> {
+    var taps = window;
+    var alpha = vec4<f32>(0.0);
+    for (var side = 0u; side < 4u; side++) {
+        let tap = MOBILE_CROSS_TAPS[side];
+        alpha[side] = mobile_card_alpha(taps[tap].a, tap, uv, uv_min, uv_max, atlas_size);
+    }
+    return alpha;
+}
+
+// The alphas of the cross around `uv` tapped alone, as mobile_window_tap: the outline's, before the alpha test.
+fn mobile_cross_alpha_taps(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, uv_dx: vec2<f32>,
+    uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    var alpha = vec4<f32>(0.0);
+    for (var side = 0u; side < 4u; side++) {
+        let tap = MOBILE_CROSS_TAPS[side];
+        alpha[side] = mobile_card_alpha(mobile_window_tap(tap, page, uv, uv_min, uv_max, uv_dx, uv_dy, atlas_size,
+            instance_index).a, tap, uv, uv_min, uv_max, atlas_size);
+    }
+    return alpha;
 }
 
 fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
@@ -602,6 +673,15 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     if (blend_surface) {
         color.a *= static_surface_coverage(uv_in_tile_for_shading, (inst.is_wet_flags >> 2u) & 255u);
     }
+    // A mobile's outline lies under the texels beside its silhouette, before the alpha test so that the transparent
+    // texels it covers are drawn (art/mobile_edges.wesl).
+    @if(MOBILE_FRAMES) {
+        let outline_filter = mobile_instances[in.instance_index].frame_filter;
+        if (mobile_outline_on(outline_filter) && color.a < 1.0) {
+            color = mobile_outline(color, mobile_cross_alpha_taps(page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx,
+                sprite_uv_dy, atlas_size, in.instance_index), outline_filter);
+        }
+    }
     // Preserve fractional coverage and explicit material opacity in the blended
     // pass. Testing image alpha alone would make translucent legacy art opaque.
     let visible_alpha = color.a * in.color.a;
@@ -625,12 +705,21 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         return out;
     }
 
-    // A mobile's colour sharpened by its style's strength, its alpha kept, after the alpha test so that only the
-    // fragments drawn pay for it; off, the uniform branch skips the taps.
+    // A mobile's colour sharpened by its body's strength times its style's, then its contour, its alpha kept, after
+    // the alpha test so that only the fragments drawn pay for them; with both off the fragment skips the taps.
     @if(MOBILE_FRAMES) {
-        if (mobile_sharpening_on(effects.mobile_sharpening)) {
-            color = mobile_sharpened(color, page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx, sprite_uv_dy,
+        let frame_filter = mobile_instances[in.instance_index].frame_filter;
+        let strength = mobile_sharpening_strength(effects.mobile_sharpening, frame_filter.sharpening);
+        if (mobile_sharpening_on(strength) || mobile_contour_on(frame_filter)) {
+            let window = mobile_window(color, page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx, sprite_uv_dy,
                 atlas_size, in.instance_index);
+            if (mobile_sharpening_on(strength)) {
+                color = mobile_sharpen(window, strength, frame_filter.fringe_sharpening);
+            }
+            if (mobile_contour_on(frame_filter)) {
+                color = mobile_contour(color, mobile_cross_alpha(window, uv, inst.uv_min, inst.uv_max, atlas_size),
+                    frame_filter);
+            }
         }
     }
 

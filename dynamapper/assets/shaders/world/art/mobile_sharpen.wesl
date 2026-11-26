@@ -1,15 +1,17 @@
 // ============================================================================
 // art::mobile_sharpen — Contrast-adaptive sharpening of the mobiles' frames: AMD FidelityFX CAS (ffx_cas.h, its
-// filter without scaling, the soft minimum and maximum of the whole window), by the style's strength
-// (`effects.mobile_sharpening`, 0 off). The window is the 3x3 texels of the frame around the fragment's, on the
-// frame's own texel grid, so the sharpening stays put as the view zooms; main.wesl mobile_sharpened takes each tap
-// as the fragment took its colour (the nearest texel, or the client's filter in KR-like), inside the frame's
+// filter without scaling, the soft minimum and maximum of the whole window), by the frame's strength: its body's in
+// runtime_specs/mobiles/Sharpening.kdl times the style's `effects.mobile_sharpening` (0 off), a partly transparent
+// centre (the Enhanced frames' anti-aliased rim) taking the body's `fringe_sharpening` share of it. The window is the
+// 3x3 texels of the frame around the fragment's, on the frame's own texel grid, so the sharpening stays put as the
+// view zooms; main.wesl mobile_window takes each tap as the fragment took its colour (the nearest texel, or the client's filter in KR-like), inside the frame's
 // rectangle only, so no tap reads the frame's neighbours in the atlas. It covers the 1x and 2x frames and the
 // in-betweens alike. The colours are sharpened on their sRGB-encoded values, as the clients' 8-bit art; the alpha
 // stays.
 // ============================================================================
 
 import package::shaders::world::srgb::{encode_srgb, decode_srgb};
+import package::shaders::world::art::mobile_edges::mobile_edge_is_fringe;
 
 // The window, row by row from its top-left texel: 3 x 3 taps, the fragment's own in the middle.
 const MOBILE_SHARPEN_WINDOW_SIDE: u32 = 3u;
@@ -28,12 +30,19 @@ const MOBILE_SHARPEN_CROSS_TAPS: f32 = 4.0;
 // The lobe at strength 1: CAS's strongest, its sharpness 1, -1 / mix(8, 5, 1). Strength 0.625 is CAS's weakest
 // (sharpness 0, -1 / 8); below it the lobe goes on down to 0, which leaves the colour as it is.
 const MOBILE_SHARPEN_MAX_LOBE: f32 = 0.2;
+// The strongest strength: CAS's lobe goes no further (at -1/4 its denominator reaches 0).
+const MOBILE_SHARPEN_MAX_STRENGTH: f32 = 1.0;
 // CAS's soft minimum and maximum each add the cross's and the whole window's, so they reach 2 on a white window.
 const MOBILE_SHARPEN_SOFT_LIMIT: f32 = 2.0;
 // Keeps a black window's soft maximum from dividing by 0: its amplitude is 0.
 const MOBILE_SHARPEN_MIN_SOFT_MAX: f32 = 1.0e-5;
 
-// Whether the style sharpens the mobiles: off, the fragment skips the window's taps (a uniform branch).
+// The strength CAS takes: the style's multiplier times the body's strength, at most CAS's strongest.
+fn mobile_sharpening_strength(style_multiplier: f32, body_strength: f32) -> f32 {
+    return min(style_multiplier * body_strength, MOBILE_SHARPEN_MAX_STRENGTH);
+}
+
+// Whether the frame is sharpened: off, the fragment skips the window's taps.
 fn mobile_sharpening_on(strength: f32) -> bool {
     return strength > 0.0;
 }
@@ -44,15 +53,18 @@ fn mobile_sharpen_tap_offset(tap: u32) -> vec2<f32> {
     return vec2<f32>(f32(tap % MOBILE_SHARPEN_WINDOW_SIDE), f32(tap / MOBILE_SHARPEN_WINDOW_SIDE)) - vec2<f32>(centre);
 }
 
-// The window's centre sharpened by `strength` (0..1). The taps are straight alpha and linear. A tap lends its own
-// colour by its alpha and the centre's in the rest, so the transparent texels around a silhouette, or a frame's
-// outside, neither darken nor brighten its edge. A transparent centre stays as it is, and the alpha always does.
-fn mobile_sharpen(window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>, strength: f32) -> vec4<f32> {
+// The window's centre sharpened by `full_strength` (0..1), a centre of the rim by `fringe_share` of it. The taps are
+// straight alpha and linear. A tap lends its own colour by its alpha and the centre's in the rest, so the transparent
+// texels around a silhouette, or a frame's outside, neither darken nor brighten its edge. A transparent centre stays
+// as it is, and the alpha always does.
+fn mobile_sharpen(window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>, full_strength: f32, fringe_share: f32)
+    -> vec4<f32> {
     var taps = window;
     let centre = taps[MOBILE_SHARPEN_CENTRE_TAP];
     if (centre.a <= 0.0) {
         return centre;
     }
+    let strength = select(full_strength, full_strength * fringe_share, mobile_edge_is_fringe(centre.a));
     let e = encode_srgb(centre.rgb);
     var t: array<vec3<f32>, MOBILE_SHARPEN_WINDOW_TAPS>;
     for (var tap = 0u; tap < MOBILE_SHARPEN_WINDOW_TAPS; tap++) {

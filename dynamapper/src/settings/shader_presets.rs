@@ -1353,16 +1353,17 @@ mod tests {
         assert_eq!(saved.painterly.land_texture_variation, Some(true));
     }
 
-    /// Every style ships with the mobiles' sharpening off; a cache from before it gets it off, with a warning, one out
-    /// of range is clamped, and a style's strength is written and read back and reaches the shaders' uniform.
+    /// Every style ships with the mobiles' sharpening at the file's strengths; a cache from before it gets them, with a
+    /// warning, one out of range is clamped, and a style's multiplier is written and read back and reaches the shaders'
+    /// uniform.
     #[test]
-    fn mobile_sharpening_ships_off_and_is_filled_clamped_and_kept() {
-        use crate::render::terrain::mesh_material::MOBILE_SHARPENING_OFF;
+    fn mobile_sharpening_ships_as_listed_and_is_filled_clamped_and_kept() {
+        use crate::render::terrain::mesh_material::MOBILE_SHARPENING_AS_LISTED;
         const STRENGTH: f32 = 0.4;
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
             for (group, slots) in preset_groups(&presets) {
-                assert_eq!(slots.mobile_sharpening, MOBILE_SHARPENING_OFF, "{name} {group}");
+                assert_eq!(slots.mobile_sharpening, MOBILE_SHARPENING_AS_LISTED, "{name} {group}");
             }
         }
 
@@ -1372,7 +1373,7 @@ mod tests {
         let older = toml::to_string(&older).expect("serialize");
         let load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
         assert_eq!(load.warnings, ["land.toml: missing key `enhanced.mobile_sharpening` filled from the default"]);
-        assert_eq!(load.value.enhanced.mobile_sharpening, MOBILE_SHARPENING_OFF);
+        assert_eq!(load.value.enhanced.mobile_sharpening, MOBILE_SHARPENING_AS_LISTED);
 
         let mut cached = clone_presets(&bundled);
         cached.kr.mobile_sharpening = *MOBILE_SHARPENING_RANGE.end() * 2.0;
@@ -1389,7 +1390,7 @@ mod tests {
         let load = uocf::utils::config_toml::parse_app_state("land.toml", &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.enhanced.mobile_sharpening, STRENGTH);
-        assert_eq!(load.value.classic.mobile_sharpening, MOBILE_SHARPENING_OFF);
+        assert_eq!(load.value.classic.mobile_sharpening, MOBILE_SHARPENING_AS_LISTED);
         let mut saved = load.value;
         saved.default_preset = "enhanced.morning".to_string();
         assert_eq!(uniform_state_from_presets(&saved).effects.mobile_sharpening, STRENGTH);

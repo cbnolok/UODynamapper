@@ -37,7 +37,8 @@ pub struct UniformState {
     /// The rule "Show Only the Player's Floor" follows, of the active preset's style: `Some` in KR-like and
     /// UOD-Painterly only.
     pub player_floor_rule: Option<PlayerFloorRule>,
-    /// The mobiles' contrast-adaptive sharpening of the active preset's style, not of its slot, in every style.
+    /// The multiplier of the mobiles' contrast-adaptive sharpening of the active preset's style, not of its slot, in
+    /// every style.
     /// `effects.mobile_sharpening` follows it.
     pub mobile_sharpening: f32,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)

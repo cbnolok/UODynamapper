@@ -1,7 +1,8 @@
 //! The mobiles' sprites: each frame drawn an instance of the statics' art sprite shader, from the mobiles' own frame
 //! atlas and instance buffer. Three material instances copy the statics' opaque, transparent and projected-shadow
 //! ones, so a mobile takes the same lighting, hues and shadows as the art around it; theirs compile the shader with
-//! `MOBILE_FRAMES`, which reads each instance's crossfade beside it (in_between.rs). The materials bind the RGBA8 frame
+//! `MOBILE_FRAMES`, which reads each instance's crossfade and its body's frame filter beside it (in_between.rs,
+//! sharpening.rs). The materials bind the RGBA8 frame
 //! atlas as the sprites' first atlas and the BC7 one as the second (`atlas_enhanced`), each in both places when it is
 //! the only one; an instance of a BC7 frame names its page with the second atlas's bit (`AtlasRect::instance_layer`).
 
@@ -27,6 +28,7 @@ use super::frame_atlas::{AtlasFormat, MobileFrameAtlas};
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
 use super::placement::{mobile_card_bounds, CELL_CENTRE_ABOVE_NEAR_VERTEX_PX};
 use super::rife_in_betweens::MobileInBetweens;
+use super::sharpening::{MobileFrameFilter, MobileSharpening};
 use super::upscales::{atlas_pages_wanted, upscale_key, MobileUpscale, MobileUpscaleGate, MobileUpscaleSwitches,
     MobileUpscales, UpscalePriority, UpscaleSwitch};
 use super::MobileClipChoice;
@@ -56,13 +58,14 @@ const ENHANCED_GROUND_STRIPS: u32 = 4;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
-/// statics' sprite instance, the crossfade of its frames and its ground strips.
+/// statics' sprite instance, the crossfade of its frames, its ground strips and its body's frame filter.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MobileSpriteInstance {
     pub sprite: SpriteInstance,
     pub crossfade: FrameCrossfade,
     pub ground: MobileGroundStrips,
+    pub frame_filter: MobileFrameFilter,
 }
 
 /// Where a mobile's card is ordered nearer than its anchor (art/depth.wesl `mobile_ground_strip`), in the card's local
@@ -293,7 +296,7 @@ pub fn sys_draw_mobiles(
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
     settings: Res<Settings>,
-    (scene_state, caves): (Res<SceneStateData>, Res<CavesRes>),
+    (scene_state, caves, mut sharpening): (Res<SceneStateData>, Res<CavesRes>, ResMut<MobileSharpening>),
     static_lights: Option<Res<RenderStaticLightInstances>>,
 ) {
     let (Some(mut draw_assets), Some(mut atlas)) = (draw_assets, atlas) else { return };
@@ -308,6 +311,9 @@ pub fn sys_draw_mobiles(
     upscales.forget(&evicted);
     let upscaling = settings.world_rendering.mobile_upscale != MobileUpscale::Off && upscale_gate.open;
     let player = player_q.iter().next().map(|transform| transform.translation);
+    if packages.is_changed() {
+        sharpening.set_packages();
+    }
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
     for (transform, motion, appearance, choice, mut clock, mut shown) in mobiles_q.iter_mut() {
@@ -382,8 +388,11 @@ pub fn sys_draw_mobiles(
                 }
                 let Some(frames) = layer_frames(in_between_mode, clip, pick) else { continue };
                 clip.touch_pages(&mut atlas, now);
+                // The body's filter; an outline's card has room for it around the frames.
+                let filter = sharpening.filter(source, drawn.key.body, &packages.0);
+                let frames = frames.padded(filter.padding_texels, clip.texel_scale);
                 // Both frames of an in-between come from the clip, so they share its mirroring.
-                instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
+                instances.push(mobile_instance(transform.translation, frames, filter, mirrored, drawn.offset_px,
                     drawn.tie_level, source, cave_flags, local_lights));
             }
         }
@@ -423,11 +432,12 @@ fn mobile_cave_flags(caves: &CavesRes, translation: Vec3) -> u32 {
 }
 
 /// The instance of `frames` at a mobile's position `translation` (world x and z the UO x and y, world y its z), with
-/// the cave bits `cave_flags` (`mobile_cave_flags`), lit by `local_lights` of a map when given.
+/// the cave bits `cave_flags` (`mobile_cave_flags`), lit by `local_lights` of a map when given, filtered by `filter`.
 #[allow(clippy::too_many_arguments)]
 fn mobile_instance(
     translation: Vec3,
     frames: LayerFrames,
+    filter: MobileFrameFilter,
     mirrored: bool,
     offset_px: (f32, f32),
     tie_level: u32,
@@ -469,7 +479,8 @@ fn mobile_instance(
             true, lights, map_id, world_x, world_z, translation.y, bounds, false)),
         color_rgba: OPAQUE_COLOR,
     };
-    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ground: MobileGroundStrips::of(source) }
+    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ground: MobileGroundStrips::of(source),
+        frame_filter: filter }
 }
 
 /// The cell a mobile at (`x`, `z`) is ordered from: its own at rest, and while it slides between two cells, the
@@ -512,10 +523,10 @@ mod tests {
 
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
-        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48) and MobileGroundStrips (16), on a
-        // 16-byte stride.
+        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), MobileGroundStrips (16) and a
+        // MobileFrameFilter (32), on a 16-byte stride.
         const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
-        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 208;
+        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 240;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
     }

@@ -291,9 +291,9 @@ pub struct LandEffectsUniform {
     /// line with its `local_lights`.
     #[serde(skip)]
     pub local_light_intensity: f32,
-    /// The contrast-adaptive sharpening of the mobiles' frames (art/mobile_sharpen.wesl), in
-    /// `MOBILE_SHARPENING_RANGE`, 0 off. A per-style setting, not a slot value: `UniformState` keeps it in line with
-    /// its `mobile_sharpening`.
+    /// The style's multiplier of each mobile's contrast-adaptive sharpening (art/mobile_sharpen.wesl;
+    /// runtime_specs/mobiles/Sharpening.kdl), in `MOBILE_SHARPENING_RANGE`, 0 off. A per-style setting, not a slot
+    /// value: `UniformState` keeps it in line with its `mobile_sharpening`.
     #[serde(skip)]
     pub mobile_sharpening: f32,
 }
@@ -530,8 +530,9 @@ pub struct LandRenderStylePresetsPerMode {
     /// (`world::z_view`); the other styles follow ClassicUO's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_floor_rule: Option<PlayerFloorRule>,
-    /// The contrast-adaptive sharpening of the mobiles' frames, in `MOBILE_SHARPENING_RANGE`, 0 off: one setting for
-    /// the style in all four styles (`LandEffectsUniform::mobile_sharpening`).
+    /// The multiplier of each mobile's contrast-adaptive sharpening from runtime_specs/mobiles/Sharpening.kdl, in
+    /// `MOBILE_SHARPENING_RANGE`, 0 off: one setting for the style in all four styles
+    /// (`LandEffectsUniform::mobile_sharpening`).
     pub mobile_sharpening: f32,
     /// The local lights of KR-like, Enhanced and UOD-Painterly, one setting for the style rather than per time of
     /// day: which lights the land light decals and static local lights take, and how strongly.
@@ -643,11 +644,14 @@ impl ClientLocalLights {
     }
 }
 
-/// The strengths of the mobiles' contrast-adaptive sharpening (`LandEffectsUniform::mobile_sharpening`): 0 is off,
-/// 1 AMD CAS's strongest lobe (art/mobile_sharpen.wesl).
-pub const MOBILE_SHARPENING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
-/// The mobiles' sharpening off, the strength every bundled preset ships with.
+/// The multipliers a style takes of each body's contrast-adaptive sharpening from runtime_specs/mobiles/Sharpening.kdl
+/// (`LandEffectsUniform::mobile_sharpening`): 0 is off, 1 the file's strengths, 2 twice them; the product stops at AMD
+/// CAS's strongest lobe (art/mobile_sharpen.wesl).
+pub const MOBILE_SHARPENING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
+/// The mobiles' sharpening off: the uniform of the draws that are no mobile's.
 pub const MOBILE_SHARPENING_OFF: f32 = 0.0;
+/// The file's strengths as they are, the multiplier every bundled preset ships with.
+pub const MOBILE_SHARPENING_AS_LISTED: f32 = 1.0;
 
 /// The multiplier of the local lights a style draws with (`LandEffectsUniform::local_light_intensity`): its source's
 /// intensity, or the neutral one in the styles without `ClientLocalLights`.

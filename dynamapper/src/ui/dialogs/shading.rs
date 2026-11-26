@@ -1275,7 +1275,7 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
 }
 
 fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
-    section_header(ui, "Standard art", "Static art sprites; Mobile Sharpening acts on the creatures.");
+    section_header(ui, "Standard art", "Static art sprites; Mobile Sharpening Scale acts on the creatures.");
     let mut changed = client_shadows_toggle(ui, &mut u.client_shadows);
     // KR-like's client shadow replaces these sprite shadows.
     let sprite_shadows = u.client_shadows.is_none();
@@ -1287,7 +1287,8 @@ fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     changed |= slider_s(ui, "Atmosphere Tint", &mut effects.art_depth_tint_strength, 0.0..=1.0, tips::ART_ATMOSPHERE_TINT);
     changed |= toggle_slider(ui, true, "Client Grunge", &mut effects.enable_client_grunge, &mut effects.client_grunge_strength, 0.0..=1.0, tips::CLIENT_GRUNGE);
     // One setting for the style at every time of day, in every style.
-    changed |= slider_s(ui, "Mobile Sharpening", &mut u.mobile_sharpening, MOBILE_SHARPENING_RANGE, tips::MOBILE_SHARPENING);
+    changed |= slider_s(ui, "Mobile Sharpening Scale", &mut u.mobile_sharpening, MOBILE_SHARPENING_RANGE,
+        tips::MOBILE_SHARPENING);
     changed
 }
 

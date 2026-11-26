@@ -188,12 +188,13 @@ default_preset = "classic.morning"
 #                     the lights below them.
 #
 # === [Mobile sharpening] ===
-# [<group>] mobile_sharpening: every style, one value per style (not per time of day), required, 0 to 1. The
-#                    contrast-adaptive sharpening (AMD FidelityFX CAS) of the creatures' frames, their 1x and 2x
-#                    frames and the in-betweens alike, on each frame's own texel grid (art/mobile_sharpen.wesl):
-#                    soft detail is sharpened more than hard edges, the transparent texels around a silhouette lend
-#                    it nothing, and the alpha stays. 1 is CAS's strongest; 0.625 its weakest. 0, off and free, in
-#                    every preset.
+# [<group>] mobile_sharpening: every style, one value per style (not per time of day), required, 0 to 2. The
+#                    multiplier of the contrast-adaptive sharpening (AMD FidelityFX CAS) of the creatures' frames,
+#                    whose strength each body takes from runtime_specs/mobiles/Sharpening.kdl by animation package,
+#                    size and body; their 1x and 2x frames and the in-betweens alike, on each frame's own texel grid
+#                    (art/mobile_sharpen.wesl): soft detail is sharpened more than hard edges, the transparent texels
+#                    around a silhouette lend it nothing, and the alpha stays. 1, in every preset, takes the file's
+#                    strengths as they are; 0 is off and free; above 1 they grow, each up to CAS's strongest.
 #
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
@@ -218,7 +219,7 @@ default_preset = "classic.morning"
 
 [classic]
 light_cover = "uod"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [classic.morning]
 global_lighting = 1.02
@@ -586,7 +587,7 @@ elevation_degrees = 60.50379
 [enhanced]
 land_texture_variation = true
 light_cover = "uod"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [enhanced.local_lights]
 source = "light_sprites"
@@ -968,7 +969,7 @@ elevation_degrees = 45.0
 land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [kr.local_lights]
 source = "light_sprites"
@@ -1350,7 +1351,7 @@ elevation_degrees = 45.0
 land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [painterly.local_lights]
 source = "light_sprites"

@@ -70,12 +70,29 @@ struct MobileGroundStrips {
     _pad: u32,
 }
 
-// A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite, its crossfade and its ground
-// strips.
+// A mobile frame's filter (`MobileFrameFilter`, render/mobiles/sharpening.rs; runtime_specs/mobiles/Sharpening.kdl):
+// its body's CAS strength before the style's `effects.mobile_sharpening` (art/mobile_sharpen.wesl), the share of it
+// the rim takes, and the edge treatments (art/mobile_edges.wesl), each off at 0. With an outline the card is
+// `padding_texels` larger than the frame on each side, and the taps outside the frame read transparent.
+struct MobileFrameFilter {
+    sharpening: f32,
+    fringe_sharpening: f32,
+    alpha_contrast: f32,
+    alpha_midpoint: f32,
+    contour: f32,
+    // sRGB-encoded, for unpack4x8unorm.
+    contour_color: u32,
+    outline: f32,
+    padding_texels: u32,
+}
+
+// A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite, its crossfade, its ground
+// strips and its filter.
 struct MobileSpriteInstance {
     sprite: SpriteInstance,
     crossfade: FrameCrossfade,
     ground: MobileGroundStrips,
+    frame_filter: MobileFrameFilter,
 }
 
 struct SpriteParams {

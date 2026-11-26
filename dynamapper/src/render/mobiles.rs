@@ -11,6 +11,7 @@ pub mod in_between;
 pub mod pace;
 pub mod placement;
 pub mod rife_in_betweens;
+pub mod sharpening;
 pub mod upscales;
 
 use std::sync::Arc;
@@ -95,9 +96,11 @@ impl Plugin for MobileSpritesPlugin {
             .insert_resource(upscales::MobileUpscales::new(upscales::spec::MobileUpscaleSpec::load()))
             .init_resource::<upscales::MobileUpscaleGate>()
             .insert_resource(MobileStrides::load())
+            .insert_resource(sharpening::MobileSharpening::load())
             .add_systems(Update, (
                 sys_sync_player_appearance,
                 pace::sys_watch_curated_strides,
+                sharpening::sys_watch_mobile_sharpening,
                 sys_choose_mobile_clips,
                 draw::sys_setup_mobile_draw,
                 draw::sys_size_mobile_upscale_pages,

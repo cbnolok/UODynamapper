@@ -642,7 +642,7 @@ fn upscaled_placement(rect: AtlasRect, placement: FramePlacement) -> FramePlacem
 }
 
 /// The package of `source`'s clips, as clips.
-fn package_of(packages: &AnimPackages, source: AnimSource) -> Option<&dyn MobileAnimClips> {
+pub(super) fn package_of(packages: &AnimPackages, source: AnimSource) -> Option<&dyn MobileAnimClips> {
     match source {
         AnimSource::Classic => packages.classic.as_deref().map(|package| package as _),
         AnimSource::Enhanced => packages.enhanced.as_deref().map(|package| package as _),

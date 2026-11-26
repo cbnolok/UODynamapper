@@ -6,7 +6,7 @@ default_preset = "classic.morning"
 
 [classic]
 light_cover = "uod"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [classic.morning]
 global_lighting = 1.02
@@ -374,7 +374,7 @@ elevation_degrees = 60.50379
 [enhanced]
 land_texture_variation = true
 light_cover = "uod"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [enhanced.local_lights]
 source = "light_sprites"
@@ -754,7 +754,7 @@ elevation_degrees = 45.0
 land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [kr.local_lights]
 source = "light_sprites"
@@ -1122,7 +1122,7 @@ elevation_degrees = 45.0
 land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
-mobile_sharpening = 0.0
+mobile_sharpening = 1.0
 
 [painterly.local_lights]
 source = "light_sprites"

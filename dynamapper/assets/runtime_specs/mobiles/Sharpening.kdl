@@ -1,0 +1,56 @@
+// How the creatures' and characters' frames are sharpened, and how their edges are drawn, by animation package, size
+// and body. The render style's Mobile Sharpening Scale (Shading Controls; `mobile_sharpening` in the shader presets,
+// 1 in every style) multiplies the `sharpening` given here; the edge properties take no multiplier. Dynamapper reads
+// your copy, cache/runtime_specs/mobiles/Sharpening.kdl beside the assets folder, in place of this file when it exists:
+// copy this file there and edit the copy. Saving either file applies it within a second; a file that does not read
+// leaves the table in force, with a warning naming the line, until it is fixed.
+//
+//   classic { ... }   the Classic animation package's frames
+//   enhanced { ... }  the Enhanced animation package's frames (KR-like and UOD-Painterly draw them too)
+//
+// Each section holds:
+//   default <properties>
+//     Every body of the package not in a size class below, and any body whose frames the package does not list.
+//   size max=<side> <properties>
+//     The bodies whose largest stored frame side (the larger of width and height over every frame of every action
+//     and facing, at 1x) is <side> pixels or less and more than the next smaller class's. A body above every class
+//     takes the default.
+//   body <id> [<last id>] <properties>
+//     The body of in-game id <id> (the server's, as a mobile's body is sent), or every id from <id> to <last id>.
+//
+// A property a body leaves out comes from its size class, then from the default, then is off. The properties:
+//   sharpening=<0..1>         Contrast-adaptive sharpening (AMD FidelityFX CAS) on each frame's own texels: soft detail
+//                             more than hard edges. 1 is CAS's strongest, 0.625 its weakest, 0 off.
+//   fringe_sharpening=<0..1>  The share of the sharpening a partly transparent texel takes: the soft, anti-aliased rim
+//                             of the Enhanced frames, which sharpened turns into blocky light and dark texels when
+//                             zoomed. 1 (the default) sharpens it as the rest, 0 not at all.
+//   alpha_contrast=<0..1>     Pulls the rim's partial alpha towards transparent or opaque about alpha_midpoint, so
+//                             fewer half-transparent texels show: 0 (the default) leaves the alpha, 1 cuts it at the
+//                             midpoint. Each frame is cut before two frames crossfade, so the blend stays soft.
+//   alpha_midpoint=<0.05..0.95>  The alpha the contrast turns about (default 0.5): lower keeps more of the rim.
+//   contour=<0..1>            Darkens the rim and the outermost opaque texels towards contour_color, as the Classic
+//                             frames' dark outline: 0 (the default) off, 1 the colour itself at the silhouette.
+//   contour_color="#rrggbb"   The contour's and the outline's colour (default "#202020").
+//   outline=<0..1>            A line of contour_color one texel wide outside the silhouette, at this opacity: 0 (the
+//                             default) off. The frames are stored cropped to their visible pixels, so an outlined
+//                             card grows by a texel each side.
+//
+// Classic frames are pixel art with a dark outline and no rim; small bodies take more sharpening than large ones,
+// whose frames hold more detail per texel. The Enhanced frames are rendered art with an anti-aliased rim; they take
+// less (above about 0.6 the test packages' BC7 blocks show). Starting values, 2026-11-26.
+
+classic {
+    default sharpening=0.3
+    size max=96 sharpening=0.7
+    size max=192 sharpening=0.6
+    size max=384 sharpening=0.4
+    // The orc: its pixel art takes CAS's strongest without grain.
+    body 17 sharpening=1.0
+}
+
+enhanced {
+    default sharpening=0.2
+    size max=96 sharpening=0.5
+    size max=192 sharpening=0.4
+    size max=384 sharpening=0.3
+}

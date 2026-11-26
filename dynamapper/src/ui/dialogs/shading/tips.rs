@@ -86,7 +86,7 @@ pub(super) const CLIENT_GRUNGE: &str =
 pub(super) const CLIENT_GRUNGE_STRENGTH: &str =
     "How much Client Grunge darkens: 1 is the KR client's full multiply, 0 leaves the colours as they are.";
 pub(super) const MOBILE_SHARPENING: &str =
-    "Sharpens the creatures' and the player's frames (AMD's contrast-adaptive sharpening): each texel against its eight neighbours in the frame, so the detail stays put as you zoom, low-contrast detail sharpened more than hard edges, the silhouette and transparency left as they are. Covers the upscaled frames and the in-between frames. 0 is off; 1 is AMD's strongest. One value for the style at every time of day.";
+    "Scales the sharpening of the creatures' and the player's frames (AMD's contrast-adaptive sharpening), whose strength each body takes from runtime_specs/mobiles/Sharpening.kdl by animation package, size and body: each texel against its eight neighbours in the frame, so the detail stays put as you zoom, low-contrast detail sharpened more than hard edges, the silhouette and transparency left as they are. Covers the upscaled frames and the in-between frames. 1 takes the file's strengths as they are, 0 is off, 2 doubles them, each up to AMD's strongest. One value for the style at every time of day.";
 
 // --- Terrain and water ---
 

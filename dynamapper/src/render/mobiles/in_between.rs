@@ -119,6 +119,29 @@ impl LayerFrames {
                 next_layer: frame.rect.layer, ..default() },
         }
     }
+
+    /// The card grown by `texels` texels of its page on each side, the frames kept where they are on screen, for a
+    /// clip of `texel_scale` texels to a pixel: the shader reads the texels outside each frame's own rectangle as
+    /// transparent (the frame filter's padding, sharpening.rs).
+    pub fn padded(self, texels: u32, texel_scale: u32) -> Self {
+        if texels == 0 {
+            return self;
+        }
+        let pixels = texels as f32 / texel_scale as f32;
+        let uv = Vec2::splat(texels as f32 / MOBILE_ATLAS_PAGE_SIZE as f32);
+        let placement = self.placement;
+        Self {
+            uv_min: self.uv_min - uv,
+            uv_max: self.uv_max + uv,
+            placement: FramePlacement {
+                width: placement.width + 2.0 * pixels,
+                height: placement.height + 2.0 * pixels,
+                anchor_x: placement.anchor_x + pixels,
+                anchor_y: placement.anchor_y + pixels,
+            },
+            ..self
+        }
+    }
 }
 
 /// What a mobile frame drawn shows for `pick` of `clip`: with `mode` off, a clip of one frame or `t` outside the blend,
@@ -293,6 +316,23 @@ mod tests {
             texel_scale: 1 };
         let pick = FramePick { index: 0, next: 0, t: 0.5 };
         assert_eq!(layer_frames(MobileInBetweenFrames::Crossfade, &single, pick).unwrap(), alone(&clip.frames[0]));
+    }
+
+    /// A padded card grows by its texels on each side, a 2x clip's by half as many pixels, and keeps the frame's own
+    /// rectangle and its place on screen: the pixel at the anchor stays at the anchor.
+    #[test]
+    fn a_padded_card_grows_around_its_frame() {
+        let clip = two_frame_clip();
+        let alone = LayerFrames::alone(&clip.frames[0]);
+        assert_eq!(alone.padded(0, 1), alone);
+        let page = MOBILE_ATLAS_PAGE_SIZE as f32;
+        for (texel_scale, pixels) in [(1, 1.0), (2, 0.5)] {
+            let padded = alone.padded(1, texel_scale);
+            assert_eq!(padded.placement, placement(3.0 + 2.0 * pixels, 3.0 + 2.0 * pixels, 2.0 + pixels, 3.0 + pixels));
+            assert_eq!(padded.uv_min * page, Vec2::new(9.0, 19.0));
+            assert_eq!(padded.uv_max * page, Vec2::new(14.0, 24.0));
+            assert_eq!(padded.crossfade, alone.crossfade);
+        }
     }
 
     #[test]
