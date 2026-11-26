@@ -1262,6 +1262,82 @@ plain encode, then the variants (`<encodes>` counts the plain encode and the var
 What to look at: banding on the large bodies' smooth shading under `coarse` and `zrdo:100:6`, and the shimmer of
 `rdo:1:64` at the silhouette, which no other step moves.
 
+### Visual comparison
+
+In the clips above the candidates could not be told from the plain encode by eye, so the ladder here goes on until
+the damage is plain. Every figure is a full pass over the whole package (every page, not a sample), stored as the field
+split + Zstd 17 (codec 4, today's default); the saving counts the whole file (pages and the rest), from Classic
+768.83 MiB and Enhanced 1719.96 MiB plain. The in-game steps were written as real packages and their sizes match.
+
+| Step | Classic | Enhanced | Δ PSNR dB C / E | Δ dB > 384 px C / E | Flicker C / E |
+|---|---:|---:|---:|---:|---:|
+| plain | 768.83 MiB | 1719.96 MiB | (33.21 / 31.37 dB) | | 4.15 / 4.80 |
+| `fields:30:3` (mild) | −9.6 % | −6.6 % | −0.61 / −0.15 | −0.86 / −0.40 | 4.32 / 4.81 |
+| `zrdo:100:6` | −12.6 % | −9.7 % | −1.30 / −0.62 | −1.73 / −0.81 | 5.77 / 5.64 |
+| `coarse:2:2+zrdo:30:3` (strong) | −13.9 % | −11.7 % | −0.71 / −0.64 | −0.82 / −0.72 | 4.80 / 5.30 |
+| `coarse:2:4+zrdo:100:6` | −21.4 % | −17.7 % | −1.98 / −1.63 | −2.34 / −1.68 | 6.24 / 6.41 |
+| `coarse:3:8+zrdo:100:8` | −29.5 % | −23.6 % | −3.76 / −3.05 | −4.36 / −3.26 | 7.93 / 7.79 |
+| `coarse:4:8+zrdo:100:12` | −35.2 % | −25.6 % | −5.09 / −3.41 | −6.23 / −4.38 | 9.61 / 8.52 |
+| `coarse:4:16+zrdo:300:16` | −46.8 % | −34.2 % | −8.11 / −6.24 | −9.20 / −7.17 | 13.34 / 11.78 |
+| `coarse:5:32+zrdo:1000:32` | −64.5 % | −47.6 % | −13.10 / −11.13 | −14.23 / −12.34 | 22.03 / 19.12 |
+
+Where each step starts to show, as I read stills taken from the videos below (my observations, not a user verdict):
+
+- **`fields:30:3`, `zrdo:100:6`, `coarse:2:2+zrdo:30:3`:** nothing I can find in the picture at 1x, 2x or 4x on any
+  body, in either client; they show only in the amplified difference rows (`zrdo:100:6`'s is the brightest of the
+  three on the Classic dragon: scattered whole blocks taken from elsewhere).
+- **`coarse:2:4+zrdo:100:6`:** at 4x a faint 4×4 block grid on smooth areas (the Classic dragon's and daemon's wing
+  membranes) and a slight green tint on the Enhanced human's half-transparent loincloth; nothing at 1x.
+- **`coarse:3:8+zrdo:100:8`:** the first step I would call visible on a close look: 4×4 tiles on the wing membranes
+  and bellies of both clients' dragon and daemon at 2x and 4x, a few off-hue specks (yellow-green on the Enhanced
+  daemon's wing edge). At normal zoom in the game I cannot pick it out from the plain encode.
+- **`coarse:4:8+zrdo:100:12`:** visible at 1x on the large bodies: green and pink block patches on the Classic dragon,
+  a tiled belly on the Enhanced dragon, a pink tint on the Enhanced human's leg.
+- **`coarse:4:16+zrdo:300:16`:** obvious in the game at normal zoom: blotchy colour blocks over the dragon and daemon,
+  shading gone to tiles, pale patches on the Enhanced dragon's back.
+- **`coarse:5:32+zrdo:1000:32`:** broken: a posterised palette, flat grey and olive blocks across the Classic dragon
+  and daemon, the Enhanced bodies a mosaic. Silhouettes stay exact at every step.
+
+The small bodies hide it longest: on the Classic human the picture changes only from `coarse:4:16` (a yellow patch on
+the hip at 4x). The ranking by eye follows the ladder except `zrdo:100:6`, which sits with the two milder steps despite
+its larger PSNR loss.
+
+The videos, in `/home/claudio/rust-target/uodynamapper-scratch/bc7-lossy-visual/clips/`, the Enhanced dragon and
+daemon first:
+
+- `NN-<client>-<body>-<name>-blink.mp4`, the primary evidence: held frames, every panel flipping every 0.5 s
+  between the plain encode and one step (the first panel between the source and the plain encode, a blue or orange
+  mark saying which shows), at 2x and then 4x (or the largest scale that shows the whole body).
+- `NN-<client>-<body>-<name>-ladder.mp4`: the source, the plain encode and every step side by side, playing the walk
+  and an idle clip at 4x and 2x with |version − source| × 8 per channel under each panel (black is exact), then at
+  1x. Large bodies are cropped to the panel at 2x and 4x (the title gives the crop).
+- In order: 01 Enhanced dragon (12), 02 Enhanced daemon (9), 03 Classic dragon, 04 Classic daemon, 05/06 lich (24),
+  07/08 human (400), 09/10 dog (217), Enhanced before Classic. Classic idles are actions 17 (monsters), 5 (human)
+  and 10 (dog); the Enhanced ones `stand`.
+- `ingame/<style>-<body>.mp4`: the game at normal zoom (1x, renderer defaults, Classic style with Classic art and
+  Enhanced style with Enhanced art, map 1 at 2111,790), the body walking east and standing, recorded once per
+  conditioned package and shown six up: plain, `fields:30:3`, `coarse:2:2+zrdo:30:3`, `coarse:3:8+zrdo:100:8`,
+  `coarse:4:16+zrdo:300:16`, `coarse:5:32+zrdo:1000:32`. The runs are separate, so the panels drift apart by a few
+  frames.
+
+Every file is under 29 MiB: H.264 4:4:4 at CRF 8, raised (shown in the encoder log, 12 to 16 for the large bodies'
+ladders, 18 to 21 for the in-game videos) until it fits.
+
+To reproduce (`$B` as below; the in-game recordings used scratch scripts: a private headless KWin, the renderer
+control socket, isolated settings and `x11grab`):
+
+```sh
+$B lossy cc_rgba.uddp cc_bc7.uddp cc --methods fields+zstd:17 --variants fields:30:3,coarse:3:8+zrdo:100:8 \
+    --store store/cc                                   # full pass, every page stored
+$B condition cc_bc7.uddp cc store/cc/coarse_3_8_zrdo_100_8 mobile_anim_cc.uddp   # same codec, rest copied
+udd-cli tool validate mobile_anim_cc.uddp
+$B lossy cc_rgba.uddp cc_bc7.uddp cc --every 100000 --methods fields+zstd:17 --variants <the ladder> \
+    --clip 12:walk:2 --clip 12:17:2 --clip 9:walk:2 --clip 9:17:2 --ladder-dir clips --ladder-prefix classic \
+    --note "fields:30:3=package −9.6 %" --body-name 12=dragon --body-name 9=daemon
+```
+
+`condition` rewriting the plain encode's pages reproduces the package byte for byte.
+
 ### Verdict
 
 Every candidate below keeps silhouettes and alpha exact and decodes as fast as the plain encode (one exception
