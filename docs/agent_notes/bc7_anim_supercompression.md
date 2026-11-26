@@ -153,8 +153,19 @@ parameters a whole page came out 3 to 18 % larger than without a dictionary (the
 same). Pinning the level-9 large-input parameters (`--zstd=wlog=22,clog=21,hlog=22,slog=6,mml=5,tlen=16,strat=5`,
 single thread) fixes that in the tool. Through the `zstd` crate with the same parameters, a 112 KiB dictionary still
 made the pages 1.5 to 2.1 % larger, a 1 MiB one 0.8 to 1.3 % smaller (unexplained; the crate's frames are the same
-size as the tool's without a dictionary), so the first rows are the tool's (`dict_cli.sh` in the scratch folder: the
-harness dumps the dictionary and every 8th odd page with `sizes --dump DIR --dump-pages N`):
+size as the tool's without a dictionary), so the first rows are the tool's: the harness dumps the dictionary it
+trained and every 8th odd page, and the tool compresses each page with and without it.
+
+```sh
+$B sizes /home/claudio/test/uddp/mobile_anim_cc.uddp cc --every 8 --dict-kib 1024 --dump dump --dump-pages 1000 \
+    --methods stored,none+zstd-dict:9
+P9=--zstd=wlog=22,clog=21,hlog=22,slog=6,mml=5,tlen=16,strat=5
+for p in dump/page_*.bc7; do
+    zstd -q -9 --single-thread $P9 -c $p | wc -c                             # plain
+    zstd -q -9 --single-thread $P9 -D dump/dictionary_none.bin -c $p | wc -c # with the dictionary
+done
+```
+
 
 | Method | Classic | Enhanced | Pages |
 |---|---:|---:|---|
