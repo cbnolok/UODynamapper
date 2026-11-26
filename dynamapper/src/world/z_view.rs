@@ -311,51 +311,77 @@ pub fn building_area(x: i32, y: i32, z: i32, cells: &impl ZViewCells) -> ZViewAr
     area.grown(Z_VIEW_AREA_MARGIN)
 }
 
-/// The cut for a player on (`x`, `y`) at `z`, over land `player_land_z` (the cell's average z where it is stretched;
-/// `None` while unknown, which never caps).
-pub fn compute_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>, cells: &impl ZViewCells) -> ZViewCut {
-    let ceiling_min = z + PLAYER_CEILING_MIN_RISE;
-    let headroom = z + PLAYER_VIEW_HEADROOM;
-    let mut max_z = NO_Z_VIEW_LIMIT;
-    let mut max_ground_z = NO_Z_VIEW_LIMIT;
-    let mut hide_roofs = false;
+/// The floor or roof over a body (ClassicUO's ceiling, `ceiling_over`): the static that caps the view there and the
+/// cap's z.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ceiling {
+    /// The cap: the floor's z, or the lowest z of the roof (`near_roof_z`), not raised to the headroom.
+    pub z: i32,
+    /// The static found, on the body's cell or a roof on the cell (x+1, y+1): its cell, tile flags and z.
+    pub x: i32,
+    pub y: i32,
+    pub flags: u64,
+    pub object_z: i8,
+}
 
-    if player_land_z.is_some_and(|land_z| land_z >= headroom) {
-        max_z = headroom;
-        max_ground_z = headroom;
-    } else {
+impl Ceiling {
+    /// Whether `cut` hides the static that found the ceiling, `own_land_z` the averaged land z of its cell, which only
+    /// a roof under KR's cut reads (`ZViewCut::hides_static_over_land`).
+    pub fn hidden_by(&self, cut: &ZViewCut, own_land_z: Option<i32>) -> bool {
+        cut.cuts_cell(self.x, self.y) && cut.hides_static_over_land(self.flags, self.object_z, || own_land_z)
+    }
+}
+
+/// The ceiling over a body on (`x`, `y`) at `z` below `below_z` (ClassicUO's `GameScene.UpdateMaxDrawZ`): with
+/// `own_cell`, the lowest static on the body's cell more than `PLAYER_CEILING_MIN_RISE` above it, neither foliage nor
+/// see-through, and a floor if it is a roof; then a lower roof on the cell (x+1, y+1) more than that above the body,
+/// neither see-through nor walkable, which caps at the lowest z of its roof (`near_roof_z`).
+pub fn ceiling_over(x: i32, y: i32, z: i32, cells: &impl ZViewCells, own_cell: bool, below_z: i32) -> Option<Ceiling> {
+    let ceiling_min = z + PLAYER_CEILING_MIN_RISE;
+    let mut max_z = below_z;
+    let mut ceiling = None;
+    if own_cell {
         for &(flags, object_z) in cells.objects(x, y) {
-            let object_z = i32::from(object_z);
+            let cap_z = i32::from(object_z);
             let is_roof = flags & TaeFlag::Roof.bits() != 0;
             let is_surface = flags & TaeFlag::Surface.bits() != 0;
-            if object_z > ceiling_min && max_z > object_z && flags & CEILING_SKIP_FLAGS == 0 && (!is_roof || is_surface)
-            {
-                max_z = object_z;
-                hide_roofs = true;
+            if cap_z > ceiling_min && max_z > cap_z && flags & CEILING_SKIP_FLAGS == 0 && (!is_roof || is_surface) {
+                max_z = cap_z;
+                ceiling = Some(Ceiling { z: cap_z, x, y, flags, object_z });
             }
         }
     }
-
-    let mut roof_cap = max_z;
     let (next_x, next_y) = (x + 1, y + 1);
     for &(flags, object_z) in cells.objects(next_x, next_y) {
-        let object_z = i32::from(object_z);
-        if object_z > ceiling_min
-            && max_z > object_z
+        let roof_z = i32::from(object_z);
+        if roof_z > ceiling_min
+            && max_z > roof_z
             && flags & ROOF_SKIP_FLAGS == 0
             && flags & TaeFlag::Roof.bits() != 0
         {
-            max_z = object_z;
-            roof_cap = near_roof_z(cells, object_z, next_x, next_y, object_z, (x, y));
-            hide_roofs = true;
+            max_z = roof_z;
+            let cap_z = near_roof_z(cells, roof_z, next_x, next_y, roof_z, (x, y));
+            ceiling = Some(Ceiling { z: cap_z, x: next_x, y: next_y, flags, object_z });
         }
     }
+    ceiling
+}
 
-    max_z = roof_cap;
-    if roof_cap < headroom {
-        max_z = headroom;
+/// The cut for a player on (`x`, `y`) at `z`, over land `player_land_z` (the cell's average z where it is stretched;
+/// `None` while unknown, which never caps).
+pub fn compute_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>, cells: &impl ZViewCells) -> ZViewCut {
+    let headroom = z + PLAYER_VIEW_HEADROOM;
+    // Under the land the land caps, and only a roof on the next cell is still looked for (it hides the roofs).
+    let under_land = player_land_z.is_some_and(|land_z| land_z >= headroom);
+    let land_cap = if under_land { headroom } else { NO_Z_VIEW_LIMIT };
+    let ceiling = ceiling_over(x, y, z, cells, !under_land, land_cap);
+    ZViewCut {
+        max_z: ceiling.map_or(land_cap, |ceiling| ceiling.z).max(headroom),
+        max_ground_z: land_cap,
+        hide_roofs: ceiling.is_some(),
+        roof_layer: None,
+        area: None,
     }
-    ZViewCut { max_z, max_ground_z, hide_roofs, roof_layer: None, area: None }
 }
 
 /// The KR client's cut for a player on (`x`, `y`) at `z`, over the averaged land z `player_land_z` of the cell (`None`
@@ -473,9 +499,11 @@ impl ZViewCells for ZViewRegion {
 }
 
 impl ZViewRegion {
-    /// Reads the region around (`center_x`, `center_y`) on the map `map_id`: every static on it, each as itself
-    /// whatever its graphic (map statics are never multis), and every part of the multis placed within
-    /// `MULTI_PART_MAX_REACH` of it that lands on it (the drawn parts, or all with `show_hidden_multi_parts`).
+    /// Reads the region within `radius` cells of (`center_x`, `center_y`) on the map `map_id` (`Z_VIEW_REGION_RADIUS`
+    /// for the player's rule): every static on it, each as itself whatever its graphic (map statics are never multis),
+    /// and every part of the multis placed within `MULTI_PART_MAX_REACH` of it that lands on it (the drawn parts, or
+    /// all with `show_hidden_multi_parts`).
+    #[allow(clippy::too_many_arguments)]
     pub fn read(
         statics_store: &mut LazyStaticsStore,
         tilemeta: &TileMetaPackage,
@@ -483,16 +511,16 @@ impl ZViewRegion {
         placed_multis: &PlacedMultisRes,
         show_hidden_multi_parts: bool,
         map_id: u32,
-        center_x: i32,
-        center_y: i32,
+        (center_x, center_y): (i32, i32),
+        radius: i32,
     ) -> Self {
         let mut region = Self::default();
         let in_region = |x: i32, y: i32| {
-            (x - center_x).abs() <= Z_VIEW_REGION_RADIUS && (y - center_y).abs() <= Z_VIEW_REGION_RADIUS
+            (x - center_x).abs() <= radius && (y - center_y).abs() <= radius
         };
         let block_dim = MAP_STORAGE_BLOCK_TILE_DIM as i32;
         let block_range = |center: i32| {
-            ((center - Z_VIEW_REGION_RADIUS).max(0) / block_dim)..=((center + Z_VIEW_REGION_RADIUS).max(0) / block_dim)
+            ((center - radius).max(0) / block_dim)..=((center + radius).max(0) / block_dim)
         };
         for block_y in block_range(center_y) {
             for block_x in block_range(center_x) {
@@ -511,7 +539,7 @@ impl ZViewRegion {
         let Some(multis) = multis else {
             return region;
         };
-        let reach = Z_VIEW_REGION_RADIUS + MULTI_PART_MAX_REACH;
+        let reach = radius + MULTI_PART_MAX_REACH;
         let anchor_cells = |center: i32| (center - reach).max(0) as u32..(center + reach + 1).max(0) as u32;
         for multi in placed_multis.anchored_in(map_id, anchor_cells(center_x), anchor_cells(center_y)) {
             let Some(parts) = multis.parts(multi.multi_id, show_hidden_multi_parts) else {
@@ -677,8 +705,8 @@ pub fn sys_update_z_view_limit(
         &multis.1,
         inputs.show_hidden_multi_parts,
         map_id,
-        x,
-        y,
+        (x, y),
+        Z_VIEW_REGION_RADIUS,
     );
     *last_inputs = Some(inputs);
     let mut cut = match rule {

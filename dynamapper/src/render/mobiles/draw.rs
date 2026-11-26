@@ -17,7 +17,7 @@ use crate::render::lighting::static_lights::RenderStaticLightInstances;
 use crate::render::scene::SceneStateData;
 use crate::render::statics::statics_collect::static_art_billboard_local_light_corners;
 use crate::render::statics::static_placement::{apply_cc_static_world_anchor_translation, StaticDepthClass,
-    CC_TILE_PIXEL_WIDTH, CC_WORLD_Y_PER_PIXEL, STATIC_ART_Y_BIAS};
+    STATIC_ART_Y_BIAS};
 use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
 use crate::world::caves::CavesRes;
@@ -26,13 +26,15 @@ use crate::world::player::Player;
 use super::clips::{AnimSource, AtlasEntry, ClipKey, MobileClips};
 use super::frame_atlas::{AtlasFormat, MobileFrameAtlas};
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
-use super::placement::{mobile_card_bounds, CELL_CENTRE_ABOVE_NEAR_VERTEX_PX};
+use super::placement::mobile_card_bounds;
 use super::rife_in_betweens::MobileInBetweens;
 use super::sharpening::{MobileFrameFilter, MobileSharpening};
 use super::upscales::{atlas_pages_wanted, upscale_key, MobileUpscale, MobileUpscaleGate, MobileUpscaleSwitches,
     MobileUpscales, UpscalePriority, UpscaleSwitch};
 use super::MobileClipChoice;
 use super::pace::MobileCycleClock;
+use super::ceiling::MobileCeilingCache;
+use crate::world::z_view::ZViewLimit;
 
 /// The most frames drawn at once: a mount and its rider for each mobile, and the parts of an upscaled frame wider than
 /// a page. The player is the one mobile but for those the control channel spawns for tests (`spawn_mobile`).
@@ -48,79 +50,34 @@ const MOBILE_PIXEL_RATIO: f32 = 1.0;
 /// How far into a cell a sliding mobile must be for its depth to take that cell: below this, the float error of a
 /// mobile at rest on its cell.
 const DEPTH_CELL_SLIDE_EPSILON: f32 = 1.0 / 1024.0;
-/// The Enhanced client's cut above a mobile's anchor, in screen pixels, below which it draws the frame in ground strips
-/// (UOSA 2.58 `MobAnimTriShape::RenderImmediate` 0x004328b0: -8, y down, from the anchor).
-const ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX: f32 = 8.0;
-/// The height of a ground strip, in screen pixels: one diagonal cell (the client's 1.414 world units), the step
-/// between the centres of two cells one row apart in each map axis.
-const ENHANCED_GROUND_STRIP_PX: f32 = CC_TILE_PIXEL_WIDTH;
-/// The Enhanced client's ground strips; below the last, it draws nothing (here the last strip takes it).
-const ENHANCED_GROUND_STRIPS: u32 = 4;
-/// ClassicUO's cut above a Classic frame's anchor, in screen pixels: none, the frame is cut at its anchor
-/// (`MobileView.DrawInternal`: the first slice is the frame's height plus its centre y less the mount offset, down to
-/// the mobile's position whatever the layer's offset).
-const CLASSIC_GROUND_CUT_ABOVE_ANCHOR_PX: f32 = 0.0;
-/// The height of the Classic ground strip, in screen pixels: one diagonal cell, the reach of the rows it is ordered
-/// over (the land of the next row covers what lies below, as in ClassicUO). Being the only strip, it also takes
-/// everything below it, as ClassicUO's second slice takes the rest of the frame.
-const CLASSIC_GROUND_STRIP_PX: f32 = CC_TILE_PIXEL_WIDTH;
-/// ClassicUO's slices below the cut: one, at the mobile's depth + 2, two rows (one cell nearer in each map axis).
-const CLASSIC_GROUND_STRIPS: u32 = 1;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
-/// statics' sprite instance, the crossfade of its frames, its ground strips and its body's frame filter.
+/// statics' sprite instance, the crossfade of its frames, the ceiling drawn over it and its body's frame filter.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MobileSpriteInstance {
     pub sprite: SpriteInstance,
     pub crossfade: FrameCrossfade,
-    pub ground: MobileGroundStrips,
+    pub ceiling: MobileCeiling,
     pub frame_filter: MobileFrameFilter,
 }
 
-/// Where a mobile's card is ordered nearer than its anchor (art/depth.wesl `mobile_ground_strip`), in the card's local
-/// world y: below `cut_local_y`, `strips` strips `strip_height` tall, each one cell nearer in both map axes than the
-/// one above it.
-///
-/// The Enhanced client draws the part of a mobile below its anchor so (UOSA `MobAnimTriShape::RenderImmediate`): the
-/// frame down to 8 pixels above its anchor as one card at the mobile, then 4 strips, each one diagonal cell tall and
-/// moved one cell nearer in x and y, and nothing below. Each strip so lies over the land of the rows it covers, which
-/// drawn flat behind the mobile would otherwise cover its legs: the Enhanced frames reach well below their anchor (a
-/// ridden horse's hooves, after the layer offsets point up). ClassicUO draws a Classic frame in two slices
-/// (`MobileView.DrawInternal`): down to the anchor at the mobile, the rest at its depth + 2, one cell nearer in x and
-/// y. A Classic frame reaching below and beside its anchor, as the ophidian's tail (body 86), so lies
-/// over the land of the next row instead of under it.
+/// The roof or upper floor drawn over a mobile (ceiling.rs `MobileCeilingCache`), as the art sprite shader reads it
+/// (art/depth.wesl `mobile_fragment_view_z`): the z of its plane, when `present` is not 0. The mobile's pixels above
+/// it are ordered under it there, so the roof tiles cover a head poking through them.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
-pub struct MobileGroundStrips {
-    pub cut_local_y: f32,
-    pub strip_height: f32,
-    pub strips: u32,
-    pub _pad: u32,
+pub struct MobileCeiling {
+    pub z: f32,
+    pub present: u32,
+    pub _pad: [u32; 2],
 }
 
-impl MobileGroundStrips {
-    /// The strips of a frame from `source`, on a card whose anchor sits on its cell's centre (placement.rs). The cut
-    /// is the mobile's anchor's, whatever the layer's offset: the client cuts the composite's bounds, which hold the
-    /// layers' offsets, at the mobile's position.
-    fn of(source: AnimSource) -> Self {
-        match source {
-            AnimSource::Enhanced => Self {
-                cut_local_y: (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX + ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX)
-                    * CC_WORLD_Y_PER_PIXEL,
-                strip_height: ENHANCED_GROUND_STRIP_PX * CC_WORLD_Y_PER_PIXEL,
-                strips: ENHANCED_GROUND_STRIPS,
-                _pad: 0,
-            },
-            AnimSource::Classic => Self {
-                cut_local_y: (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX + CLASSIC_GROUND_CUT_ABOVE_ANCHOR_PX)
-                    * CC_WORLD_Y_PER_PIXEL,
-                strip_height: CLASSIC_GROUND_STRIP_PX * CC_WORLD_Y_PER_PIXEL,
-                strips: CLASSIC_GROUND_STRIPS,
-                _pad: 0,
-            },
-        }
+impl MobileCeiling {
+    /// The ceiling at the plane z `plane_z`, or none.
+    pub fn at(plane_z: Option<i32>) -> Self {
+        plane_z.map_or_else(Self::default, |z| Self { z: z as f32, present: 1, _pad: [0; 2] })
     }
 }
 
@@ -304,7 +261,7 @@ pub fn sys_draw_mobiles(
     mut commands: Commands,
     time: Res<Time>,
     mut mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice, &mut MobileCycleClock,
-        &mut MobileShownLayers)>,
+        &mut MobileShownLayers, &MobileCeilingCache)>,
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
@@ -316,7 +273,8 @@ pub fn sys_draw_mobiles(
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
     settings: Res<Settings>,
-    (scene_state, caves, mut sharpening): (Res<SceneStateData>, Res<CavesRes>, ResMut<MobileSharpening>),
+    (scene_state, caves, mut sharpening, z_view): (Res<SceneStateData>, Res<CavesRes>, ResMut<MobileSharpening>,
+        Res<ZViewLimit>),
     static_lights: Option<Res<RenderStaticLightInstances>>,
 ) {
     let (Some(mut draw_assets), Some(mut atlas)) = (draw_assets, atlas) else { return };
@@ -336,7 +294,7 @@ pub fn sys_draw_mobiles(
     }
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
-    for (transform, motion, appearance, choice, mut clock, mut shown) in mobiles_q.iter_mut() {
+    for (transform, motion, appearance, choice, mut clock, mut shown, ceiling) in mobiles_q.iter_mut() {
         let (Some(source), Some(actions)) = (choice.source, choice.actions) else { continue };
         let mut frames = Vec::with_capacity(2);
         if let (Some(mount_body), Some(mount_action)) = (appearance.mount_body, actions.mount_action) {
@@ -356,6 +314,8 @@ pub fn sys_draw_mobiles(
         }
         let frames = layers_to_draw(frames, &mut shown, |key| clips.loading(key), |key| clips.resident(key).is_some());
         let cave_flags = mobile_cave_flags(&caves, transform.translation);
+        // The roof or upper floor over it, while the z-view's cut draws it.
+        let ceiling = MobileCeiling::at(ceiling.drawn_plane_z(&z_view.0));
         // The upscales of the nearest the player go first.
         let distance = player.map_or(0.0, |player| transform.translation.xz().distance(player.xz()));
         let mut switches = Vec::with_capacity(frames.len());
@@ -413,7 +373,7 @@ pub fn sys_draw_mobiles(
                 let frames = frames.padded(filter.padding_texels, clip.texel_scale);
                 // Both frames of an in-between come from the clip, so they share its mirroring.
                 instances.push(mobile_instance(transform.translation, frames, filter, mirrored, drawn.offset_px,
-                    drawn.tie_level, source, cave_flags, local_lights));
+                    drawn.tie_level, source, cave_flags, ceiling, local_lights));
             }
         }
         shown.upscales = MobileUpscaleSwitches(switches);
@@ -452,7 +412,8 @@ fn mobile_cave_flags(caves: &CavesRes, translation: Vec3) -> u32 {
 }
 
 /// The instance of `frames` at a mobile's position `translation` (world x and z the UO x and y, world y its z), with
-/// the cave bits `cave_flags` (`mobile_cave_flags`), lit by `local_lights` of a map when given, filtered by `filter`.
+/// the cave bits `cave_flags` (`mobile_cave_flags`) and the `ceiling` over it, lit by `local_lights` of a map when
+/// given, filtered by `filter`.
 #[allow(clippy::too_many_arguments)]
 fn mobile_instance(
     translation: Vec3,
@@ -463,6 +424,7 @@ fn mobile_instance(
     tie_level: u32,
     source: AnimSource,
     cave_flags: u32,
+    ceiling: MobileCeiling,
     local_lights: Option<(&RenderStaticLightInstances, u32)>,
 ) -> MobileSpriteInstance {
     let (world_x, world_z) = apply_cc_static_world_anchor_translation(translation.x, translation.z);
@@ -499,8 +461,7 @@ fn mobile_instance(
             true, lights, map_id, world_x, world_z, translation.y, bounds, false)),
         color_rgba: OPAQUE_COLOR,
     };
-    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ground: MobileGroundStrips::of(source),
-        frame_filter: filter }
+    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ceiling, frame_filter: filter }
 }
 
 /// The cell a mobile at (`x`, `z`) is ordered from: its own at rest, and while it slides between two cells, the
@@ -508,7 +469,7 @@ fn mobile_instance(
 /// takes the next cell east and south of its step's origin, the origin north and west). Ordered from the cell it
 /// slides out of, or from its fractional position, the land of the cells in front would cover its lower half
 /// until the step ends.
-fn mobile_depth_cell(x: f32, z: f32) -> (f32, f32) {
+pub(super) fn mobile_depth_cell(x: f32, z: f32) -> (f32, f32) {
     ((x - DEPTH_CELL_SLIDE_EPSILON).ceil(), (z - DEPTH_CELL_SLIDE_EPSILON).ceil())
 }
 
@@ -543,105 +504,192 @@ mod tests {
 
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
-        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), MobileGroundStrips (16) and a
+        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), a MobileCeiling (16) and a
         // MobileFrameFilter (32), on a 16-byte stride.
         const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
+        const WGSL_MOBILE_CEILING_SIZE: usize = 16;
         const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 240;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
+        assert_eq!(std::mem::size_of::<MobileCeiling>(), WGSL_MOBILE_CEILING_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
     }
 
-    /// art/depth.wesl `mobile_ground_strip`.
-    fn ground_strip(ground: MobileGroundStrips, local_y: f32) -> f32 {
-        if ground.strips == 0 {
-            return 0.0;
-        }
-        ((ground.cut_local_y - local_y) / ground.strip_height).ceil().clamp(0.0, ground.strips as f32)
+    const DEPTH_WESL: &str = include_str!("../../../assets/shaders/world/art/depth.wesl");
+    /// The isometric camera's line of sight (camera.rs: the camera looks along (-1, -1, -1)).
+    const ISOMETRIC_SIGHT: Vec3 = Vec3::ONE;
+    /// A mobile at rest and sliding east, south-east and north-west (map x, y).
+    const MOBILE_POSITIONS: [(f32, f32); 4] = [(1473.0, 1722.0), (1473.4, 1722.0), (1473.5, 1722.5), (1472.75, 1721.75)];
+    /// How far a frame reaches from its anchor, in screen pixels: sideways, up and down; each pixel at its centre.
+    const REACH_SIDEWAYS_PX: i32 = 120;
+    const REACH_UP_PX: i32 = 160;
+    const REACH_DOWN_PX: i32 = 120;
+    const PIXEL_STEP_PX: usize = 2;
+    const PIXEL_CENTRE_PX: f32 = 0.5;
+
+    /// Every pixel of a frame's reach around its anchor, (right, below) in screen pixels.
+    fn frame_pixels() -> impl Iterator<Item = (f32, f32)> {
+        (-REACH_SIDEWAYS_PX..=REACH_SIDEWAYS_PX).step_by(PIXEL_STEP_PX).flat_map(|right| {
+            (-REACH_UP_PX..REACH_DOWN_PX).step_by(PIXEL_STEP_PX)
+                .map(move |below| (right as f32 + PIXEL_CENTRE_PX, below as f32 + PIXEL_CENTRE_PX))
+        })
     }
 
-    /// The logical distance (static_placement.rs `logical_draw_distance`) of a mobile's pixel `below_anchor_px` screen
-    /// pixels below its anchor, the mobile at (`x`, `y`) and z 0, and of the flat land at z 0 under that pixel,
-    /// `right_px` right of the anchor.
-    fn mobile_and_land_distances(ground: MobileGroundStrips, x: f32, y: f32, right_px: f32, below_anchor_px: f32)
-        -> (f64, f64) {
-        use crate::render::statics::static_placement::logical_draw_distance;
-        use crate::util_lib::wesl_source::wesl_f32_const;
-        let land_priority_offset = wesl_f32_const(include_str!("../../../assets/shaders/world/art/depth.wesl"),
-            "LAND_PRIORITY_Z_OFFSET");
-        let local_y = (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_anchor_px) * CC_WORLD_Y_PER_PIXEL;
-        let strip = ground_strip(ground, local_y);
+    /// The point on the card of a mobile at (`x`, `y`) and `z` of its pixel `right_px` right of its anchor and
+    /// `below_px` below it (placement.rs: the card at the cell's near vertex, the anchor on the cell's centre).
+    fn card_point(x: f32, y: f32, z: f32, right_px: f32, below_px: f32) -> Vec3 {
+        use crate::render::statics::static_placement::{CC_WORLD_XZ_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ};
+        let (near_x, near_z) = apply_cc_static_world_anchor_translation(x, y);
+        let right = STATIC_BILLBOARD_RIGHT_XZ * right_px * CC_WORLD_XZ_PER_PIXEL;
+        Vec3::new(near_x + right.x,
+            crate::world::coords::scale_uo_z_to_bevy_units(z)
+                + (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_px) * CC_WORLD_Y_PER_PIXEL,
+            near_z + right.y)
+    }
+
+    /// The cell where the isometric line of sight through `point` meets the plane at z `plane_z`.
+    fn plane_cell(point: Vec3, plane_z: f32) -> (f32, f32) {
+        let hit = point + ISOMETRIC_SIGHT * (crate::world::coords::scale_uo_z_to_bevy_units(plane_z) - point.y);
+        (hit.x.floor(), hit.z.floor())
+    }
+
+    /// The logical distance (static_placement.rs `logical_draw_distance`, which the GPU's depth follows:
+    /// depth_tests.rs) of a surface lying on the cell (`x`, `y`) at `priority_z`, tie level 0.
+    fn cell_distance((x, y): (f32, f32), priority_z: f32) -> f64 {
+        let (anchor_x, anchor_y) = apply_cc_static_world_anchor_translation(x, y);
+        logical_draw_distance(f64::from(anchor_x + anchor_y), f64::from(priority_z), 0)
+    }
+
+    /// art/depth.wesl `mobile_fragment_view_z` in the isometric camera, as a logical distance: the pixel
+    /// (`right_px`, `below_px`) of a frame of tie level `tie_level` of a mobile at (`x`, `y`) and `z`, under the ceiling
+    /// plane at z `ceiling_z` if any.
+    fn mobile_pixel_distance(x: f32, y: f32, z: f32, (right_px, below_px): (f32, f32), tie_level: u32,
+        ceiling_z: Option<f32>) -> f64 {
+        let ceiling_offset = wesl_f32_const(DEPTH_WESL, "MOBILE_CEILING_PRIORITY_Z_OFFSET");
+        let point = card_point(x, y, z, right_px, below_px);
         let (depth_x, depth_y) = mobile_depth_cell(x, y);
-        let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x + strip, depth_y + strip);
-        let mobile = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(MOBILE_PRIORITY_Z_OFFSET),
-            MOUNT_TIE_LEVEL);
-        // The screen point's map position: a cell east moves it 22 pixels right and down, a cell south 22 left and
-        // down; the cells' centres lie on whole coordinates.
-        let half_tile = CC_TILE_PIXEL_WIDTH * 0.5;
-        let (east, south) = ((right_px + below_anchor_px) / (2.0 * half_tile), (below_anchor_px - right_px) / (2.0 * half_tile));
-        let (cell_x, cell_y) = ((x + east).round(), (y + south).round());
-        let (land_x, land_y) = apply_cc_static_world_anchor_translation(cell_x, cell_y);
-        let land = logical_draw_distance(f64::from(land_x + land_y), f64::from(land_priority_offset), 0);
-        (mobile, land)
+        let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x, depth_y);
+        let priority_z = z + MOBILE_PRIORITY_Z_OFFSET;
+        let card = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(priority_z), tie_level);
+        let mut distance = card.max(cell_distance(plane_cell(point, z), priority_z));
+        if let Some(ceiling_z) = ceiling_z
+            && point.y > crate::world::coords::scale_uo_z_to_bevy_units(ceiling_z) {
+            distance = distance.min(cell_distance(plane_cell(point, ceiling_z), ceiling_z + ceiling_offset));
+        }
+        distance
     }
 
-    /// No flat land at the mobile's z covers a pixel of `ground`'s card from 80 pixels over its anchor down to
-    /// `reach_down_px` below it, as far as a frame reaches sideways, at rest and sliding east, south-east and
-    /// north-west. Each pixel is taken at its centre, as a fragment is, never on a cell's edge.
-    fn assert_the_card_lies_over_the_flat_land_in_front(ground: MobileGroundStrips, reach_down_px: f32) {
-        const REACH_RIGHT_PX: i32 = 120;
-        const REACH_UP_PX: i32 = 80;
-        const STEP_PX: usize = 2;
-        const PIXEL_CENTRE_PX: f32 = 0.5;
-        for (x, y) in [(1473.0, 1722.0), (1473.4, 1722.0), (1473.5, 1722.5), (1472.75, 1721.75)] {
-            for right_px in (-REACH_RIGHT_PX..=REACH_RIGHT_PX).step_by(STEP_PX) {
-                for below_px in (-REACH_UP_PX..reach_down_px as i32).step_by(STEP_PX) {
-                    let (mobile, land) = mobile_and_land_distances(ground, x, y, right_px as f32 + PIXEL_CENTRE_PX,
-                        below_px as f32 + PIXEL_CENTRE_PX);
-                    assert!(mobile > land, "({x}, {y}): the land covers the pixel {right_px}, {below_px}");
+    use crate::render::statics::static_placement::{logical_draw_distance, CC_WORLD_Y_PER_PIXEL};
+    use crate::util_lib::wesl_source::wesl_f32_const;
+    use super::super::placement::CELL_CENTRE_ABOVE_NEAR_VERTEX_PX;
+
+    /// The flat land, the Background floors and the flat items at the mobile's z never cover a pixel of its frame: the
+    /// legs and a tail below the anchor lie on the cell they cover, over what lies flat on it, at rest and sliding.
+    #[test]
+    fn nothing_flat_at_the_mobiles_z_covers_its_frame() {
+        const Z: f32 = 0.0;
+        // ClassicUO's priority z of a Background floor and of a flat item over their z; a flat item's highest tie level.
+        const BACKGROUND_PRIORITY_Z_OFFSET: f32 = -1.0;
+        const FLAT_ITEM_TIE_LEVEL: u32 = 8;
+        let land_offset = wesl_f32_const(DEPTH_WESL, "LAND_PRIORITY_Z_OFFSET");
+        for (x, y) in MOBILE_POSITIONS {
+            for pixel in frame_pixels() {
+                let cell = plane_cell(card_point(x, y, Z, pixel.0, pixel.1), Z);
+                let (anchor_x, anchor_y) = apply_cc_static_world_anchor_translation(cell.0, cell.1);
+                let row = f64::from(anchor_x + anchor_y);
+                for tie_level in [MOUNT_TIE_LEVEL, RIDER_TIE_LEVEL] {
+                    let mobile = mobile_pixel_distance(x, y, Z, pixel, tie_level, None);
+                    assert!(mobile > cell_distance(cell, Z + land_offset), "({x}, {y}): the land covers {pixel:?}");
+                    assert!(mobile > cell_distance(cell, Z + BACKGROUND_PRIORITY_Z_OFFSET), "a floor, {pixel:?}");
+                    assert!(mobile > logical_draw_distance(row, f64::from(Z), FLAT_ITEM_TIE_LEVEL),
+                        "({x}, {y}): a flat item covers {pixel:?}");
                 }
             }
         }
     }
 
+    /// A static standing at the mobile's z covers the pixels below the anchor that lie on its cell, and land rising
+    /// there more than 3 z over the mobile covers them too: a planter one row in front hides the tail behind it. Above
+    /// the anchor the frame keeps its card's depth, and so do the pixels below it on its own cell.
     #[test]
-    fn the_enhanced_legs_lie_over_the_flat_land_in_front() {
-        // As far as the strips reach down.
-        assert_the_card_lies_over_the_flat_land_in_front(MobileGroundStrips::of(AnimSource::Enhanced),
-            ENHANCED_GROUND_STRIPS as f32 * ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX);
-        // Without the strips, the land of the next row covers what lies below the anchor beside it: a hoof.
-        let (mobile, land) = mobile_and_land_distances(MobileGroundStrips::default(), 1473.0, 1722.0, 30.0, 10.0);
-        assert!(mobile < land);
+    fn what_stands_in_front_covers_the_pixels_that_lie_on_its_cell() {
+        const Z: f32 = 10.0;
+        // The tie level of an upright static (assign_sprite_tie_levels: 1 and up), its priority z over its z.
+        const STATIC_TIE_LEVEL: u32 = 1;
+        const STANDING_PRIORITY_Z_OFFSET: f32 = 1.0;
+        const RISING_LAND_Z: f32 = Z + 4.0;
+        let land_offset = wesl_f32_const(DEPTH_WESL, "LAND_PRIORITY_Z_OFFSET");
+        for (x, y) in MOBILE_POSITIONS {
+            let (depth_x, depth_y) = mobile_depth_cell(x, y);
+            let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x, depth_y);
+            let card = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(Z + MOBILE_PRIORITY_Z_OFFSET),
+                RIDER_TIE_LEVEL);
+            let mut covered = 0;
+            for pixel in frame_pixels() {
+                let mobile = mobile_pixel_distance(x, y, Z, pixel, RIDER_TIE_LEVEL, None);
+                let cell = plane_cell(card_point(x, y, Z, pixel.0, pixel.1), Z);
+                if cell.0 + cell.1 <= depth_x + depth_y {
+                    assert_eq!(mobile, card, "({x}, {y}): {pixel:?} lies behind or on the mobile's row");
+                    continue;
+                }
+                let (anchor_x, anchor_y) = apply_cc_static_world_anchor_translation(cell.0, cell.1);
+                let standing = logical_draw_distance(f64::from(anchor_x + anchor_y),
+                    f64::from(Z + STANDING_PRIORITY_Z_OFFSET), STATIC_TIE_LEVEL);
+                assert!(standing > mobile, "({x}, {y}): a static on {cell:?} stays under {pixel:?}");
+                assert!(cell_distance(cell, RISING_LAND_Z + land_offset) > mobile, "rising land, {pixel:?}");
+                covered += 1;
+            }
+            assert!(covered > 0);
+        }
     }
 
+    /// The mount's and the rider's pixels below the anchor lie on the same ground at tie level 0: where both cover a
+    /// pixel there the rider, drawn after its mount, shows (the depth test passes an equal depth).
     #[test]
-    fn only_the_enhanced_frames_below_the_cut_come_nearer() {
-        let ground = MobileGroundStrips::of(AnimSource::Enhanced);
-        let at = |below_anchor_px: f32| ground_strip(ground,
-            (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_anchor_px) * CC_WORLD_Y_PER_PIXEL);
-        assert_eq!(at(-30.0), 0.0, "the body, over its anchor");
-        assert_eq!(at(-ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX + 0.5), 1.0, "just below the cut");
-        assert_eq!(at(ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX - 0.5), 1.0);
-        assert_eq!(at(ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX + 0.5), 2.0);
-        assert_eq!(at(1000.0), ENHANCED_GROUND_STRIPS as f32, "the last strip takes what lies below");
+    fn a_rider_and_its_mount_lie_level_on_the_ground_in_front() {
+        const Z: f32 = 0.0;
+        const BELOW_PX: f32 = 30.5;
+        let (x, y) = MOBILE_POSITIONS[0];
+        assert_eq!(mobile_pixel_distance(x, y, Z, (0.5, BELOW_PX), MOUNT_TIE_LEVEL, None),
+            mobile_pixel_distance(x, y, Z, (0.5, BELOW_PX), RIDER_TIE_LEVEL, None));
+        assert!(mobile_pixel_distance(x, y, Z, (0.5, -BELOW_PX), MOUNT_TIE_LEVEL, None)
+            < mobile_pixel_distance(x, y, Z, (0.5, -BELOW_PX), RIDER_TIE_LEVEL, None), "above it, on its mount");
     }
 
+    /// Under a ceiling, the roof tiles on the cells where the pixels above it meet its plane cover them, so a tall
+    /// body's head stays under the roof; where none is drawn the head shows over the land and what stands on the
+    /// mobile's floor there. The pixels below the plane keep their depth.
     #[test]
-    fn a_classic_tail_lies_over_the_flat_land_in_front() {
-        // One diagonal cell below the anchor, the rows the strip is ordered in; the land of the row after covers
-        // what lies lower, as in ClassicUO.
-        assert_the_card_lies_over_the_flat_land_in_front(MobileGroundStrips::of(AnimSource::Classic),
-            CLASSIC_GROUND_STRIP_PX - CLASSIC_GROUND_CUT_ABOVE_ANCHOR_PX);
-    }
-
-    #[test]
-    fn a_classic_frame_comes_nearer_below_its_anchor_in_one_slice() {
-        let classic = MobileGroundStrips::of(AnimSource::Classic);
-        let at = |below_anchor_px: f32| ground_strip(classic,
-            (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_anchor_px) * CC_WORLD_Y_PER_PIXEL);
-        assert_eq!(at(-30.0), 0.0, "the body, over its anchor");
-        assert_eq!(at(-0.5), 0.0, "just over the anchor");
-        assert_eq!(at(0.5), 1.0, "just below the anchor");
-        assert_eq!(at(1000.0), 1.0, "the slice takes the rest of the frame");
+    fn a_roof_covers_a_head_poking_through_it() {
+        const Z: f32 = 20.0;
+        const CEILING_Z: f32 = Z + 25.0;
+        // A Background roof tile's priority z over its z: the lowest a roof tile takes.
+        const BACKGROUND_PRIORITY_Z_OFFSET: f32 = -1.0;
+        const STANDING_PRIORITY_Z_OFFSET: f32 = 1.0;
+        const HIGHEST_TIE_LEVEL: u32 = 8;
+        let land_offset = wesl_f32_const(DEPTH_WESL, "LAND_PRIORITY_Z_OFFSET");
+        let ceiling_y = crate::world::coords::scale_uo_z_to_bevy_units(CEILING_Z);
+        for (x, y) in MOBILE_POSITIONS {
+            let (depth_x, depth_y) = mobile_depth_cell(x, y);
+            let mut under_the_roof = 0;
+            for pixel in frame_pixels() {
+                let point = card_point(x, y, Z, pixel.0, pixel.1);
+                let open = mobile_pixel_distance(x, y, Z, pixel, RIDER_TIE_LEVEL, None);
+                let roofed = mobile_pixel_distance(x, y, Z, pixel, RIDER_TIE_LEVEL, Some(CEILING_Z));
+                let cell = plane_cell(point, CEILING_Z);
+                if point.y <= ceiling_y || cell.0 + cell.1 >= depth_x + depth_y {
+                    assert_eq!(roofed, open, "({x}, {y}): {pixel:?} does not reach over the roof behind");
+                    continue;
+                }
+                under_the_roof += 1;
+                assert!(cell_distance(cell, CEILING_Z + BACKGROUND_PRIORITY_Z_OFFSET) > roofed,
+                    "({x}, {y}): the roof tile on {cell:?} stays under {pixel:?}");
+                let (anchor_x, anchor_y) = apply_cc_static_world_anchor_translation(cell.0, cell.1);
+                assert!(roofed > logical_draw_distance(f64::from(anchor_x + anchor_y),
+                    f64::from(Z + STANDING_PRIORITY_Z_OFFSET), HIGHEST_TIE_LEVEL), "the floor's statics, {pixel:?}");
+                assert!(roofed > cell_distance(cell, Z + land_offset), "the land at the floor's z, {pixel:?}");
+            }
+            assert!(under_the_roof > 0);
+        }
     }
 
     #[test]

@@ -1408,3 +1408,37 @@ row's cells.
   behind those pixels, as in ClassicUO (its lower slice sorts over them too).
 - **Evidence.** `uodynamapper-scratch/ophidian-tail/clips/` (before | after): `ophidian-before-after.mp4`, and
   `walk-before-after.mp4` (human 400, Classic dragon 12, daemon 9 walking in the four styles).
+
+### One ground rule below the anchor, and the roof over a tall body (2026-11-26)
+
+The strips above were two mechanisms, each tuned to its frame source: 4 Enhanced strips cut 8 px over the anchor,
+one Classic slice cut at it. Both order a frame's lower part by whole rows, so either it lies over too few rows (a
+low tail past the last strip, the land of row + 3 over it) or a static of its rows draws behind it. Separately, a tall
+body (a dragon, 12, or a daemon, 9) standing in a house drew its head over the roof above it whenever the player was
+outside: the card is one depth, the roof tiles lie on cells behind the mobile's row.
+
+- **Below the anchor** (art/depth.wesl `mobile_fragment_view_z`, applied in art/main.wesl with `MOBILE_FRAMES`, not in
+  the shadow passes). A card pixel stands, on screen, over the point where its line of sight (`sight_plane_hit`: the
+  view axis in the orthographic camera, the ray from the camera in perspective) meets the plane of the mobile's base.
+  The pixel takes the depth of that point's cell at the mobile's priority z, level 0, if that is nearer than its card:
+  the depth a projected shadow lying on that cell takes. Flat land (z - 2), Background floors (z - 1) and flat items
+  (z, levels up to 8) there stay under it, a static standing there at the mobile's z (z + 1, level 1 or more) and land
+  rising there more than 3 z cover it. Above the anchor the hit lies behind the card's row, so the card keeps its depth.
+  One rule for both sources and every facing; the 8 px Enhanced cut over the anchor is gone, and with it the strip
+  constants and `MobileGroundStrips`. A mounted mobile's plane is its own base, whatever its layer's offset; the mount's
+  and the rider's pixels below the anchor lie level, and the rider, drawn after its mount, shows (the opaque depth test
+  passes an equal depth). Caves lift the result as before (`cave_lifted_view_z`).
+- **Ceiling** (`render/mobiles/ceiling.rs`, `world/z_view.rs` `ceiling_over`). Each mobile finds its ceiling with the
+  player's rule: a floor of its cell more than 14 over it, or a roof on the next cell south-east at the lowest z of the
+  roof it belongs to. The plane is raised to the mobile's z + 16 (so a floor at z + 15 still covers). It is cached in
+  `MobileCeilingCache` and found again when the mobile's cell, z or map, the statics, the tile data or the multis
+  change. A ceiling the z-view's cut hides (the player under the same roof: `Ceiling::hidden_by`) is not passed, so
+  the mobile draws whole. In the shader a pixel over the plane takes the depth of its sight's hit on the plane, at the
+  plane's z - 2.5 (`MOBILE_CEILING_PRIORITY_Z_OFFSET`), if that is farther: the roof tiles there (priority z - 1 or
+  more) cover the head, where none is drawn (past the eaves) it shows over the land and over what stands on the
+  mobile's floor (priority z + 1.9 at most). It is ordering, not a clip.
+- **Kept.** A pixel is never ordered farther than its card below the anchor, and in the open nothing changes above it.
+  A tree or wall behind the house, between the ceiling's hit and the mobile's row, can cover a head where no roof
+  tile is drawn; KR's partial roof hiding goes by the ceiling tile's layer.
+- **Test mobiles.** The visual harness hides the player, so the control channel spawns standing mobiles
+  (`spawn_mobile`, `clear_mobiles`: [renderer_control_channel.md](renderer_control_channel.md#test-mobiles)).

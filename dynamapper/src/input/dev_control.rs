@@ -15,7 +15,8 @@ use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::world::player::Player;
 use crate::world::maps::WorldGeoData;
 use crate::world::mobile_motion::{MobileMotion, DIRECTION_COUNT};
-use crate::render::mobiles::{MobileClipChoice, draw::{MobileAppearance, MobileShownLayers}, pace::MobileCycleClock};
+use crate::render::mobiles::{MobileClipChoice, ceiling::MobileCeilingCache, draw::{MobileAppearance, MobileShownLayers},
+    pace::MobileCycleClock};
 use crate::prelude::*;
 use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
 use bevy_egui::EguiPreUpdateSet;
@@ -71,7 +72,8 @@ fn dev_mobile(x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8) -> Resul
     motion.facing = facing;
     let appearance = MobileAppearance { body: u32::from(body), mount_body: (mount != 0).then_some(u32::from(mount)) };
     Ok((DevMobile, Transform::from_translation(UOVec4::new(x, y, z, 0).to_bevy_vec3_ignore_map()), motion, appearance,
-        MobileClipChoice::default(), MobileCycleClock::default(), MobileShownLayers::default()))
+        MobileClipChoice::default(), MobileCycleClock::default(), MobileShownLayers::default(),
+        MobileCeilingCache::default()))
 }
 
 /// The last accepted runtime switch (preset, sources or setting): readiness after a switch counts frames from it.

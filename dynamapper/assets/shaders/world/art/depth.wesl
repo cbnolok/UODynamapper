@@ -80,22 +80,69 @@ fn sprite_priority_view_z(tile_xy: vec2<f32>, priority_z: f32, tie_level: f32) -
     return logical_view_z(tile_xy, priority_logical_height(priority_z, tie_level));
 }
 
-// The ground strip of a mobile's card that a fragment at `local_y` on it falls in (MobileGroundStrips,
-// render/mobiles/draw.rs): 0 above `cut_local_y`, then 1 to `strips`, each `strip_height` tall, the last one taking
-// everything below. The fragment is ordered that many cells nearer in each map axis, two rows a strip, as the
-// Enhanced client and ClassicUO draw the part of a mobile below its anchor: the land of the rows in front, which lies
-// behind those pixels, would otherwise cover them. No strips (0) keeps the whole card at its anchor.
-fn mobile_ground_strip(local_y: f32, cut_local_y: f32, strip_height: f32, strips: u32) -> f32 {
-    if (strips == 0u) {
-        return 0.0;
-    }
-    return clamp(ceil((cut_local_y - local_y) / strip_height), 0.0, f32(strips));
-}
-
 // The view z of a fragment at world `world_xz` of a surface lying over its cell at `priority_z`, as the land and the
 // projected shadows: its cell's anchor at tie level 0, one depth for the whole cell.
 fn cell_priority_view_z(world_xz: vec2<f32>, priority_z: f32) -> f32 {
     return logical_view_z(floor(world_xz) + CELL_DEPTH_ANCHOR, priority_logical_height(priority_z, 0.0));
+}
+
+// How level a line of sight may run, in world y per world unit along it, and still order a mobile's pixel by where it
+// meets a plane (mobile_fragment_view_z): a camera nearer the horizon keeps the card's depth.
+const MOBILE_SIGHT_MIN_FALL: f32 = 0.01;
+// How far under the z of the ceiling over a mobile its pixels above that ceiling are ordered (mobile_fragment_view_z,
+// render/mobiles/ceiling.rs): under every roof tile at or above that z, under a Background floor at it or one below
+// it (ClassicUO's priority z - 1; the ceiling is the cap raised to the mobile's z + 16, over a floor at its z + 15),
+// and over the mobile's own floor in the rows behind it, at least 13 z lower.
+const MOBILE_CEILING_PRIORITY_Z_OFFSET: f32 = -2.5;
+
+// Where the line of sight through `point` meets the horizontal plane at world height `plane_y`: along the view axis
+// in the orthographic camera, along the ray from the camera in the perspective one. Its w is 0 when the line runs too
+// level to meet it near.
+fn sight_plane_hit(point: vec3<f32>, plane_y: f32) -> vec4<f32> {
+    var sight = view.world_from_view[2].xyz;
+    if (view.clip_from_view[3][3] != 1.0) {
+        sight = view.world_from_view[3].xyz - point;
+    }
+    if (abs(sight.y) < MOBILE_SIGHT_MIN_FALL * length(sight)) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(point + sight * ((plane_y - point.y) / sight.y), 1.0);
+}
+
+// The view z of a mobile's fragment at `card_point` on its card, the card's own view z `card_view_z` (its anchor at its
+// priority z and tie level), the mobile's base at world height `base_world_y` and its priority z `priority_z`; with
+// `has_ceiling`, a roof or upper floor drawn over it at z `ceiling_z`, world height `ceiling_world_y`.
+//
+// The card stands at its cell's near vertex, and its pixel's line of sight passes through the mobile where the
+// mobile's body is. A pixel below the anchor shows the body below its base: its line of sight meets the plane of the
+// base in front of the mobile's cell, on the ground it covers. It is ordered there, as a surface lying on that cell at
+// the mobile's priority z, tie level 0, like a projected shadow on its cell: over the land and the flat items of that
+// cell (land z - 2, Background z - 1, flat items z), under what stands on it at the mobile's z (z + 1, tie levels 1 to
+// 8) and under land rising there more than 3 z over the mobile. Without it the land of the rows in front, behind those
+// pixels, would cover the legs and the tail it lies on; ClassicUO and the Enhanced client slice the frame below the
+// anchor and order the slices rows nearer for that (MobileView.DrawInternal, MobAnimTriShape::RenderImmediate). A
+// pixel is never ordered farther than its card: above the anchor the line meets the plane behind the mobile.
+//
+// A pixel above the ceiling shows the body poking through it: its line of sight meets the ceiling's plane behind the
+// mobile. It is ordered there, under the ceiling's z (MOBILE_CEILING_PRIORITY_Z_OFFSET), so the roof tiles drawn
+// there cover it, and where none is drawn (past the eaves) the head shows. A pixel is never ordered nearer than it was.
+//
+// Both in view z, so they hold in the orthographic and the perspective camera; the pick pass and the light scene take
+// the same depth, the projected and client shadows their own.
+fn mobile_fragment_view_z(card_point: vec3<f32>, card_view_z: f32, base_world_y: f32, priority_z: f32,
+    has_ceiling: bool, ceiling_world_y: f32, ceiling_z: f32) -> f32 {
+    var view_z = card_view_z;
+    let ground = sight_plane_hit(card_point, base_world_y);
+    if (ground.w != 0.0) {
+        view_z = max(view_z, cell_priority_view_z(ground.xz, priority_z));
+    }
+    if (has_ceiling && card_point.y > ceiling_world_y) {
+        let ceiling = sight_plane_hit(card_point, ceiling_world_y);
+        if (ceiling.w != 0.0) {
+            view_z = min(view_z, cell_priority_view_z(ceiling.xz, ceiling_z + MOBILE_CEILING_PRIORITY_Z_OFFSET));
+        }
+    }
+    return view_z;
 }
 
 // The rows by which a cap fragment of a wall moves back in the perspective camera. The fragment is at `card_point` on

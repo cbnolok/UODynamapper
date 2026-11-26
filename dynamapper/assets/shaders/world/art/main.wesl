@@ -59,7 +59,7 @@ import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv
 import package::shaders::world::ec_item_liquid::SHORELINE_FILTER_TAPS_PER_AXIS;
 import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priority_view_z, view_z_depth,
     cave_lifted_view_z, cave_outside_rgb, perspective_cap_may_move, perspective_cap_row_shift,
-    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL, mobile_ground_strip};
+    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL, mobile_fragment_view_z};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 import package::shaders::world::srgb::decode_srgb;
 
@@ -503,15 +503,13 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         }
     }
     @if(MOBILE_FRAMES) {
-        // A mobile's pixels below its anchor, in the strip of the rows in front that they lie over (art/depth.wesl).
-        let ground = mobile_instances[in.instance_index].ground;
-        let strip = mobile_ground_strip(in.world_pos.y - inst.world_y, ground.cut_local_y, ground.strip_height,
-            ground.strips);
-        if (strip > 0.0 && sprite_params.pass_mode != PASS_MODE_SHADOW
-            && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
-            out.depth = view_z_depth(cave_lifted_view_z(sprite_priority_view_z(
-                vec2<f32>(inst.tile_x + strip, inst.tile_y + strip), inst.priority_z_units,
-                f32(inst.sort_bias_ordinal)), inst.is_wet_flags));
+        // A mobile's pixels below its anchor lie on the ground they cover, those above the ceiling over it under that
+        // ceiling (art/depth.wesl).
+        if (sprite_params.pass_mode != PASS_MODE_SHADOW && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
+            let ceiling = mobile_instances[in.instance_index].ceiling;
+            out.depth = view_z_depth(cave_lifted_view_z(mobile_fragment_view_z(in.world_pos,
+                sprite_logical_view_z(inst), inst.base_world_y, inst.priority_z_units, ceiling.present != 0u,
+                ceiling.z * HEIGHT_SCALE, ceiling.z), inst.is_wet_flags));
         }
     }
     var uv = in.uv;

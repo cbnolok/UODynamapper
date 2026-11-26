@@ -60,14 +60,12 @@ struct FrameCrossfade {
     next_layer: u32,
 }
 
-// Where a mobile's card is ordered nearer than its anchor (`MobileGroundStrips`, render/mobiles/draw.rs;
-// art/depth.wesl mobile_ground_strip): below `cut_local_y`, in `strips` strips `strip_height` tall, in the card's
-// local world y. No strips for the Classic frames.
-struct MobileGroundStrips {
-    cut_local_y: f32,
-    strip_height: f32,
-    strips: u32,
-    _pad: u32,
+// The roof or upper floor drawn over a mobile (`MobileCeiling`, render/mobiles/draw.rs and ceiling.rs;
+// art/depth.wesl mobile_fragment_view_z): its z, when `present` is not 0.
+struct MobileCeiling {
+    z: f32,
+    present: u32,
+    _pad: vec2<u32>,
 }
 
 // A mobile frame's filter (`MobileFrameFilter`, render/mobiles/sharpening.rs; runtime_specs/mobiles/Sharpening.kdl):
@@ -91,7 +89,7 @@ struct MobileFrameFilter {
 struct MobileSpriteInstance {
     sprite: SpriteInstance,
     crossfade: FrameCrossfade,
-    ground: MobileGroundStrips,
+    ceiling: MobileCeiling,
     frame_filter: MobileFrameFilter,
 }
 

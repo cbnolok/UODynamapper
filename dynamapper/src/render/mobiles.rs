@@ -3,6 +3,7 @@
 //! tests, the standing mobiles the control channel spawns).
 
 pub mod bc7_encoding;
+pub mod ceiling;
 pub mod clips;
 pub mod compute_budget;
 pub mod compute_warm_up;
@@ -106,6 +107,7 @@ impl Plugin for MobileSpritesPlugin {
                 draw::sys_setup_mobile_draw,
                 draw::sys_size_mobile_upscale_pages,
                 upscales::sys_update_mobile_upscale_gate,
+                ceiling::sys_update_mobile_ceilings,
                 draw::sys_draw_mobiles,
                 rife_in_betweens::sys_schedule_mobile_in_betweens,
                 upscales::sys_schedule_mobile_upscales,
@@ -154,14 +156,15 @@ fn sys_sync_player_appearance(
         match (wanted, current) {
             (Some(wanted), current) if current != Some(&wanted) => {
                 commands.entity(entity).insert((wanted, MobileClipChoice::default(), MobileCycleClock::default(),
-                    MobileShownLayers::default()));
+                    MobileShownLayers::default(), ceiling::MobileCeilingCache::default()));
                 if current.is_none() {
                     commands.entity(entity).insert(MobileMotion::default());
                 }
             }
             (None, Some(_)) => {
                 commands.entity(entity)
-                    .remove::<(MobileAppearance, MobileClipChoice, MobileCycleClock, MobileShownLayers, MobileMotion)>();
+                    .remove::<(MobileAppearance, MobileClipChoice, MobileCycleClock, MobileShownLayers, MobileMotion,
+                        ceiling::MobileCeilingCache)>();
             }
             _ => {}
         }
