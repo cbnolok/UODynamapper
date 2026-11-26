@@ -7,9 +7,10 @@ use color_eyre::eyre::{self, WrapErr};
 use udd_container::UddpReader;
 
 use crate::common::{
-    decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, extract_atlas_subrect_stored,
-    read_path_entry, read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
+    decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, read_path_entry,
+    read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
 };
+use crate::animation::mobile_pages::{ClipPages, PageLayout, PageSet, StoredPage, StoredPageCache};
 use crate::animation::mobile_strides::{
     read_stride_records, ClipFrameSource, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipFrameExtent,
     MobileClipStoredFrame, MobileStrideRecord, PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS,
@@ -292,6 +293,8 @@ pub struct MobileAnimCcPackage {
     /// Indices of the animation records of each (body, action, direction).
     animation_lookup: HashMap<(u16, u16, u8), Vec<usize>>,
     page_cache: AtlasPageCache,
+    /// The pages the stored clips are cut from ([`crate::animation::mobile_pages`]).
+    stored_pages: StoredPageCache,
 }
 
 impl MobileAnimCcPackage {
@@ -356,6 +359,7 @@ impl MobileAnimCcPackage {
             upscaled,
             animation_lookup,
             page_cache: AtlasPageCache::new(options),
+            stored_pages: StoredPageCache::default(),
         })
     }
 
@@ -645,7 +649,7 @@ impl MobileAnimCcPackage {
 
     /// A frame's pixels as its page stores them, not decoded ([`StoredFramePixels`]).
     pub fn read_frame_stored(&self, frame: &MobileAnimCcFrameRecord) -> eyre::Result<StoredFramePixels> {
-        self.read_frame_stored_in(frame, &mut PageMemo::default())
+        self.read_frame_stored_in(frame, &mut ClipPages::default())
     }
 
     /// [`Self::read_frame_rgba`], the atlas page read through `pages`: the frames of a clip, which mostly share a
@@ -670,8 +674,9 @@ impl MobileAnimCcPackage {
         )
     }
 
-    /// [`Self::read_frame_stored`], the atlas page read through `pages`.
-    fn read_frame_stored_in(&self, frame: &MobileAnimCcFrameRecord, pages: &mut PageMemo)
+    /// [`Self::read_frame_stored`], the atlas page read through `pages` and the package's page cache: a BC7 page
+    /// stored in the field split joins only the frame's blocks.
+    fn read_frame_stored_in(&self, frame: &MobileAnimCcFrameRecord, pages: &mut ClipPages)
         -> eyre::Result<StoredFramePixels> {
         if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
             return Ok(match self.pixel_format {
@@ -680,9 +685,12 @@ impl MobileAnimCcPackage {
             });
         }
         let page = self.frame_page(frame)?;
-        let page_bytes = pages.page(frame.page_index, |page_index| self.read_page_bytes(page_index))?;
-        extract_atlas_subrect_stored(page_bytes, page.pixel_format, page.atlas_width, page.atlas_height,
-            page.used_width, page.used_height, frame.x, frame.y, frame.width, frame.height)
+        let layout = PageLayout { pixel_format: page.pixel_format, atlas_width: page.atlas_width,
+            atlas_height: page.atlas_height, used_width: page.used_width, used_height: page.used_height };
+        let stored = pages.page(&self.stored_pages, (PageSet::Frames, frame.page_index), || {
+            StoredPage::read(&self.package, &page_entry_path(frame.page_index, page.pixel_format), layout)
+        })?;
+        stored.frame(layout, frame.x, frame.y, frame.width, frame.height)
     }
 
     /// The page record of `frame`'s page.
@@ -757,7 +765,7 @@ impl MobileAnimClips for MobileAnimCcPackage {
 
     fn stored_clip(&self, body: u32, action: u16, direction: u8)
         -> eyre::Result<Option<MobileClip<MobileClipStoredFrame>>> {
-        let mut pages = PageMemo::default();
+        let mut pages = ClipPages::default();
         self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipStoredFrame {
             width: frame.width, height: frame.height, anchor_x, anchor_y,
             pixels: self.read_frame_stored_in(frame, &mut pages)?,
@@ -801,7 +809,7 @@ impl MobileAnimClips for MobileAnimCcPackage {
         if !self.has_upscaled_clip(body, action, direction) {
             return Ok(None);
         }
-        let mut pages = PageMemo::default();
+        let mut pages = ClipPages::default();
         self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| {
             let index = record_index(&self.frames, frame);
             let record = table.frame(index).ok_or_else(|| eyre::eyre!("frame record {index} has no 2x canvas"))?;
@@ -809,7 +817,7 @@ impl MobileAnimClips for MobileAnimCcPackage {
                 width: record.width, height: record.height,
                 anchor_x: UpscaledFrameTable::canvas_anchor(anchor_x),
                 anchor_y: UpscaledFrameTable::canvas_anchor(anchor_y),
-                pixels: table.read_stored(&self.package, record, &mut pages)?,
+                pixels: table.read_stored(&self.package, record, &self.stored_pages, &mut pages)?,
             })
         })
     }

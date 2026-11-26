@@ -15,9 +15,9 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use udd_container::UddpReader;
 
+use crate::animation::mobile_pages::{ClipPages, PageLayout, PageSet, StoredPage, StoredPageCache};
 use crate::animation::mobile_strides::{PageMemo, StoredFramePixels};
-use crate::common::{ensure_manifest_version, extract_atlas_subrect_rgba, extract_atlas_subrect_stored,
-    read_path_entry, read_path_entry_cow};
+use crate::common::{ensure_manifest_version, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow};
 use crate::tex_art_cc::PagePixelFormat;
 
 pub const UPSCALED_FRAMES_ENTRY_PATH: &str = "metadata/upscaled_frames.bin";
@@ -167,12 +167,17 @@ impl UpscaledFrameTable {
     }
 
     /// The 2x canvas of `record` as its page stores it (RGBA8, or the BC7 blocks of the canvas padded to whole
-    /// blocks), the page read through `pages`.
-    pub(crate) fn read_stored(&self, package: &UddpReader, record: &UpscaledFrameRecord, pages: &mut PageMemo)
-        -> eyre::Result<StoredFramePixels> {
-        let (page, bytes) = self.page_bytes(package, record, pages)?;
-        extract_atlas_subrect_stored(bytes, self.pixel_format, self.atlas_width, self.atlas_height, page.used_width,
-            page.used_height, record.x, record.y, record.width, record.height)
+    /// blocks), the page read through `pages` and the package's page cache `cache`.
+    pub(crate) fn read_stored(&self, package: &UddpReader, record: &UpscaledFrameRecord, cache: &StoredPageCache,
+        pages: &mut ClipPages) -> eyre::Result<StoredFramePixels> {
+        let page = *self.pages.get(record.page as usize)
+            .ok_or_else(|| eyre::eyre!("missing mobile upscaled page {}", record.page))?;
+        let layout = PageLayout { pixel_format: self.pixel_format, atlas_width: self.atlas_width,
+            atlas_height: self.atlas_height, used_width: page.used_width, used_height: page.used_height };
+        let stored = pages.page(cache, (PageSet::Upscaled, record.page), || {
+            StoredPage::read(package, &upscaled_page_entry_path(record.page, self.pixel_format), layout)
+        })?;
+        stored.frame(layout, record.x, record.y, record.width, record.height)
     }
 
     /// The 2x canvas of `record` as straight-alpha RGBA8.

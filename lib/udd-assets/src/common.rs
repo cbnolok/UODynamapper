@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 use color_eyre::eyre::{self, WrapErr};
 use bytemuck::{Pod, Zeroable};
 use udd_container::uddp::FormatError;
+use udd_container::bc7_fields::{BlockRect, FieldsPage};
 use udd_container::{UddpReader, UddpReaderOptions};
 
 use crate::bc7::{
@@ -212,7 +213,7 @@ pub(crate) fn decode_atlas_page_rgba(
     match pixel_format {
         PagePixelFormat::Rgba8888 => Ok(page_bytes.to_vec()),
         PagePixelFormat::Bc7 => {
-            let extent = bc7_payload_extent(page_bytes, atlas_width, atlas_height, used_width, used_height)?;
+            let extent = bc7_payload_extent(page_bytes.len(), atlas_width, atlas_height, used_width, used_height)?;
             let decoded = decode_bc7_to_rgba8888(page_bytes, extent)
                 .map_err(|error| eyre::eyre!("decode BC7 page {}x{}: {error}", extent.width(), extent.height()))?;
             Ok(extract_rgba8_subrect(&decoded, extent.width(), 0, 0, used_width, used_height))
@@ -256,7 +257,7 @@ pub(crate) fn extract_atlas_subrect_rgba(
     match pixel_format {
         PagePixelFormat::Rgba8888 => Ok(extract_rgba8_subrect(page_bytes, used_width, x, y, width, height)),
         PagePixelFormat::Bc7 => {
-            let page_extent = bc7_payload_extent(page_bytes, atlas_width, atlas_height, used_width, used_height)?;
+            let page_extent = bc7_payload_extent(page_bytes.len(), atlas_width, atlas_height, used_width, used_height)?;
 
             let aligned_x = (x / 4) * 4;
             let aligned_y = (y / 4) * 4;
@@ -308,14 +309,71 @@ pub(crate) fn extract_atlas_subrect_stored(
         return extract_atlas_subrect_rgba(page_bytes, pixel_format, atlas_width, atlas_height, used_width,
             used_height, x, y, width, height).map(StoredFramePixels::Rgba8);
     }
-    if width == 0 || height == 0 {
+    let Some(slot) = bc7_slot(page_bytes.len(), atlas_width, atlas_height, used_width, used_height, x, y, width,
+        height)?
+    else {
         return Ok(StoredFramePixels::Bc7Blocks(Vec::new()));
+    };
+    Ok(StoredFramePixels::Bc7Blocks(extract_bc7_subrect(page_bytes, slot.page_extent, slot.x, slot.y, slot.extent)))
+}
+
+/// [`extract_atlas_subrect_stored`] of a BC7 page kept in its field split ([`udd_container::bc7_fields`]): only the
+/// frame's blocks are joined.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn extract_bc7_fields_subrect_stored(
+    page: &FieldsPage,
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+) -> eyre::Result<StoredFramePixels> {
+    let Some(slot) = bc7_slot(page.raw_len(), atlas_width, atlas_height, used_width, used_height, x, y, width,
+        height)?
+    else {
+        return Ok(StoredFramePixels::Bc7Blocks(Vec::new()));
+    };
+    let block = |texels: u32| (texels / BC7_BLOCK_SIDE) as usize;
+    let rect = BlockRect { x: block(slot.x), y: block(slot.y), width: block(slot.extent.width()),
+        height: block(slot.extent.height()) };
+    let mut blocks = vec![0u8; expected_bc7_byte_len(slot.extent)];
+    page.extract_into(rect, &mut blocks).map_err(|error| eyre::eyre!("join BC7 slot rect: {error}"))?;
+    Ok(StoredFramePixels::Bc7Blocks(blocks))
+}
+
+/// Where a frame's blocks lie on a BC7 page: the page's extent, and the frame's rectangle padded to whole blocks.
+struct Bc7Slot {
+    page_extent: ImageExtent,
+    x: u32,
+    y: u32,
+    extent: ImageExtent,
+}
+
+/// The [`Bc7Slot`] of a frame of `width` by `height` at `x`,`y` on a page of `page_len` bytes; `None` for an empty
+/// frame. The frame must start on a block corner and lie on the page.
+#[allow(clippy::too_many_arguments)]
+fn bc7_slot(
+    page_len: usize,
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+) -> eyre::Result<Option<Bc7Slot>> {
+    if width == 0 || height == 0 {
+        return Ok(None);
     }
     let (x, y) = (u32::from(x), u32::from(y));
     if x % BC7_BLOCK_SIDE != 0 || y % BC7_BLOCK_SIDE != 0 {
         eyre::bail!("slot rect at {x},{y} does not start on a BC7 block corner: the package needs Bc7Oriented packing");
     }
-    let page_extent = bc7_payload_extent(page_bytes, atlas_width, atlas_height, used_width, used_height)?;
+    let page_extent = bc7_payload_extent(page_len, atlas_width, atlas_height, used_width, used_height)?;
     let padded_width = u32::from(width).next_multiple_of(BC7_BLOCK_SIDE);
     let padded_height = u32::from(height).next_multiple_of(BC7_BLOCK_SIDE);
     if x + padded_width > page_extent.width() || y + padded_height > page_extent.height() {
@@ -324,11 +382,12 @@ pub(crate) fn extract_atlas_subrect_stored(
     }
     let extent = ImageExtent::new(padded_width, padded_height)
         .map_err(|error| eyre::eyre!("invalid BC7 slot rect {padded_width}x{padded_height}: {error}"))?;
-    Ok(StoredFramePixels::Bc7Blocks(extract_bc7_subrect(page_bytes, page_extent, x, y, extent)))
+    Ok(Some(Bc7Slot { page_extent, x, y, extent }))
 }
 
-fn bc7_payload_extent(
-    page_bytes: &[u8],
+/// The extent of a BC7 page of `page_len` bytes: the part its frames use, or the whole atlas.
+pub(crate) fn bc7_payload_extent(
+    page_len: usize,
     atlas_width: u32,
     atlas_height: u32,
     used_width: u32,
@@ -337,20 +396,20 @@ fn bc7_payload_extent(
     let used_extent = ImageExtent::new(used_width, used_height)
         .map_err(|error| eyre::eyre!("invalid used BC7 page extent {used_width}x{used_height}: {error}"))?;
     let used_len = expected_bc7_byte_len(used_extent);
-    if page_bytes.len() == used_len {
+    if page_len == used_len {
         return Ok(used_extent);
     }
 
     let atlas_extent = ImageExtent::new(atlas_width, atlas_height)
         .map_err(|error| eyre::eyre!("invalid atlas BC7 page extent {atlas_width}x{atlas_height}: {error}"))?;
     let atlas_len = expected_bc7_byte_len(atlas_extent);
-    if page_bytes.len() == atlas_len {
+    if page_len == atlas_len {
         return Ok(atlas_extent);
     }
 
     eyre::bail!(
         "BC7 page byte length {} does not match used extent {}x{} ({} bytes) or atlas extent {}x{} ({} bytes)",
-        page_bytes.len(),
+        page_len,
         used_width,
         used_height,
         used_len,
