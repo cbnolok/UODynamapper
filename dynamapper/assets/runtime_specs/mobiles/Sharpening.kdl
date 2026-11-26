@@ -35,22 +35,28 @@
 //                             default) off. The frames are stored cropped to their visible pixels, so an outlined
 //                             card grows by a texel each side.
 //
-// Classic frames are pixel art with a dark outline and no rim; small bodies take more sharpening than large ones,
-// whose frames hold more detail per texel. The Enhanced frames are rendered art with an anti-aliased rim; they take
-// less (above about 0.6 the test packages' BC7 blocks show). Starting values, 2026-11-26.
+// Classic frames are pixel art with a dark outline and no rim. The user, 2026-11-26, from clips at scale 0, 1 and 2:
+// scale 1 is more faithful to the Classic art than 2, and the sharpening helps the larger Classic bodies even more
+// than the small ones, so every Classic size takes the small bodies' 0.7 (the orc CAS's strongest). The Enhanced
+// frames are rendered art with an anti-aliased rim; the Enhanced monsters look better at scale 2 than at 1, so their
+// values are twice the first ones, while the Enhanced humans, elves and gargoyles keep the first values (0.4).
 
 classic {
-    default sharpening=0.3
+    default sharpening=0.7
     size max=96 sharpening=0.7
-    size max=192 sharpening=0.6
-    size max=384 sharpening=0.4
+    size max=192 sharpening=0.7
+    size max=384 sharpening=0.7
     // The orc: its pixel art takes CAS's strongest without grain.
     body 17 sharpening=1.0
 }
 
 enhanced {
-    default sharpening=0.2
-    size max=96 sharpening=0.5
-    size max=192 sharpening=0.4
-    size max=384 sharpening=0.3
+    default sharpening=0.4
+    size max=96 sharpening=1.0
+    size max=192 sharpening=0.8
+    size max=384 sharpening=0.6
+    // The humans and their ghosts, the elves and the gargoyles: the monsters' values look too strong on them.
+    body 400 403 sharpening=0.4
+    body 605 606 sharpening=0.4
+    body 666 667 sharpening=0.4
 }

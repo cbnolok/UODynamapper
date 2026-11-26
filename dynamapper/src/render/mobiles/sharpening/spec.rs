@@ -381,7 +381,10 @@ mod tests {
         let spec = decode(text);
         assert_eq!(spec.resolve(AnimSource::Classic, 17, Some(80)).sharpening, 1.0, "the Classic orc");
         assert_eq!(spec.resolve(AnimSource::Classic, 400, Some(77)).sharpening, 0.7);
-        assert_eq!(spec.resolve(AnimSource::Enhanced, 9, Some(388)).sharpening, 0.2);
+        assert_eq!(spec.resolve(AnimSource::Classic, 9, Some(388)).sharpening, 0.7, "a large Classic body");
+        assert_eq!(spec.resolve(AnimSource::Enhanced, 9, Some(388)).sharpening, 0.4);
+        assert_eq!(spec.resolve(AnimSource::Enhanced, 17, Some(80)).sharpening, 1.0, "a small Enhanced monster");
+        assert_eq!(spec.resolve(AnimSource::Enhanced, 401, Some(150)).sharpening, 0.4, "an Enhanced human");
     }
 
     #[test]
