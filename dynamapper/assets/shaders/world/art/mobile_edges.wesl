@@ -34,6 +34,16 @@ fn mobile_alpha_contrast(tap: vec4<f32>, frame_filter: MobileFrameFilter) -> vec
     return vec4<f32>(tap.rgb, alpha);
 }
 
+// Four alphas of a frame's taps (the outline's cross) contrasted each as mobile_alpha_contrast contrasts a tap's.
+fn mobile_alpha_contrast_alphas(alphas: vec4<f32>, frame_filter: MobileFrameFilter) -> vec4<f32> {
+    if (!mobile_alpha_contrast_on(frame_filter)) {
+        return alphas;
+    }
+    let span = max(1.0 - frame_filter.alpha_contrast, MOBILE_EDGE_MIN_CONTRAST_SPAN);
+    return clamp((alphas - vec4<f32>(frame_filter.alpha_midpoint)) / span + vec4<f32>(frame_filter.alpha_midpoint),
+        vec4<f32>(0.0), vec4<f32>(1.0));
+}
+
 // Whether a texel of alpha `alpha` is the rim (partly transparent), not the opaque body.
 fn mobile_edge_is_fringe(alpha: f32) -> bool {
     return alpha < MOBILE_EDGE_OPAQUE_ALPHA;

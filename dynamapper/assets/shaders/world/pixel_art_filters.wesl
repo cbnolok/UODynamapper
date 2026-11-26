@@ -43,6 +43,11 @@ fn pixel_art_atlas_nearest_uv(
 ) -> vec2<f32> {
     let first = round(uv_min * atlas_size);
     let last = max(round(uv_max * atlas_size) - vec2<f32>(1.0), first);
-    let position = round(uv * atlas_size * NEAREST_SUBTEXEL_STEPS) / NEAREST_SUBTEXEL_STEPS;
-    return (clamp(floor(position), first, last) + vec2<f32>(0.5)) / atlas_size;
+    return (clamp(pixel_art_atlas_texel(uv, atlas_size), first, last) + vec2<f32>(0.5)) / atlas_size;
+}
+
+// The atlas texel `uv` lies in, its position rounded as pixel_art_atlas_nearest_uv rounds it, before that keeps it
+// inside the sprite's rectangle.
+fn pixel_art_atlas_texel(uv: vec2<f32>, atlas_size: vec2<f32>) -> vec2<f32> {
+    return floor(round(uv * atlas_size * NEAREST_SUBTEXEL_STEPS) / NEAREST_SUBTEXEL_STEPS);
 }

@@ -17,8 +17,8 @@ import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visu
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::land::noise::noise_2d;
-import package::shaders::world::pixel_art_filters::pixel_art_atlas_nearest_uv;
-import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
+import package::shaders::world::pixel_art_filters::{pixel_art_atlas_nearest_uv, pixel_art_atlas_texel};
+import package::shaders::world::client_filter::{TEXTURE_FILTER_CLIENT_BILINEAR, client_mip_box};
 import package::shaders::world::art::atlas_pages::{ArtPage, art_page, art_page_varying, art_page_sample,
     art_page_atlas_size, art_page_client_filtered};
 import package::shaders::world::ec_item_quad::ec_item_quad_world;
@@ -41,7 +41,8 @@ import package::shaders::world::art::projected_shadow::{projected_shadow_casts, 
     projected_shadow_sun_share,
     wall_shadow_ground_box, wall_shadow_face_point, wall_shadow_card_corner};
 import package::shaders::world::art::mobile_frames::{mobile_frames_blend, mobile_frames_tap,
-    mobile_frames_client_filtered, mobile_frame_alone_tap, mobile_frame_alone_client_filtered};
+    mobile_frames_client_filtered, mobile_frame_alone_tap, mobile_frame_alone_client_filtered, mobile_frames_cross_alpha,
+    mobile_frames_bilinear_alpha};
 import package::shaders::world::art::mobile_sharpen::{mobile_sharpening_on, mobile_sharpening_strength, mobile_sharpen,
     mobile_sharpen_tap_offset, MOBILE_SHARPEN_WINDOW_TAPS, MOBILE_SHARPEN_CENTRE_TAP, MOBILE_SHARPEN_NORTH_TAP,
     MOBILE_SHARPEN_WEST_TAP, MOBILE_SHARPEN_EAST_TAP, MOBILE_SHARPEN_SOUTH_TAP};
@@ -414,7 +415,8 @@ fn mobile_cross_alpha(window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>, uv: 
     return alpha;
 }
 
-// The alphas of the cross around `uv` tapped alone, as mobile_window_tap: the outline's, before the alpha test.
+// The alphas of the cross around `uv` tapped alone, as mobile_window_tap: the outline's under the client's emulated
+// mip box.
 fn mobile_cross_alpha_taps(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, uv_dx: vec2<f32>,
     uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
     var alpha = vec4<f32>(0.0);
@@ -424,6 +426,48 @@ fn mobile_cross_alpha_taps(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_m
             instance_index).a, tap, uv, uv_min, uv_max, atlas_size);
     }
     return alpha;
+}
+
+// The alphas of the client filter's cross around `uv` on page `atlas`, one bilinear tap each, as mobile_window_tap
+// and mobile_card_alpha take them on a card padded for an outline (where a tap outside the card reads its transparent
+// edge texels).
+fn mobile_cross_alpha_bilinear(atlas: texture_2d_array<f32>, layer: i32, uv: vec2<f32>, uv_min: vec2<f32>,
+    atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    let crossfade = mobile_instances[instance_index].crossfade;
+    let frame_filter = mobile_instances[instance_index].frame_filter;
+    var alpha = vec4<f32>(0.0);
+    for (var side = 0u; side < 4u; side++) {
+        let tap_uv = uv + mobile_sharpen_tap_offset(MOBILE_CROSS_TAPS[side]) / atlas_size;
+        alpha[side] = mobile_frames_bilinear_alpha(atlas, art_atlas_sampler, layer, tap_uv, uv_min, crossfade,
+            frame_filter);
+    }
+    return alpha;
+}
+
+// The alphas of the cross around `uv` (north, west, east, south) for the outline, before the alpha test, as
+// mobile_window_tap and mobile_card_alpha take them on the outlined card, padded by a texel beyond its frames so that
+// every tap outside them reads transparent: gathers of the frames' alpha (art/mobile_frames.wesl), two for the nearest
+// texels and one for each tap of the client's filter, instead of four taps through the whole of the frames' sampling;
+// under the client's emulated mip box (zoomed out past the client's view) the taps of mobile_cross_alpha_taps.
+fn mobile_outline_cross_alpha(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, uv_dx: vec2<f32>,
+    uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+        if (client_mip_box(uv_dx * atlas_size, uv_dy * atlas_size, scene.client_view_scale).enabled) {
+            return mobile_cross_alpha_taps(page, uv, uv_min, uv_max, uv_dx, uv_dy, atlas_size, instance_index);
+        }
+        if (page.enhanced) {
+            return mobile_cross_alpha_bilinear(art_atlas_enhanced, page.layer, uv, uv_min, atlas_size, instance_index);
+        }
+        return mobile_cross_alpha_bilinear(art_atlas, page.layer, uv, uv_min, atlas_size, instance_index);
+    }
+    let crossfade = mobile_instances[instance_index].crossfade;
+    let frame_filter = mobile_instances[instance_index].frame_filter;
+    let texel = vec2<i32>(pixel_art_atlas_texel(uv, atlas_size));
+    if (page.enhanced) {
+        return mobile_frames_cross_alpha(art_atlas_enhanced, art_atlas_sampler, page.layer, texel, crossfade,
+            frame_filter);
+    }
+    return mobile_frames_cross_alpha(art_atlas, art_atlas_sampler, page.layer, texel, crossfade, frame_filter);
 }
 
 fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
@@ -678,7 +722,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     @if(MOBILE_FRAMES) {
         let outline_filter = mobile_instances[in.instance_index].frame_filter;
         if (mobile_outline_on(outline_filter) && color.a < 1.0) {
-            color = mobile_outline(color, mobile_cross_alpha_taps(page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx,
+            color = mobile_outline(color, mobile_outline_cross_alpha(page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx,
                 sprite_uv_dy, atlas_size, in.instance_index), outline_filter);
         }
     }
