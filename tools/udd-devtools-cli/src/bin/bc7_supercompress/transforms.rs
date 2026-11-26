@@ -354,32 +354,76 @@ fn fields_inverse(input: &[u8], raw_len: usize, shuffle: bool, out: &mut Vec<u8>
     let reserved = &rest[at..at + reserved_length];
     let tail_bytes = &rest[at + reserved_length..];
 
-    out.reserve(raw_len);
+    let start = out.len();
+    out.resize(start + raw_len, 0);
+    let (body_out, tail_out) = out[start..].split_at_mut(blocks * BLOCK_BYTES);
+    tail_out.copy_from_slice(tail_bytes);
     let mut next = [0usize; MODE_SLOTS];
-    for (block, &mode) in map.iter().enumerate() {
+    let mut unpadded = None;
+    for (block, (target, &mode)) in body_out.chunks_exact_mut(BLOCK_BYTES).zip(map).enumerate() {
         let slot = mode as usize;
         let n = next[slot];
         next[slot] += 1;
-        if mode == RESERVED_MODE {
-            out.extend_from_slice(&reserved[n * BLOCK_BYTES..(n + 1) * BLOCK_BYTES]);
-            continue;
+        let (prefixes, indices) = match index_streams.get(slot) {
+            Some(index_stream) => (&prefix_streams[slot][..], &index_stream[..]),
+            None => {
+                target.copy_from_slice(&reserved[n * BLOCK_BYTES..(n + 1) * BLOCK_BYTES]);
+                continue;
+            }
+        };
+        // One instance per mode, so the record lengths and shifts are constants. A page's modes come in runs (most
+        // blocks are the one transparent block), so this branch predicts better than a table-driven join, which
+        // measured 50 % slower.
+        let joined = match mode {
+            0 => join_block::<0>(prefixes, indices, n, target),
+            1 => join_block::<1>(prefixes, indices, n, target),
+            2 => join_block::<2>(prefixes, indices, n, target),
+            3 => join_block::<3>(prefixes, indices, n, target),
+            4 => join_block::<4>(prefixes, indices, n, target),
+            5 => join_block::<5>(prefixes, indices, n, target),
+            6 => join_block::<6>(prefixes, indices, n, target),
+            _ => join_block::<7>(prefixes, indices, n, target),
+        };
+        if !joined {
+            unpadded = Some(block);
+            break;
         }
-        let mut buffer = [0u8; BLOCK_BYTES];
-        let (p_len, i_len) = (prefix_bytes(slot), index_bytes(slot));
-        buffer[..p_len].copy_from_slice(&prefix_streams[slot][n * p_len..(n + 1) * p_len]);
-        let prefix = u128::from_le_bytes(buffer);
-        buffer = [0u8; BLOCK_BYTES];
-        buffer[..i_len].copy_from_slice(&index_streams[slot][n * i_len..(n + 1) * i_len]);
-        let index = u128::from_le_bytes(buffer);
-        let mode_bits = slot as u32 + 1;
-        if prefix >> prefix_bits(slot) != 0 || index >> INDEX_BITS[slot] != 0 {
-            return Err(TransformError::PaddingBits { block });
-        }
-        let bits = (index << (mode_bits + prefix_bits(slot))) | (prefix << mode_bits) | (1u128 << slot);
-        out.extend_from_slice(&bits.to_le_bytes());
     }
-    out.extend_from_slice(tail_bytes);
+    if let Some(block) = unpadded {
+        out.truncate(start);
+        return Err(TransformError::PaddingBits { block });
+    }
     Ok(())
+}
+
+/// Record `n` of `len` bytes of a stream, as a little-endian number: one 16-byte load masked to the record where the
+/// stream has 16 bytes left, else a copy.
+#[inline(always)]
+fn read_record(stream: &[u8], n: usize, len: usize) -> u128 {
+    let at = n * len;
+    match stream.get(at..at + BLOCK_BYTES) {
+        Some(bytes) => low_bits(u128::from_le_bytes(bytes.try_into().expect("16 bytes")), len as u32 * BITS_PER_BYTE),
+        None => {
+            let mut buffer = [0u8; BLOCK_BYTES];
+            buffer[..len].copy_from_slice(&stream[at..at + len]);
+            u128::from_le_bytes(buffer)
+        }
+    }
+}
+
+/// Writes block `n` of mode `MODE` from its field and index records into `target`; false when a record's padding bits
+/// are set.
+#[inline(always)]
+fn join_block<const MODE: usize>(prefixes: &[u8], indices: &[u8], n: usize, target: &mut [u8]) -> bool {
+    let prefix = read_record(prefixes, n, prefix_bytes(MODE));
+    let index = read_record(indices, n, index_bytes(MODE));
+    let mode_bits = MODE as u32 + 1;
+    if prefix >> prefix_bits(MODE) != 0 || index >> INDEX_BITS[MODE] != 0 {
+        return false;
+    }
+    let bits = (index << (mode_bits + prefix_bits(MODE))) | (prefix << mode_bits) | (1u128 << MODE);
+    target.copy_from_slice(&bits.to_le_bytes());
+    true
 }
 
 #[cfg(test)]

@@ -224,35 +224,51 @@ thread_local! {
 
 /// Decodes `encoded` to its `raw_len` bytes into a new buffer, as the container's reader does.
 pub fn decode(encoded: &Encoded, raw_len: usize, dictionary: Option<&Dictionary>) -> CoderResult<Vec<u8>> {
+    let mut out = Vec::new();
+    decode_into(encoded, raw_len, dictionary, &mut out)?;
+    Ok(out)
+}
+
+/// [`decode`] into `out`, replacing what it held: a reader that undoes a transform after the coder decodes into a
+/// buffer it keeps, and allocates only the page it hands on.
+pub fn decode_into(encoded: &Encoded, raw_len: usize, dictionary: Option<&Dictionary>, out: &mut Vec<u8>)
+    -> CoderResult<()> {
+    out.clear();
     match &encoded.codec {
         StoredCodec::Zstd | StoredCodec::ZstdDict => DCTX.with(|context| {
             let mut context = context.borrow_mut();
-            let mut out = Vec::with_capacity(raw_len);
+            out.reserve(raw_len);
             let mut rest = encoded.bytes.as_slice();
             // Chunked payloads are frames one after another; the reader walks them in order.
             while !rest.is_empty() {
                 let frame_len = zstd_safe::find_frame_compressed_size(rest).map_err(zstd_error)?;
                 let (frame, tail) = rest.split_at(frame_len);
-                let mut part = Vec::with_capacity(raw_len - out.len());
+                // A single frame decodes straight into `out`; the frames of a chunked payload go through `part`.
+                let single = out.is_empty() && tail.is_empty();
+                let mut part = Vec::new();
+                let target = if single {
+                    &mut *out
+                } else {
+                    part.reserve(raw_len.saturating_sub(out.len()));
+                    &mut part
+                };
                 match (&encoded.codec, dictionary) {
                     (StoredCodec::ZstdDict, Some(dictionary)) => {
-                        context.decompress_using_ddict(&mut part, frame, dictionary.decoder.as_ddict())
+                        context.decompress_using_ddict(target, frame, dictionary.decoder.as_ddict())
                     }
                     (StoredCodec::ZstdDict, None) => return Err("Zstd dictionary payload without a dictionary".into()),
-                    _ => context.decompress(&mut part, frame),
+                    _ => context.decompress(target, frame),
                 }
                 .map_err(zstd_error)?;
-                if out.is_empty() && tail.is_empty() {
-                    out = part;
-                } else {
+                if !single {
                     out.extend_from_slice(&part);
                 }
                 rest = tail;
             }
-            Ok(out)
+            Ok(())
         }),
         StoredCodec::Lz4 { chunk_sizes, chunk, dictionary: with_dictionary } => {
-            let mut out = vec![0u8; raw_len];
+            out.resize(raw_len, 0);
             let sizes: Vec<usize> = if chunk_sizes.is_empty() {
                 vec![encoded.bytes.len()]
             } else {
@@ -273,7 +289,7 @@ pub fn decode(encoded: &Encoded, raw_len: usize, dictionary: Option<&Dictionary>
                     return Err(format!("LZ4 chunk {index} decoded to {written} bytes, not {}", part.len()));
                 }
             }
-            Ok(out)
+            Ok(())
         }
     }
 }

@@ -18,6 +18,7 @@ mod backends;
 mod corpus;
 mod transforms;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -50,8 +51,6 @@ const GAME_DECODE_THREADS: usize = 4;
 /// The bytes of a transformed stream's length when a transform changes it, which a stored payload would need beside
 /// the container's raw size.
 const TRANSFORMED_LENGTH_BYTES: usize = 4;
-/// Pages `sizes --dump` writes.
-const DUMPED_PAGES: usize = 3;
 
 #[derive(Parser)]
 #[command(about = "Lossless supercompression experiments on BC7 mobile animation pages")]
@@ -109,6 +108,9 @@ struct MethodArgs {
     /// Writes the trained dictionaries and the first measured pages' blocks here, to check against the zstd tool.
     #[arg(long)]
     dump: Option<PathBuf>,
+    /// Measured pages `--dump` writes.
+    #[arg(long, default_value_t = 3)]
+    dump_pages: usize,
 }
 
 #[derive(Args)]
@@ -182,21 +184,31 @@ fn store(transform: Transform, backend: Backend, raw: &[u8], dictionary: Option<
     })
 }
 
-/// Decodes and untransforms `stored`; returns the page and the two times.
+thread_local! {
+    /// The coder's output when a transform follows it, kept between pages as a reader would.
+    static TRANSFORMED: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Decodes and untransforms `stored`; returns the page and the two times. The page is a new allocation either way, as
+/// the game's reader hands each page on; a transformed stream is decoded into a buffer kept between pages.
 fn load(stored: &StoredPage, dictionary: Option<&Dictionary>) -> eyre::Result<(Vec<u8>, Duration, Duration)> {
-    let start = Instant::now();
-    let decoded = backends::decode(&stored.encoded, stored.transformed_len, dictionary)
-        .map_err(|error| eyre::eyre!("{error}"))?;
-    let decompressed = start.elapsed();
-    let start = Instant::now();
-    let page = if stored.transform == Transform::None {
-        decoded
-    } else {
+    if stored.transform == Transform::None {
+        let start = Instant::now();
+        let page = backends::decode(&stored.encoded, stored.transformed_len, dictionary)
+            .map_err(|error| eyre::eyre!("{error}"))?;
+        return Ok((page, start.elapsed(), Duration::ZERO));
+    }
+    TRANSFORMED.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let start = Instant::now();
+        backends::decode_into(&stored.encoded, stored.transformed_len, dictionary, &mut scratch)
+            .map_err(|error| eyre::eyre!("{error}"))?;
+        let decompressed = start.elapsed();
+        let start = Instant::now();
         let mut page = Vec::with_capacity(stored.raw_len);
-        stored.transform.inverse(&decoded, stored.raw_len, &mut page).map_err(|error| eyre::eyre!("{error}"))?;
-        page
-    };
-    Ok((page, decompressed, start.elapsed()))
+        stored.transform.inverse(&scratch, stored.raw_len, &mut page).map_err(|error| eyre::eyre!("{error}"))?;
+        Ok((page, decompressed, start.elapsed()))
+    })
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -404,7 +416,7 @@ fn sizes(args: &MethodArgs) -> eyre::Result<()> {
         for (name, dictionary) in &dictionaries {
             std::fs::write(dir.join(format!("dictionary_{name}.bin")), &dictionary.bytes)?;
         }
-        for page in pages.iter().take(DUMPED_PAGES) {
+        for page in pages.iter().take(args.dump_pages) {
             std::fs::write(dir.join(format!("page_{:05}.bc7", page.index)), package.raw(page)?)?;
         }
     }
