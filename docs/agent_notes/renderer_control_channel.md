@@ -41,7 +41,8 @@ compilation. Keep actual-frame inspection in the validation workflow.
 `status.render` reports the actual active preset, global lighting and effects
 uniform values (`light_cover_rule` the cover rule the style's `light_cover` gives,
 `player_floor_rule` KR-like's and UOD-Painterly's z-view rule, null in Enhanced and Classic,
-`mobile_sharpening` the style's sharpening of the mobiles);
+`mobile_sharpening` the style's multiplier of each mobile's sharpening from
+`runtime_specs/mobiles/Sharpening.kdl`);
 `status.static_lights.instances` reports collected lights,
 `status.client_light_sprites.instances` the KR-like and Enhanced light sprites
 left after the light cover (`digest` a hash of every sprite's key, texture, quad
@@ -149,7 +150,8 @@ files, so one preview can visit several styles, times and sources
   (world_rendering);
   `cc_terrain_transitions`, `ec_terrain_transitions` (graphics);
   `light_cover`, `player_floor_rule`, `land_texture_variation`,
-  `mobile_sharpening` (0 to 1) (the active style's settings, refused where the
+  `mobile_sharpening` (0 to 2, the multiplier of Sharpening.kdl's strengths)
+  (the active style's settings, refused where the
   style has none); and `zoom`
   (clamped range, refused with the free perspective camera, which dollies
   instead). An unknown key, a wrong type or an out-of-range value is an error

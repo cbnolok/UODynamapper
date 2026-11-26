@@ -1022,18 +1022,24 @@ The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upsc
 ### Mobile sharpening (CAS, 2026-11-25)
 
 The mobiles' frames are sharpened in the art sprite shader at run time (`art/mobile_sharpen.wesl`, called from
-`art/main.wesl` `mobile_sharpened` under `MOBILE_FRAMES`), so the 1x frames, the SPAN 2x frames and the RIFE
+`art/main.wesl` `mobile_window` under `MOBILE_FRAMES`), so the 1x frames, the SPAN 2x frames and the RIFE
 in-betweens all take it. Pack-time sharpening was rejected before (no 1x neural sharpener; SPAN downscaled back
 returns about the input).
 
-- **Knob**: `mobile_sharpening`, 0 to 1, one value per render style like `light_cover` (a required key of each
-  `[classic]`, `[enhanced]`, `[kr]`, `[painterly]` group of the shader presets, not per time of day). Shading Controls
-  shows it as Mobile Sharpening at the end of the standard art column; the control socket takes `set
-  mobile_sharpening` and reports it in `status.render`. It reaches the shader as `effects.mobile_sharpening` (a
-  `#[serde(skip)]` field kept in line by `UniformState::sync_mobile_sharpening`, as `land_texture_variation`). Every
-  style ships at 0.
-- **Off is free**: a uniform branch around the taps, after the alpha test, so with 0 the shader does no more than
-  before, and with it on only the fragments drawn pay.
+- **Strength per body** (2026-11-26): `runtime_specs/mobiles/Sharpening.kdl` (see
+  [below](#per-body-strength-and-edge-options-sharpeningkdl-2026-11-26)) gives each body its strength, by package,
+  size class and body. Each frame drawn carries its body's filter in its instance.
+- **Knob**: `mobile_sharpening`, 0 to 2, one value per render style like `light_cover` (a required key of each
+  `[classic]`, `[enhanced]`, `[kr]`, `[painterly]` group of the shader presets, not per time of day), is the style's
+  multiplier of the file's strengths: 1 takes them as written, 0 is off, 2 doubles them. The product stops at CAS's
+  strongest, 1. Shading Controls shows it as Mobile Sharpening Scale at the end of the standard art column; the
+  control socket takes `set mobile_sharpening` and reports it in `status.render`. It reaches the shader as
+  `effects.mobile_sharpening` (a `#[serde(skip)]` field kept in line by `UniformState::sync_mobile_sharpening`, as
+  `land_texture_variation`). Every style ships at 1 (until 2026-11-26 it was the strength itself, shipped at 0).
+  A cache's `land.toml` written before keeps its 0, which now turns the sharpening off; set the slider to 1, or
+  reset the style's preset.
+- **Off is free**: a branch around the taps, after the alpha test, on the strength (multiplier times the body's) and
+  the contour: with both 0 the shader does no more than before, and with them on only the fragments drawn pay.
 - **Algorithm**: AMD FidelityFX CAS (ffx_cas.h) without scaling. The soft minimum and maximum add the cross's and the
   whole 3x3 window's; amplitude = sqrt(sat(min(soft min, 2 - soft max) / soft max)); lobe = -amplitude * strength *
   0.2; out = (lobe * (N + W + E + S) + centre) / (1 + 4 lobe). Strength 1 is CAS's sharpness 1 (lobe -1/5), 0.625 its
@@ -1069,6 +1075,80 @@ Validation (2026-11-25, test packages `/home/claudio/test/uddp`, BC7):
   differences: Enhanced +0.06 ms of 13.2 (+0.5 %), KR-like +0.28 ms of 16.0 (+1.7 %, the filtered taps, eight more client
   filters a fragment), UOD-Painterly +0.21 ms of 26.6 (+0.8 %, within its noise at 100 % busy), Classic (a small
   human-sized body) +0.00 ms of 4.2. Off, the branch is not taken: nothing to measure.
+
+### Per-body strength and edge options (Sharpening.kdl, 2026-11-26)
+
+One strength per style did not fit every body: a small Classic body takes more sharpening than a large one, whose
+frames hold more detail per texel, and the Enhanced frames take less than the Classic pixel art. The strength now
+comes per body from `runtime_specs/mobiles/Sharpening.kdl`, and the style's `mobile_sharpening` scales it.
+
+- **File**: a `classic { }` and an `enhanced { }` section (the Enhanced package's frames, also drawn by KR-like and
+  UOD-Painterly). Each holds a `default`, any number of `size max=<side>` classes and `body <id> [<last id>]`
+  entries (in-game body ids, ranges inclusive), each with the properties below. A body's property comes from its
+  body entry, else its size class, else the default, else off. The size class is the smallest whose `max` is at least
+  the body's largest stored frame side (the larger of width and height over every frame of every action and facing,
+  at 1x, read once per body from the package's clip records); a body above every class, or without frames in the
+  package, takes the default. Bounds are the file's own (`max=96` etc.), any number of classes.
+- **Shipped values** (2026-11-26): Classic default 0.3, ≤96 0.7, ≤192 0.6, ≤384 0.4, the orc (17) 1.0; Enhanced default
+  0.2, ≤96 0.5, ≤192 0.4, ≤384 0.3. No edge option is on. The comparison clips (below) kept them: at scale 1 every
+  body firms up without grain (the Classic lich's dithered robe shows most, still fine); at 2 every Classic body turns
+  checkered and the Enhanced ones only start to grain.
+- **Reload**: like `Strides.kdl`: the bundled file and the user's copy (`cache/runtime_specs/mobiles/Sharpening.kdl`,
+  read in its place) are checked once a second; a save applies within a second. A copy that no longer reads keeps
+  the table in force and warns (console and in-game system message) with the line. A bundled file that does not read
+  at startup stops the app, as every runtime spec.
+- **Path to the shader**: `MobileSharpening` (`render/mobiles/sharpening.rs`) resolves and caches each (package,
+  body)'s `MobileFrameFilter` (32 bytes); `sys_draw_mobiles` puts it in each frame's `MobileSpriteInstance` (now 240
+  bytes), so every frame drawn carries its body's filter and nothing is looked up per fragment. The shader's strength
+  is `min(effects.mobile_sharpening * frame_filter.sharpening, 1)`. An instance's filter of zeros is the old off path:
+  each step is behind its own branch (sharpening or contour, the alpha contrast, the outline), so with all off the
+  shader runs the statements it ran before, plus those branches on the instance's filter.
+- **Edge options** (`art/mobile_edges.wesl`, for the Enhanced frames' soft anti-aliased rim, which sharpened and
+  zoomed turns into blocky light and dark texels against the ground), all reusing CAS's 3x3 taps where they can:
+  - `fringe_sharpening` (0..1, default 1): the share of the strength a texel with alpha under 0.98 takes.
+  - `alpha_contrast` (0..1) about `alpha_midpoint` (default 0.5): a = clamp((a - m) / (1 - c) + m). Applied to each
+    frame's own tap before two frames crossfade (RIFE in-betweens and SPAN 2x frames alike), so the blend of two cut
+    frames stays a soft blend and no frame's cut hole shows through the other.
+  - `contour` (0..1) towards `contour_color` (default `#202020`): mixes the colour (sRGB-encoded) by contour * (1 -
+    the lowest alpha of the cross and the centre), so the rim and the outermost opaque texels darken as the Classic
+    frames' outline.
+  - `outline` (0..1): a line of the contour colour one texel wide outside the silhouette, at that opacity, laid
+    before the alpha test. The frames are stored cropped to their visible pixels, so an outlined card grows by a texel
+    each side (`LayerFrames::padded`, anchors and UVs moved by one atlas texel); the taps outside the frame's rect read
+    transparent (`mobile_frame_alone_tap`), so the line never picks up a neighbouring frame of the atlas.
+
+  Recommendation: `alpha_contrast` about 0.5 for the Enhanced package when its rim bothers: it removes the
+  half-transparent fringe texels without changing the silhouette's size or colour, costs no taps of its own, and
+  works the same through KR-like's client filter. `contour` 0.3 to 0.4 on top gives a Classic-like dark rim if that
+  is wanted; 0.8 is too dark for the rendered art. `outline` changes the look most (0.5 a soft line, 1 a hard black
+  one, heavy on a human) and costs the most (about +0.3 to +0.6 ms for a daemon filling a tenth of the window). `fringe_sharpening` 0 barely shows at the shipped
+  strengths.
+
+Validation (2026-11-26, test packages, the field west of Yew, map 1):
+
+- **Off is pixel-identical**: scale 0 with every edge option off, the player shown at 2093,790 (zoom 0.3, in-betweens
+  off, water and fog drift frozen; the fog's drift is `fog_clouds.w` since 2026-11-26, which a capture script must
+  freeze too), 20 captures per style before and after: every capture after equals one before byte for byte (Classic
+  human and orc, Enhanced human 20 of 20); for the idling daemon (Enhanced, KR-like, UOD-Painterly) 14 to 18 of 20 do,
+  and the rest differ from their nearest by some 120k pixels, as two idle poses of one run do. The first version
+  routed the off path through the alpha contrast's function, which KR-like's client filter compiled to values one
+  level apart; the off path now calls the old statements behind the branch.
+- **Defaults touch only the mobiles**: the regression harness (player hidden, 103 captures) against
+  `before-sharpen-kdl`: 83 identical, 20 within tolerance (one or two levels, lit and night fixtures, no mobile in
+  them; the mobile code is compiled only into the mobiles' pipeline), none changed. With the player shown, scale 1
+  against 0 changes only pixels inside the body's box in every style.
+- **GPU cost** (as the 2026-11-25 bench: gfx engine time per frame, variants alternated in one launch, 5 rounds,
+  uncapped at 1900 x 1000, the player at zoom 0.25; daemon 9 about 190k fragments, Classic human 400): the shipped
+  strengths against scale 0, Enhanced +0.22 ms of 12.7 (+1.8 %), KR-like +0.41 of 15.1 (+2.7 %), UOD-Painterly +0.22
+  of 24.9 (+0.9 %), Classic +0.00 of 4.2. Each edge option on top of the shipped strengths: `fringe_sharpening` 0 and
+  `alpha_contrast` 0.5 nothing measurable (Enhanced, KR-like), `contour` 0.4 +0.04 / +0.03, `outline` 0.5 +0.34 /
+  +0.59 (its four cross taps run before the alpha test on every fragment of the padded card). Off, the branches are
+  not taken. One Enhanced launch lost its control socket for a minute in the last round (four paired rounds kept);
+  the KR-like launch after it ran clean.
+- **Clips** (`sharpen-kdl/clips/` in the scratch folder): `strength-<body>.mp4`, Classic over Enhanced at scale 0,
+  1, 2 for the orc, human, lich, giant spider and ophidian; `edges-enhanced-human.mp4`,
+  `edges-enhanced-daemon.mp4` (off, fringe 0, contrast 0.5 and 0.8, contour 0.4 and 0.8, outline 0.5 and 1, a
+  combination) and `edges-kr-daemon.mp4`.
 
 ## Block-compressed frame atlas (2026-11-21)
 

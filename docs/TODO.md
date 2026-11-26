@@ -276,11 +276,11 @@ These need a person at the GUI or in a running client; the code side is done.
   - Walking over multis (about 3 to 4 days): houses and boats are placed by a server, so none appear today
     (`PlacedMultisRes` is never filled). Place them from a runtime spec and a socket command, and let the walk
     (`world/walk_z.rs`) read their parts as floors, stairs and walls. Only useful to preview houses.
-- Mobile sharpening defaults: the GPU CAS of the mobiles' frames is in (2026-11-25, `mobile_sharpening` per render
-  style, Shading Controls' Mobile Sharpening; [motion note](agent_notes/mobile_animation_motion.md#mobile-sharpening-cas-2026-11-25)),
-  shipping at 0 in every style. Pick each style's strength from the before/after clips (about 0.3 to 0.4 suggested
-  for Enhanced, KR-like and UOD-Painterly; Classic likely stays 0). Above about 0.6 it brings out the BC7 blocks of
-  the test packages.
+- Mobile sharpening defaults: the strength now comes per body from `runtime_specs/mobiles/Sharpening.kdl` (by
+  package, size class and body, 2026-11-26), and each style's `mobile_sharpening` (Shading Controls' Mobile Sharpening
+  Scale) multiplies it, shipping at 1; [motion note](agent_notes/mobile_animation_motion.md#per-body-strength-and-edge-options-sharpeningkdl-2026-11-26).
+  Open: confirm the file's starting values on more bodies and in play (the comparison clips kept them), and whether
+  the Enhanced package should ship an edge option (`alpha_contrast` about 0.5 recommended; all off for now).
 - Light-source items glow on the Classic paperdoll and the old-style gump paperdoll (the user liked the idea,
   2026-11-06). The Enhanced client's own paperdoll (`Paperdoll.uop`) already has the halo painted into lit items'
   frames (lit lantern 0xA15: a 375x306 frame, mostly partly transparent), so it needs nothing. An item
