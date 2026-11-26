@@ -1875,6 +1875,34 @@ mod tests {
 
     /// The chroma knee replaces KR-like's lower saturation: every other style keeps it off (knee 1, slope 1), and
     /// KR-like keeps saturation at 1 so the two do not compound.
+    /// The drifting fog is UOD-Painterly's alone (the KR client draws none; its moving cloud look is the night map),
+    /// and every slot of every style shares one cloud shape, the pass's defaults, so turning it on looks alike.
+    #[test]
+    fn only_uod_painterly_has_the_fog_on_and_every_slot_shares_its_clouds() {
+        use crate::render::postprocess::fog_pass::{
+            FOG_DEFAULT_COVERAGE, FOG_DEFAULT_DRIFT_TILES_PER_SECOND, FOG_DEFAULT_SCALE_TILES,
+            FOG_DEFAULT_WIND_BEARING_DEGREES,
+        };
+        let clouds = Vec4::new(
+            FOG_DEFAULT_SCALE_TILES,
+            FOG_DEFAULT_COVERAGE,
+            FOG_DEFAULT_WIND_BEARING_DEGREES,
+            FOG_DEFAULT_DRIFT_TILES_PER_SECOND,
+        );
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for (group, fog_on) in
+                [(&presets.classic, 0), (&presets.enhanced, 0), (&presets.kr, 0), (&presets.painterly, 1)]
+            {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    assert_eq!(slot.lighting.enable_fog, fog_on);
+                    assert_eq!(slot.lighting.fog_clouds, clouds);
+                    assert!(slot.lighting.fog_tint.w > 0.0, "a fog turned on shows");
+                }
+            }
+        }
+    }
+
     #[test]
     fn only_kr_like_has_the_chroma_knee_on() {
         use crate::render::terrain::mesh_material::CHROMA_KNEE_OFF;

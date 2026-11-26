@@ -44,6 +44,7 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
 | Sun | baked | client sun | client sun | baked |
 | Land texture variation | none | on | on | on |
 | Client texture filter, grunge, chroma knee | off | off | on | off |
+| Fog (bundled) | off | off | off (the KR client draws none) | on |
 
 - **The chroma knee softens the land and the foliage alone.** KR-like's knee (0.55, slope 0), tuned to bring the KR
   textures' grass to the KR screenshots, acts on the land, on the statics that continue it (`static_continues_land`:
@@ -101,6 +102,18 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
   travel, and the slider now goes down to 4. Source: user, 2026-11-25 (the wash did not look effective). Code:
   `kr_color_wash_amount` (`dynamapper/assets/shaders/postprocess/kr_color_wash.wesl`). Tests:
   `gpu_the_kr_color_wash_keeps_the_presets_and_shows_past_the_knee`, `the_kr_color_wash_sliders_match_the_shader`.
+- **The fog drifts over the map, never from the screen's edges.** Fog is soft cloud banks, a domain-warped gradient
+  noise read on the camera plane at the map position under each pixel, so the banks pan with the map, and the wind
+  carries them Drift Speed tiles a second toward its bearing while their warp moves at 0.55 of it, so they change
+  shape as they go. Each pixel mixes toward the fog colour by up to Amount where a bank is thickest; nothing depends
+  on the pixel's place on the screen, so the corners fog no more than the centre. The night tint turns the colour a
+  dark blue at night and in caves, and the client composite then dims it with the scene. On in UOD-Painterly alone:
+  the KR client draws no fog (its sky and fog code is dead), and KR-like's moving cloud look at night is the night
+  map's world-anchored blotches. Source: user, 2026-11-26 (the fog whitened the four corners; it should be a slight
+  cloudy moving layer). Code: `fog_uniform` (`dynamapper/src/render/postprocess/fog_pass.rs`), `fog_density`
+  (`sh/effects/fog_noise.wesl`). Tests: `a_map_point_keeps_its_cloud_when_the_camera_pans`,
+  `the_wind_carries_the_fog_toward_its_bearing`, `gpu_coverage_runs_from_wisps_to_a_veil`,
+  `gpu_the_fog_repeats_on_its_period_and_has_no_grain`, `only_uod_painterly_has_the_fog_on_and_every_slot_shares_its_clouds`.
 
 - Source: user decisions recorded in [`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md);
   KR client trace [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).

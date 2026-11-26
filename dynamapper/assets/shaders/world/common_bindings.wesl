@@ -111,8 +111,8 @@ struct GlobalLightingUniforms {
     // [amount, falloff_height, shadow_bias]; padded like the Rust `_pad5_`.
     gloom_params: vec3<f32>,
     _pad5_: f32,
-    fog_color: vec4<f32>,
-    fog_params: vec4<f32>,
+    fog_tint: vec4<f32>,
+    fog_clouds: vec4<f32>,
     gloom_color: vec4<f32>,
     fog_night_color: vec4<f32>,
     // The former trailing kr_tonemap_params (.x = KR tonemap pre-scale) is folded into exposure.

@@ -353,11 +353,11 @@ pub struct GlobalLightingUniforms {
     #[serde(skip)]
     pub _pad5_: f32,
 
-    // --- Fog ---
-    //   fog_color     = [r, g, b, max_mix]
-    pub fog_color: Vec4,
-    //   fog_params    = [distance_density, height_density, noise_scale, noise_strength]
-    pub fog_params: Vec4,
+    // --- Fog (postprocess/fog_pass.rs; the materials do not read it) ---
+    //   fog_tint      = [r, g, b, amount]: the fog's colour and its opacity where the cloud is thickest
+    pub fog_tint: Vec4,
+    //   fog_clouds    = [scale_tiles, coverage, wind_bearing_degrees, drift_tiles_per_second]
+    pub fog_clouds: Vec4,
 
     // --- KR-style enhancements ---
     //   gloom_color   = [r, g, b, desaturation_amount]
@@ -365,8 +365,8 @@ pub struct GlobalLightingUniforms {
     //   A: how much to desaturate in gloomy areas (0.0 = none, 1.0 = full grayscale).
     pub gloom_color: Vec4,
     //   fog_night_color = [r, g, b, blend_factor]
-    //   Blends fog_color toward this darker tint. At blend=0: fog_color as-is.
-    //   At blend=1: fully replaces fog_color with this (e.g. deep blue-black night fog).
+    //   Blends the fog_tint colour toward this darker tint. At blend=0: fog_tint as-is.
+    //   At blend=1: fully replaces it with this (e.g. deep blue-black night fog).
     pub fog_night_color: Vec4,
     // The KR profile curve's former separate pre-scale, `kr_tonemap_params.x`, was the same multiplier as
     // `exposure`; it is folded into the presets' exposure (see `migrate_cached_retired_lighting` in

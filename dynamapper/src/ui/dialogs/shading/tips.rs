@@ -29,7 +29,11 @@ pub(super) const TEXTURE_SMOOTHNESS: &str =
 pub(super) const TEXTURE_FILTER: &str =
     "How land and item textures are sampled: crisp pixel art, or the KR client's plain bilinear (KR-like).";
 pub(super) const FOG: &str =
-    "Adds haze toward the screen edges and the bottom, with slowly drifting cloud patches. On in UOD-Painterly; shape it under Advanced > Fog Params.";
+    "Slow, soft cloud banks drifting over the whole scene, anchored to the map so they pan with it; the slider is how thick the thickest fog gets. They darken with the night. On in UOD-Painterly; more under Advanced > Fog.";
+pub(super) const FOG_SCALE: &str =
+    "How wide a fog bank is, in map tiles: about two banks across the screen at the presets' 10. Needs Fog on.";
+pub(super) const FOG_DRIFT_SPEED: &str =
+    "How fast the wind carries the fog, in tiles per second; the banks slowly change shape as they go. 0 holds them still. Needs Fog on.";
 pub(super) const BRIGHTNESS: &str =
     "Overall brightness of the scene, Classic's and UOD-Painterly's own look at every time of day; KR-like and Enhanced have none. Night and caves dim through the Light Level (World Scene) in every style. In UOD-Painterly, the darker the scene, the more light sources glow.";
 pub(super) const LIGHT_STATIC_INTERACTION: &str =
@@ -252,14 +256,12 @@ pub(super) const ART_PROJECTED_SHADOW_SOFTNESS: &str =
 // --- Advanced: fog ---
 
 pub(super) const FOG_COLOR: &str =
-    "Colour of the haze, and in alpha how thick it can get (0 turns fog off). Needs Fog on.";
-pub(super) const FOG_DISTANCE_DENSITY: &str =
-    "How far the haze reaches in from the screen edges. Needs Fog on; with this and Height Density at 0 there is no fog at all.";
-pub(super) const FOG_HEIGHT_DENSITY: &str =
-    "Extra haze toward the bottom of the screen. Needs Fog on; too faint to see at the UOD-Painterly values.";
-pub(super) const FOG_NOISE_SCALE: &str =
-    "Size of the drifting cloud patches. Needs Fog on, some Distance or Height Density, and Noise Strength above 0.";
-pub(super) const FOG_NOISE_STRENGTH: &str =
-    "How visible the slowly drifting cloud patches are. Needs Fog on and some Distance or Height Density: the clouds only shape existing haze.";
+    "Colour of the fog: a soft sky grey-blue by day in the presets. It lightens dark ground and slightly dims bright ground. Needs Fog on.";
+pub(super) const FOG_AMOUNT: &str =
+    "How far the thickest fog mixes the scene toward the fog colour; 0 turns the fog off. Needs Fog on.";
+pub(super) const FOG_COVERAGE: &str =
+    "How much of the scene the fog banks cover: 0 leaves rare wisps, 1 an even veil. Needs Fog on.";
+pub(super) const FOG_WIND_DIRECTION: &str =
+    "The compass bearing the wind carries the fog toward, clockwise from north: 90 is east, toward the lower right of the screen. Needs Fog on.";
 pub(super) const FOG_NIGHT_TINT: &str =
-    "A colour mixed into the haze, by the amount in alpha; the presets use more at night and in caves. Hard to see at the preset values.";
+    "A colour mixed into the fog colour, by the amount in alpha: the night and cave presets turn the fog a dark blue there, so it shades the dark instead of glowing. Needs Fog on.";

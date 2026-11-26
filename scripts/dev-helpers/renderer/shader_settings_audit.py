@@ -208,13 +208,13 @@ def factory_slot(factory, mode, period):
 def deterministic(slot):
     """The baseline of every measurement: the factory slot with its two time-driven terms frozen.
 
-    Water animation moves the water UVs every frame, and the KR fog's cloud veil drifts with time; both would make
-    two captures of the same values differ. Each is measured on its own (see the water launch and fog_params.w)."""
+    Water animation moves the water UVs every frame, and the fog drifts with time; both would make two captures of
+    the same values differ. Each is measured on its own (see the water launch and fog_clouds.w)."""
     out = dict(slot)
     out['effects.enable_water_animation'] = 0
-    fog = list(out['lighting.fog_params'])
+    fog = list(out['lighting.fog_clouds'])
     fog[3] = 0.0
-    out['lighting.fog_params'] = fog
+    out['lighting.fog_clouds'] = fog
     return out
 
 
@@ -253,9 +253,7 @@ def grading_on(s):
 
 
 def fog_on(s):
-    fog = s['lighting.fog_params']
-    return (s['lighting.enable_fog'] == 1 and s['lighting.fog_color'][3] > 0.001
-            and (fog[0] >= 0.001 or fog[1] >= 0.001))
+    return s['lighting.enable_fog'] == 1 and s['lighting.fog_tint'][3] >= 0.001
 
 
 def gloom_on(s):
@@ -368,13 +366,10 @@ SPECS = [
     Spec('effects.art_highlight_strength', const(0.0), ALWAYS, '0'),
     Spec('effects.art_depth_tint_strength', const(0.0), ALWAYS, '0'),
     Spec('lighting.enable_fog', const(0), fog_on, '0'),
-    Spec('lighting.fog_color', lambda v, s: grey_same_luma(v), fog_on, 'grey of the same luminance (alpha kept)'),
-    Spec('lighting.fog_params', const(0.0), lambda s: fog_on(s) and s['lighting.fog_params'][1] >= 0.001,
-         '0 (distance density)', comp=0),
-    Spec('lighting.fog_params', const(0.0), lambda s: fog_on(s) and s['lighting.fog_params'][0] >= 0.001,
-         '0 (height density)', comp=1),
-    Spec('lighting.fog_params', lambda v, s: v, fog_on,
-         'cloud veil on at the preset value against the frozen baseline (0)', comp=3, kind='reverse'),
+    Spec('lighting.fog_tint', lambda v, s: grey_same_luma(v), fog_on, 'grey of the same luminance (amount kept)'),
+    Spec('lighting.fog_clouds', const(0.0), fog_on, '0 (coverage: rare wisps)', comp=1),
+    Spec('lighting.fog_clouds', lambda v, s: v, fog_on,
+         'drift on at the preset value against the frozen baseline (0)', comp=3, kind='reverse'),
     Spec('lighting.fog_night_color', const(0.0), fog_on, '0 (night blend: day fog colour only)', comp=3),
     Spec('lighting.enable_tonemap', const(0), ALWAYS, '0'),
     Spec('lighting.exposure', const(1.0), tonemap_on, '1.0'),
@@ -435,8 +430,9 @@ NOT_MEASURED = {
     'effects.land_normal_map_strength': 'read only with enable_normal_maps, which every preset leaves off',
     'lighting.gloom_params.x': 'amount of enable_gloom: 0 is the same as gloom off',
     'lighting.grade_params.x': 'amount of enable_grading: 0 is the same as grading off',
-    'lighting.fog_color.a': 'fog opacity cap: 0 is the same as fog off',
-    'lighting.fog_params.z': 'cloud scale: acts only with fog_params.w',
+    'lighting.fog_tint.a': 'fog amount: 0 is the same as fog off',
+    'lighting.fog_clouds.x': 'bank width: moves the banks, measured by coverage and drift',
+    'lighting.fog_clouds.z': 'wind bearing: acts only with the drift',
 }
 
 

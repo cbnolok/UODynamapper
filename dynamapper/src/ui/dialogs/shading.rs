@@ -24,6 +24,7 @@ use crate::{
         lighting::client_night::{
             MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
         },
+        postprocess::fog_pass::FOG_MIN_SCALE_TILES,
         view::camera::UiCameraResource,
     },
     impl_tracked_plugin,
@@ -194,8 +195,17 @@ const RIM_POWER_RANGE: std::ops::RangeInclusive<f32> = 0.1..=8.0;
 /// Gloom "Height Fade" slider in world units: land spans about -11.6..+11.5 (Z x 4/44), and the presets use
 /// 0.005 to 0.01, so the slider is logarithmic to reach both ends.
 const GLOOM_FADE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=12.0;
-/// The fog pass draws no fog while both fog densities are below this (`fog_pass.wesl`), cloud noise included.
-const FOG_DENSITY_MIN: f32 = 0.001;
+/// "Fog Amount": the opacity of the thickest fog (`fog_tint.w`); the presets use 0.18 to 0.26.
+const FOG_AMOUNT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.6;
+/// "Fog Scale": a cloud bank's width in map tiles, from the pass's floor (`FOG_MIN_SCALE_TILES`); the presets use 10,
+/// about two banks across the default view.
+const FOG_SCALE_RANGE_TILES: std::ops::RangeInclusive<f32> = FOG_MIN_SCALE_TILES..=48.0;
+/// "Fog Coverage": clear sky with rare wisps to an even veil.
+const FOG_COVERAGE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+/// "Fog Wind Direction": the compass bearing the fog drifts toward.
+const FOG_WIND_BEARING_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=360.0;
+/// "Fog Drift Speed" in map tiles per second; the presets use 0.5, a walk's pace is about 2.5.
+const FOG_DRIFT_SPEED_RANGE: std::ops::RangeInclusive<f32> = 0.0..=4.0;
 /// "KR Color Wash" strength: past 0.75 (KR_COLOR_WASH_KNEE in postprocess/kr_color_wash.wesl) the wash grows fast.
 const KR_COLOR_WASH_STRENGTH_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.5;
 /// "KR Color Wash Scale" in world tiles: the size of the wash's patches. The minimum is the shader's
@@ -957,54 +967,28 @@ pub fn shading_ui_system(
             });
 
             // ------------------------ Fog ------------------------------
-            ui.collapsing("Fog Params", |ui| {
+            ui.collapsing("Fog", |ui| {
+                let fog = &mut u.lighting;
+                let fog_on = fog.enable_fog != 0;
                 let mut changed = false;
-                // Tint + max mix (alpha)
-                let mut fog = u.lighting.fog_color;
-                if color4(ui, "Fog Color (alpha = max mix)", &mut fog, tips::FOG_COLOR) {
-                    u.lighting.fog_color = fog;
+                let mut color = fog.fog_tint.truncate();
+                if color3(ui, "Fog Color", &mut color, tips::FOG_COLOR) {
+                    fog.fog_tint = color.extend(fog.fog_tint.w);
                     changed = true;
                 }
-                // Densities and noise
-                changed |= slider_s(
-                    ui,
-                    "Distance Density",
-                    &mut u.lighting.fog_params[0],
-                    0.0..=0.2,
-                    tips::FOG_DISTANCE_DENSITY,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Height Density",
-                    &mut u.lighting.fog_params[1],
-                    0.0..=0.2,
-                    tips::FOG_HEIGHT_DENSITY,
-                );
-                // The cloud noise only shapes haze the densities make: alone it draws nothing.
-                let has_haze = fog_has_haze(u.lighting.fog_params);
-                changed |= slider_en(ui, has_haze, "Noise Scale", &mut u.lighting.fog_params[2], 0.0..=2.0, tips::FOG_NOISE_SCALE);
+                changed |= slider_en(ui, fog_on, "Fog Amount", &mut fog.fog_tint.w, FOG_AMOUNT_RANGE, tips::FOG_AMOUNT);
+                changed |= fog_cloud_sliders(ui, fog_on, &mut fog.fog_clouds);
+                changed |= slider_en(ui, fog_on, "Fog Coverage", &mut fog.fog_clouds.y, FOG_COVERAGE_RANGE, tips::FOG_COVERAGE);
                 changed |= slider_en(
                     ui,
-                    has_haze,
-                    "Noise Strength",
-                    &mut u.lighting.fog_params[3],
-                    0.0..=1.0,
-                    tips::FOG_NOISE_STRENGTH,
+                    fog_on,
+                    "Fog Wind Direction",
+                    &mut fog.fog_clouds.z,
+                    FOG_WIND_BEARING_RANGE_DEGREES,
+                    tips::FOG_WIND_DIRECTION,
                 );
+                changed |= color4(ui, "Night Fog Tint (rgb + blend.a)", &mut fog.fog_night_color, tips::FOG_NIGHT_TINT);
                 if changed {
-                    u.dirty = true;
-                }
-
-                // Night fog tint (KR-style enhancement)
-                let mut changed_night = false;
-                {
-                    let mut v = u.lighting.fog_night_color;
-                    if color4(ui, "Night Fog Tint (rgb + blend.a)", &mut v, tips::FOG_NIGHT_TINT) {
-                        u.lighting.fog_night_color = v;
-                        changed_night = true;
-                    }
-                }
-                if changed_night {
                     u.dirty = true;
                 }
             });
@@ -1075,7 +1059,6 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         // separate effect — the tooltip makes the relationship explicit.
         changed |= toggle_u32(ui, "Color Grading", &mut u.lighting.enable_grading, tips::COLOR_GRADING);
         changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering, tips::TEXTURE_SMOOTHNESS);
-        changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog, tips::FOG);
     });
     changed |= texture_filter_row(ui, u);
     ui.horizontal_wrapped(|ui| {
@@ -1114,7 +1097,17 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0, tips::GRUNGE);
         changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, KR_COLOR_WASH_STRENGTH_RANGE, tips::KR_COLOR_WASH);
         changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, KR_COLOR_WASH_SCALE_RANGE, tips::KR_COLOR_WASH_SCALE);
+        let fog = &mut u.lighting;
+        changed |= toggle_slider(ui, true, "Fog", &mut fog.enable_fog, &mut fog.fog_tint.w, FOG_AMOUNT_RANGE, tips::FOG);
+        changed |= fog_cloud_sliders(ui, fog.enable_fog != 0, &mut fog.fog_clouds);
     });
+    changed
+}
+
+/// The fog's Scale and Drift Speed sliders, in both windows; the rest of its shape is under Advanced > Fog.
+fn fog_cloud_sliders(ui: &mut egui::Ui, fog_on: bool, clouds: &mut Vec4) -> bool {
+    let mut changed = slider_en(ui, fog_on, "Fog Scale", &mut clouds.x, FOG_SCALE_RANGE_TILES, tips::FOG_SCALE);
+    changed |= slider_en(ui, fog_on, "Fog Drift Speed", &mut clouds.w, FOG_DRIFT_SPEED_RANGE, tips::FOG_DRIFT_SPEED);
     changed
 }
 
@@ -1440,12 +1433,6 @@ fn hdr_rgb(ui: &mut egui::Ui, label: &str, v: &mut Vec3, tip: &str) -> bool {
         *v = Vec3::from_array(arr);
     }
     changed
-}
-
-/// Whether the fog pass draws any haze for these `fog_params` (distance and height density); the cloud noise
-/// only shapes that haze.
-fn fog_has_haze(fog_params: Vec4) -> bool {
-    fog_params.x >= FOG_DENSITY_MIN || fog_params.y >= FOG_DENSITY_MIN
 }
 
 fn land_relief_control_value(u: &UniformState) -> f32 {
@@ -1816,11 +1803,22 @@ mod tests {
     }
 
     #[test]
-    fn fog_noise_needs_a_fog_density() {
-        let noise_only = Vec4::new(0.0, 0.0, 0.55, 0.16);
-        assert!(!fog_has_haze(noise_only));
-        assert!(fog_has_haze(Vec4::new(FOG_DENSITY_MIN, 0.0, 0.55, 0.16)));
-        assert!(fog_has_haze(Vec4::new(0.0, FOG_DENSITY_MIN, 0.55, 0.16)));
+    fn bundled_fog_values_are_on_their_sliders() {
+        use crate::render::postprocess::fog_pass::FOG_MIN_AMOUNT;
+        let factory = include_str!("../../../assets/defaults/shader_presets.toml");
+        let presets: LandShaderModePresets =
+            uocf::utils::config_toml::parse_strict("shader_presets.toml", factory).expect("bundled");
+        for group in [&presets.classic, &presets.enhanced, &presets.kr, &presets.painterly] {
+            for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                let [scale, coverage, bearing, drift] = slot.lighting.fog_clouds.to_array();
+                let amount = slot.lighting.fog_tint.w;
+                assert!(FOG_AMOUNT_RANGE.contains(&amount) && amount >= FOG_MIN_AMOUNT, "{amount}");
+                assert!(FOG_SCALE_RANGE_TILES.contains(&scale), "{scale}");
+                assert!(FOG_COVERAGE_RANGE.contains(&coverage), "{coverage}");
+                assert!(FOG_WIND_BEARING_RANGE_DEGREES.contains(&bearing), "{bearing}");
+                assert!(FOG_DRIFT_SPEED_RANGE.contains(&drift), "{drift}");
+            }
+        }
     }
 
     #[test]

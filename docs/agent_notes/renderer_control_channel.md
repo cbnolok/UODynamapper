@@ -184,8 +184,8 @@ collected with), `waiting_pipelines` (render pipelines still compiling, counted
 in the render world), `switch_serial` and `frames_since_switch`.
 `status.terrain.pending_bakes` and `unbuilt_chunks` count land chunks still
 waiting for a texture bake or a mesh, `status.render.uniforms_dirty` style
-values not yet pushed to the materials, and `status.render.fog_params` the
-fog uniform.
+values not yet pushed to the materials, and `status.render.fog_clouds` the
+fog's cloud settings (its fourth value is the drift, which the harness freezes).
 
 `control.py wait-ready` adds a switch's readiness to the scene's: at least
 `MIN_FRAMES_AFTER_SWITCH` frames since the last switch, no waiting pipelines, no

@@ -246,7 +246,7 @@ fn poll_control(
                             "player_floor_rule": state.player_floor_rule,
                             "mobile_sharpening": state.mobile_sharpening,
                             "local_light_intensity": state.effects.local_light_intensity,
-                            "fog_params": state.lighting.fog_params, "uniforms_dirty": state.dirty})),
+                            "fog_clouds": state.lighting.fog_clouds, "uniforms_dirty": state.dirty})),
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len(),
                             "digest": format!("{:016x}", lights.digest())})),
                         "client_light_sprites": light_sprites.as_ref().map(|sprites| json!({"instances": sprites.instances.len(),

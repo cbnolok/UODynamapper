@@ -16,7 +16,8 @@ default_preset = "classic.morning"
 # terrain_shading_model: How shading_mode 1 and 2 shade land. 0: smooth per-pixel lighting.
 #                    1: the KR and Enhanced clients' per-vertex half-Lambert grey, interpolated over their two
 #                    triangles per cell, times the material colour; no other lighting terms.
-# enable_fog:        If 1, enables procedural, height-based fog. 0: off.
+# enable_fog:        If 1, draws the drifting fog: soft cloud banks over the frame, anchored to the map and carried
+#                    by the wind (postprocess/fog_pass.rs). 0: off. On in UOD-Painterly only.
 # enable_gloom:      If 1, enables a screen-space darkening effect (KR-style only). 0: off.
 # enable_tonemap:    If 1, applies tonemapping to the final color. 0: off.
 # tone_curve:        The tonemap's curve. 0: the visual profile's curve, exposure inside it.
@@ -55,7 +56,8 @@ default_preset = "classic.morning"
 # rim_color:           Color and exponent of the rim light as [R, G, B, Power].
 # grade_warm_color:    The warm tone for color grading as [R, G, B].
 # grade_cool_color:    The cool tone for color grading as [R, G, B].
-# fog_color:           The color of the procedural fog as [R, G, B, Max_Mix_Factor].
+# fog_tint:            The fog's colour and amount as [R, G, B, Amount]: the frame mixes toward the colour by up to
+#                      Amount where a cloud bank is thickest. A soft sky grey-blue by day; 0 amount is no fog.
 #
 # --- Parameters ---
 # exposure:          Overall scene exposure value. In the KR profile curve it is the only pre-scale: the former
@@ -72,11 +74,13 @@ default_preset = "classic.morning"
 #                    furniture, walls, trunks and the other statics keep their own colour.
 # grade_chroma_slope: The slope above the knee, 0 to 1. 1 changes nothing; 0 caps relative chroma at the knee.
 # gloom_params:      Vector of gloom parameters: [Amount, Height_Falloff, Shadow_Bias].
-# fog_params:        Vector of fog parameters: [Distance_Density, Height_Density, Noise_Scale, Noise_Strength].
+# fog_clouds:        The fog's cloud banks: [Scale, Coverage, Wind_Bearing, Drift_Speed]. Scale: a bank's width in
+#                    map tiles. Coverage: 0 (clear, rare wisps) to 1 (an even veil). Wind_Bearing: the compass
+#                    bearing the wind carries the fog toward, clockwise from north. Drift_Speed: tiles per second.
 # gloom_color:       Dedicated gloom tint [R, G, B, Desaturation]. RGB: color shadows tint toward.
 #                    A: shadow desaturation (0.0 = none, 1.0 = grayscale). [0,0,0,0] = use ambient color.
-# fog_night_color:   Night fog tint [R, G, B, Blend_Factor]. Blends fog_color toward this darker tint.
-#                    At blend=0: fog_color as-is. At blend=1: fully replaced (e.g. deep blue night).
+# fog_night_color:   Night fog tint [R, G, B, Blend_Factor]. Blends the fog_tint colour toward this darker tint.
+#                    At blend=0: fog_tint as-is. At blend=1: fully replaced (the night and cave presets' dark blue).
 # diffuse_wrap:      Half-Lambert wrap factor. 0.0 = standard Lambert, 0.3-0.5 = soft shadow terminator.
 #
 # === [Sun] ===
@@ -278,8 +282,8 @@ grade_extra = [0.45, 1.2, 1.15, 0.9]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.2, 0.008, 0.45]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.48, 0.52, 0.58, 0.22]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
@@ -363,8 +367,8 @@ grade_extra = [0.6, 1.25, 1.22, 1.0]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.15, 0.007, 0.35]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.50, 0.52, 0.55, 0.20]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
@@ -449,10 +453,10 @@ grade_extra = [0.75, 1.2, 1.3, 0.8]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.4, 0.01, 0.65]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.46, 0.50, 0.56, 0.24]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
-fog_night_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.045, 0.055, 0.085, 0.9]
 
 [classic.night.land_lighting]
 enable_bent = 1
@@ -535,10 +539,10 @@ grade_extra = [0.65, 1.15, 1.28, 0.8]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.65, 0.012, 0.75]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.46, 0.50, 0.56, 0.18]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
-fog_night_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.03, 0.035, 0.05, 0.9]
 
 [classic.cave.land_lighting]
 enable_bent = 1
@@ -652,8 +656,8 @@ grade_extra = [0.45, 1.2, 1.15, 0.9]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.2, 0.008, 0.45]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.48, 0.52, 0.58, 0.22]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
@@ -737,8 +741,8 @@ grade_extra = [0.6, 1.25, 1.22, 1.0]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.15, 0.007, 0.35]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.50, 0.52, 0.55, 0.20]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
@@ -822,10 +826,10 @@ grade_extra = [0.75, 1.2, 1.3, 0.8]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.4, 0.01, 0.65]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.46, 0.50, 0.56, 0.24]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
-fog_night_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.045, 0.055, 0.085, 0.9]
 
 [enhanced.night.land_lighting]
 enable_bent = 0
@@ -907,10 +911,10 @@ grade_extra = [0.65, 1.15, 1.28, 0.8]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.65, 0.012, 0.75]
-fog_color = [0.75, 0.85, 0.95, 0.5]
-fog_params = [0.02, 0.0, 0.0, 0.0]
+fog_tint = [0.46, 0.50, 0.56, 0.18]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
-fog_night_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.03, 0.035, 0.05, 0.9]
 
 [enhanced.cave.land_lighting]
 enable_bent = 0
@@ -1035,10 +1039,10 @@ grade_extra = [0.0, 1.0, 1.0, 0.0]
 grade_chroma_knee = 0.55
 grade_chroma_slope = 0.0
 gloom_params = [0.16, 0.006, 0.52]
-fog_color = [0.035, 0.045, 0.060, 0.30]
-fog_params = [0.040, 0.012, 0.55, 0.16]
+fog_tint = [0.48, 0.52, 0.58, 0.22]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.15, 0.18, 0.28, 0.12]
-fog_night_color = [0.010, 0.014, 0.024, 0.25]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [kr.morning.land_lighting]
 enable_bent = 0
@@ -1121,10 +1125,10 @@ grade_extra = [0.0, 1.0, 1.0, 0.0]
 grade_chroma_knee = 0.55
 grade_chroma_slope = 0.0
 gloom_params = [0.14, 0.005, 0.50]
-fog_color = [0.040, 0.050, 0.065, 0.28]
-fog_params = [0.035, 0.010, 0.50, 0.14]
+fog_tint = [0.50, 0.52, 0.55, 0.20]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.14, 0.16, 0.24, 0.10]
-fog_night_color = [0.012, 0.016, 0.026, 0.22]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [kr.afternoon.land_lighting]
 enable_bent = 0
@@ -1207,10 +1211,10 @@ grade_extra = [0.0, 1.0, 1.0, 0.0]
 grade_chroma_knee = 0.55
 grade_chroma_slope = 0.0
 gloom_params = [0.24, 0.008, 0.52]
-fog_color = [0.020, 0.026, 0.040, 0.36]
-fog_params = [0.055, 0.020, 0.48, 0.22]
+fog_tint = [0.46, 0.50, 0.56, 0.24]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.08, 0.10, 0.18, 0.22]
-fog_night_color = [0.006, 0.008, 0.018, 0.55]
+fog_night_color = [0.045, 0.055, 0.085, 0.9]
 
 [kr.night.land_lighting]
 enable_bent = 0
@@ -1293,10 +1297,10 @@ grade_extra = [0.0, 1.0, 1.0, 0.0]
 grade_chroma_knee = 0.55
 grade_chroma_slope = 0.0
 gloom_params = [0.30, 0.010, 0.58]
-fog_color = [0.018, 0.022, 0.034, 0.34]
-fog_params = [0.040, 0.026, 0.42, 0.20]
+fog_tint = [0.46, 0.50, 0.56, 0.18]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.06, 0.08, 0.14, 0.28]
-fog_night_color = [0.004, 0.006, 0.014, 0.60]
+fog_night_color = [0.03, 0.035, 0.05, 0.9]
 
 [kr.cave.land_lighting]
 enable_bent = 0
@@ -1417,10 +1421,10 @@ grade_extra = [0.21, 1.12, 1.10, 0.75]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.16, 0.006, 0.52]
-fog_color = [0.035, 0.045, 0.060, 0.30]
-fog_params = [0.040, 0.012, 0.55, 0.16]
+fog_tint = [0.44, 0.48, 0.55, 0.20]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.15, 0.18, 0.28, 0.12]
-fog_night_color = [0.010, 0.014, 0.024, 0.25]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [painterly.morning.land_lighting]
 enable_bent = 1
@@ -1503,10 +1507,10 @@ grade_extra = [0.25, 1.14, 1.12, 0.80]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.14, 0.005, 0.50]
-fog_color = [0.040, 0.050, 0.065, 0.28]
-fog_params = [0.035, 0.010, 0.50, 0.14]
+fog_tint = [0.47, 0.49, 0.52, 0.18]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.14, 0.16, 0.24, 0.10]
-fog_night_color = [0.012, 0.016, 0.026, 0.22]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [painterly.afternoon.land_lighting]
 enable_bent = 1
@@ -1589,10 +1593,10 @@ grade_extra = [0.22, 1.02, 1.04, 0.65]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.24, 0.008, 0.52]
-fog_color = [0.020, 0.026, 0.040, 0.36]
-fog_params = [0.055, 0.020, 0.48, 0.22]
+fog_tint = [0.46, 0.50, 0.56, 0.26]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.08, 0.10, 0.18, 0.22]
-fog_night_color = [0.006, 0.008, 0.018, 0.55]
+fog_night_color = [0.045, 0.055, 0.085, 0.9]
 
 [painterly.night.land_lighting]
 enable_bent = 1
@@ -1675,10 +1679,10 @@ grade_extra = [0.22, 1.02, 1.05, 0.65]
 grade_chroma_knee = 1.0
 grade_chroma_slope = 1.0
 gloom_params = [0.30, 0.010, 0.58]
-fog_color = [0.018, 0.022, 0.034, 0.34]
-fog_params = [0.040, 0.026, 0.42, 0.20]
+fog_tint = [0.46, 0.50, 0.56, 0.20]
+fog_clouds = [10.0, 0.5, 120.0, 0.5]
 gloom_color = [0.06, 0.08, 0.14, 0.28]
-fog_night_color = [0.004, 0.006, 0.014, 0.60]
+fog_night_color = [0.03, 0.035, 0.05, 0.9]
 
 [painterly.cave.land_lighting]
 enable_bent = 1

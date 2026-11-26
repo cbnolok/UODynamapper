@@ -47,7 +47,7 @@ Drive the player with app-only keys through the control socket: `KeyW` north (y 
 
 ## Regression harness
 
-[`scripts/visual_harness.py`](scripts/visual_harness.py) captures the fixed views of [`fixtures.toml`](fixtures.toml) with a given binary and compares them with a baseline. It applies the preview rules itself: Desktop 4 through the exact-PID preview helper, private copies of the settings and cache, the shared preview lock held per launch, positioning and capture through the control socket, and a discarded first capture after a launch and after every runtime switch. It also freezes water, lava and KR fog drift, and repeats each capture until two consecutive frames agree, at most four times. Run it with `python3 -I -B` from any checkout. `--tree` names the checkout whose `dynamapper/assets` the runs copy; the default is the script's own.
+[`scripts/visual_harness.py`](scripts/visual_harness.py) captures the fixed views of [`fixtures.toml`](fixtures.toml) with a given binary and compares them with a baseline. It applies the preview rules itself: Desktop 4 through the exact-PID preview helper, private copies of the settings and cache, the shared preview lock held per launch, positioning and capture through the control socket, and a discarded first capture after a launch and after every runtime switch. It also freezes water, lava and fog drift, and repeats each capture until two consecutive frames agree, at most four times. Run it with `python3 -I -B` from any checkout. `--tree` names the checkout whose `dynamapper/assets` the runs copy; the default is the script's own.
 
 For every visual change:
 

@@ -103,6 +103,13 @@ The audit itself changed nothing. These are the decisions taken on it and what t
 - **Shipped `land.toml`:** it now equals the factory presets, and a unit test keeps it so
   (`bundled_land_settings_match_the_factory_presets`). A user's cached copy is still read over it leniently, and
   is never replaced by it.
+- **Fog replaced (2026-11-26):** the screen-space fog measured here (a radial vignette from the screen's centre, a
+  band at the bottom and a cloud veil glued to the screen) whitened the frame's corners. The drifting fog took its
+  place: map-anchored cloud banks carried by the wind ([STYLE_RULES](../dev_wiki/rendering/STYLE_RULES.md)).
+  `fog_color` became `fog_tint` (rgb and the amount) and `fog_params` became `fog_clouds` (scale in tiles, coverage,
+  wind bearing, drift speed); `enable_fog` and `fog_night_color` stay. The `fog_*` rows, GUI finding 11 and the fog
+  tooltip drafts below describe the old fog. A cached `land.toml` with the old keys loses its fog values with a
+  warning and takes the bundled ones; its Fog switch is kept.
 
 ### Strong values: six kept settings
 

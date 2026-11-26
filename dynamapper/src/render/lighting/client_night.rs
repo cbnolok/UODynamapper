@@ -246,8 +246,7 @@ pub fn client_night_dimming(lighting: &ClientNightLighting) -> f32 {
 /// Where the night map sits: xy = half the view in map repeats (x across, y down, both with the horizontal world
 /// units per pixel), zw = the focus along screen right and down in repeats, modulo one repeat so f32 keeps it exact.
 pub fn night_map_placement(focus_xz: DVec2, half_view_world: Vec2) -> Vec4 {
-    let along_right = (focus_xz.x - focus_xz.y) * std::f64::consts::FRAC_1_SQRT_2;
-    let along_down = (focus_xz.x + focus_xz.y) * std::f64::consts::FRAC_1_SQRT_2;
+    let DVec2 { x: along_right, y: along_down } = camera_plane_position(focus_xz);
     let repeat = NIGHT_MAP_WORLD_UNITS_PER_REPEAT;
     Vec4::new(
         (f64::from(half_view_world.x) / repeat) as f32,
@@ -255,6 +254,12 @@ pub fn night_map_placement(focus_xz: DVec2, half_view_world: Vec2) -> Vec4 {
         (along_right.rem_euclid(repeat) / repeat) as f32,
         (along_down.rem_euclid(repeat) / repeat) as f32,
     )
+}
+
+/// A map position (x = UO x, z = UO y, in world units) on the camera plane: x along screen right, y along screen down,
+/// in world units. Anything anchored there moves with the world as the camera pans.
+pub fn camera_plane_position(focus_xz: DVec2) -> DVec2 {
+    DVec2::new(focus_xz.x - focus_xz.y, focus_xz.x + focus_xz.y) * std::f64::consts::FRAC_1_SQRT_2
 }
 
 /// The night map coordinate of a screen uv (0..1, y down) for a placement from `night_map_placement`.
@@ -582,7 +587,7 @@ fn sys_sync_light_buffer_camera(
 }
 
 /// Half the world camera's view in world units: x across; y down with the horizontal units per pixel (square pixels).
-fn half_view_world(camera: &Camera, projection: &Projection, zoom: f32) -> Option<Vec2> {
+pub(crate) fn half_view_world(camera: &Camera, projection: &Projection, zoom: f32) -> Option<Vec2> {
     let physical = camera.physical_target_size()?.as_vec2();
     let half_width = match projection {
         Projection::Orthographic(orthographic) => orthographic.area.width() * 0.5,

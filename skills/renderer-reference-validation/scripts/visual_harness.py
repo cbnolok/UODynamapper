@@ -21,7 +21,7 @@ command reload_land, the state 60 idle seconds reach) and requires the same dige
 Every GUI run follows the repository's preview rules itself: KDE "Desktop 4" through the exact-PID preview helper,
 a private working directory with copies of the tree's assets/ and a fresh cache/, never the user's settings; the
 shared preview lock held around each launch only; the control socket for positioning and capture; the first capture
-of a launch and after every runtime switch discarded; water and lava animation and the KR fog's cloud drift frozen in
+of a launch and after every runtime switch discarded; water and lava animation and the fog's drift frozen in
 every preset; each capture repeated until two consecutive frames agree (else marked unstable).
 
 By default one launch per map runs fixture after fixture, switching the style, time of day, art and land sources,
@@ -519,12 +519,17 @@ def toml_set(text, section, key, value, required=True):
     return text, False
 
 
+# The preset keys whose fourth value is the fog's drift (tiles per second), which the harness sets to 0: `fog_clouds`,
+# and `fog_params` (its noise strength) in trees from before the drifting fog (2026-11-26).
+FOG_DRIFT_KEYS = ('fog_clouds', 'fog_params')
+
+
 def sections_of(text):
     return [match.group(1) for match in map(HEADER.match, text.split('\n')) if match]
 
 
 def freeze_presets(text):
-    """Freeze the time-driven terms of every preset slot: water and lava animation and the KR fog's cloud drift."""
+    """Freeze the time-driven terms of every preset slot: water and lava animation and the fog's drift."""
     data = tomllib.loads(text)
     for style in STYLES:
         for period in TIMES:
@@ -533,10 +538,11 @@ def freeze_presets(text):
                 continue
             if 'enable_water_animation' in slot.get('effects', {}):
                 text, _ = toml_set(text, f'{style}.{period}.effects', 'enable_water_animation', 0)
-            fog = slot.get('lighting', {}).get('fog_params')
-            if fog is not None:
-                frozen = [float(v) for v in fog[:3]] + [0.0]
-                text, _ = toml_set(text, f'{style}.{period}.lighting', 'fog_params', frozen)
+            for key in FOG_DRIFT_KEYS:
+                fog = slot.get('lighting', {}).get(key)
+                if fog is not None:
+                    frozen = [float(v) for v in fog[:3]] + [0.0]
+                    text, _ = toml_set(text, f'{style}.{period}.lighting', key, frozen)
     return text
 
 
@@ -547,9 +553,10 @@ def check_frozen(text):
             slot = data.get(style, {}).get(period, {})
             if slot.get('effects', {}).get('enable_water_animation', 0) != 0:
                 raise HarnessError(f'{style}.{period}: water animation is not frozen')
-            fog = slot.get('lighting', {}).get('fog_params')
-            if fog is not None and fog[3] != 0:
-                raise HarnessError(f'{style}.{period}: the fog cloud drift is not frozen')
+            for key in FOG_DRIFT_KEYS:
+                fog = slot.get('lighting', {}).get(key)
+                if fog is not None and fog[3] != 0:
+                    raise HarnessError(f'{style}.{period}: the fog drift is not frozen')
 
 
 class SettingsFiles:
@@ -892,8 +899,8 @@ class Launch:
             problems.append(f'preset {render.get("preset")} instead of {want}')
         if (render.get('effects') or {}).get('enable_water_animation') not in (0, None):
             problems.append('water animation is running')
-        if (render.get('fog_params') or [0] * 4)[3] != 0:
-            problems.append('the fog cloud drift is running')
+        if any((render.get(key) or [0] * 4)[3] != 0 for key in FOG_DRIFT_KEYS):
+            problems.append('the fog drift is running')
         if self.live:
             problems += self.verify_live(capture, status)
         size = (status.get('window') or {}).get('logical_size')
@@ -1167,7 +1174,7 @@ def record(args, label, captures, fixtures_path):
         'chunk_seconds': ctx.chunk_seconds if live else None, 'reload_land_check': ctx.reload_land_check,
         'selection': {'tier': args.tier, 'only': args.only, 'style': args.style, 'source': args.source,
                       'time': args.time},
-        'frozen': ['enable_water_animation = 0 in every preset slot', 'fog_params.w = 0 in every preset slot'],
+        'frozen': ['enable_water_animation = 0 in every preset slot', 'fog_clouds.w (drift) = 0 in every preset slot'],
         'launches': [], 'captures': {}, 'errors': [],
     }
     ctx.dir.mkdir(parents=True)
@@ -1908,8 +1915,8 @@ settings = { preset = { "effects.light_decal_intensity" = 0.5 } }
         frozen = freeze_presets(text)
         check_frozen(frozen)
         before, after = tomllib.loads(text), tomllib.loads(frozen)
-        kr_fog = before['kr']['night']['lighting']['fog_params']
-        self.assertEqual(after['kr']['night']['lighting']['fog_params'], kr_fog[:3] + [0.0])
+        kr_fog = before['kr']['night']['lighting']['fog_clouds']
+        self.assertEqual(after['kr']['night']['lighting']['fog_clouds'], kr_fog[:3] + [0.0])
         self.assertEqual(sections_of(text), sections_of(frozen))
 
     def test_run_settings(self):

@@ -47,7 +47,7 @@ unrelated calls.
 ## Fix / rule
 
 Add new data to that struct as a **full `vec4<f32>` slot**, exactly like the
-existing `grade_params` / `grade_extra` / `gloom_params` / `fog_params` blocks —
+existing `grade_params` / `grade_extra` / `gloom_params` / `fog_clouds` blocks —
 pack scalars into `.x/.y/.z/.w`. A trailing `vec4` composes fine; a trailing
 `scalar + vec3` does not. Applied fix: `kr_tonemap_params: vec4<f32>` (`.x` =
 gain), matching `Vec4` on the Rust side.
