@@ -17,6 +17,9 @@
 //! - `fields:<lambda>:<rms>`: the same pricing for the `fields` layout: a block takes the endpoint fields of an
 //!   earlier block of its mode (its indices picked again), or its index bits (its endpoints fitted again), so one of
 //!   its two records repeats in its mode's stream.
+//! - `lrdo:<lambda>:<rms>` and `lfields:<lambda>:<rms>`: `zrdo` and `fields` priced by a model of the LZ4 block
+//!   format instead (raw literals, a token and a 2-byte offset per match, 255-byte length extensions, no repeat
+//!   offsets, a 64 KiB window).
 //! - `coarse:<bits>:<rms>`: colour endpoint values rounded to multiples of `1 << bits`, indices picked again.
 //! - `flat:<rms>`: an opaque block within `rms` of its mean becomes one solid mode 6 block with zero indices.
 //!
@@ -67,10 +70,17 @@ const SSIM_MIN_SIDE: usize = 64;
 const SSIM_BACKGROUND: f32 = 128.0 / 255.0;
 /// The model of Zstd's costs the coder-aware steps price a block with, in bits: a literal byte of BC7 data (its
 /// Huffman code over nearly random bytes), the codes of a new match beyond its offset bits, and a match that only
-/// extends the one before it at the same offset.
+/// extends the one before it at the same offset (a repeat offset).
 const LITERAL_BYTE_BITS: f64 = 7.0;
 const MATCH_OVERHEAD_BITS: f64 = 12.0;
 const REPEAT_MATCH_BITS: f64 = 2.0;
+/// The LZ4 block format: literals are stored raw, a sequence's token is one byte, a match's offset two, a literal run
+/// or match longer than the token's 4 bits holds adds a byte per 255, and a match reaches back at most 65 535 bytes.
+const LZ4_BYTE_BITS: f64 = 8.0;
+const LZ4_TOKEN_BITS: f64 = 8.0;
+const LZ4_OFFSET_BITS: f64 = 16.0;
+const LZ4_LENGTH_BYTE_SPAN: f64 = 255.0;
+const LZ4_WINDOW_BYTES: usize = 65_535;
 /// Earlier blocks of one mode and mean kept per hash bucket by `zrdo`, and the bits of the mean per channel.
 const BUCKET_DEPTH: usize = 8;
 const BUCKET_MEAN_SHIFT: u32 = 4;
@@ -515,8 +525,8 @@ fn same_alpha(candidate: &[Rgba; TEXELS], reference: &[Rgba; TEXELS]) -> bool {
 enum Step {
     Rdo { lambda: f32, lookback: Option<usize> },
     Reuse { rms: f64, radius: i32 },
-    Zrdo { lambda: f64, rms: f64 },
-    Fields { lambda: f64, rms: f64 },
+    Zrdo { lambda: f64, rms: f64, coder: Coder },
+    Fields { lambda: f64, rms: f64, coder: Coder },
     Coarse { bits: u32, rms: f64 },
     Flat { rms: f64 },
 }
@@ -538,8 +548,10 @@ fn parse_variant(text: &str) -> eyre::Result<Vec<Step>> {
             },
             "reuse" => Step::Reuse { rms: number(1)?, radius: if parts.len() > 2 { number(2)? as i32 } else {
                 DEFAULT_REUSE_RADIUS } },
-            "zrdo" => Step::Zrdo { lambda: number(1)?, rms: number(2)? },
-            "fields" => Step::Fields { lambda: number(1)?, rms: number(2)? },
+            "zrdo" => Step::Zrdo { lambda: number(1)?, rms: number(2)?, coder: Coder::Zstd },
+            "lrdo" => Step::Zrdo { lambda: number(1)?, rms: number(2)?, coder: Coder::Lz4 },
+            "fields" => Step::Fields { lambda: number(1)?, rms: number(2)?, coder: Coder::Zstd },
+            "lfields" => Step::Fields { lambda: number(1)?, rms: number(2)?, coder: Coder::Lz4 },
             "coarse" => Step::Coarse { bits: number(1)? as u32, rms: number(2)? },
             "flat" => Step::Flat { rms: number(1)? },
             other => eyre::bail!("unknown step {other}"),
@@ -638,8 +650,8 @@ impl PageContext<'_> {
                     &params, |_| {}));
             }
             Step::Reuse { rms, radius } => self.reuse(blocks, rms, radius, stats),
-            Step::Zrdo { lambda, rms } => self.zrdo(blocks, lambda, rms, stats),
-            Step::Fields { lambda, rms } => self.fields(blocks, lambda, rms, stats),
+            Step::Zrdo { lambda, rms, coder } => self.zrdo(blocks, lambda, rms, coder.model(), stats),
+            Step::Fields { lambda, rms, coder } => self.fields(blocks, lambda, rms, coder.model(), stats),
             Step::Coarse { bits, rms } => {
                 for block in 0..blocks.len() {
                     let Some(mut fields) = Block::unpack(&blocks[block]).filter(|_| self.visible(block)) else { continue };
@@ -697,14 +709,18 @@ impl PageContext<'_> {
         }
     }
 
-    fn zrdo(&self, blocks: &mut [[u8; 16]], lambda: f64, limit: f64, stats: &mut StepStats) {
+    fn zrdo(&self, blocks: &mut [[u8; 16]], lambda: f64, limit: f64, model: CoderModel, stats: &mut StepStats) {
         let mut buckets: HashMap<u32, Vec<usize>> = HashMap::new();
         let mut temporal = Vec::new();
         let mut last_offset = 0usize;
         let mut previous_matched = false;
-        let literal_bits = BLOCK_BYTES as f64 * LITERAL_BYTE_BITS;
+        let literal_bits = BLOCK_BYTES as f64 * model.literal_byte;
         let match_bits = |offset: usize, extends: bool| -> f64 {
-            if extends { REPEAT_MATCH_BITS } else { MATCH_OVERHEAD_BITS + ((offset * BLOCK_BYTES) as f64).log2() }
+            if extends {
+                model.extend
+            } else {
+                model.match_overhead + model.offset_log_weight * ((offset * BLOCK_BYTES) as f64).log2()
+            }
         };
         for block in 0..blocks.len() {
             if self.visible(block) {
@@ -724,6 +740,7 @@ impl PageContext<'_> {
                 if let Some(bucket) = buckets.get(&key) {
                     candidates.extend(bucket.iter().map(|&candidate| (candidate, Action::Other)));
                 }
+                candidates.retain(|&(candidate, _)| (block - candidate) * BLOCK_BYTES <= model.window);
                 let (own_error, _) = visible_error(&decode_block(&blocks[block]), &self.pixels[block]);
                 // The block as it is: a literal, or a match when an earlier block is the same.
                 let own_match = candidates.iter().find(|&&(candidate, _)| blocks[candidate] == blocks[block]);
@@ -772,7 +789,7 @@ impl PageContext<'_> {
         }
     }
 
-    fn fields(&self, blocks: &mut [[u8; 16]], lambda: f64, limit: f64, stats: &mut StepStats) {
+    fn fields(&self, blocks: &mut [[u8; 16]], lambda: f64, limit: f64, model: CoderModel, stats: &mut StepStats) {
         // The last block of each mode (and mode 4 index selector) in raster order: the previous record of its stream.
         let mut previous: HashMap<(u8, u8), usize> = HashMap::new();
         let mut temporal = Vec::new();
@@ -793,8 +810,10 @@ impl PageContext<'_> {
             }
             self.temporal(block, 0, &mut temporal);
             candidates.extend(temporal.iter().map(|&(candidate, _)| candidate));
+            // A record's stream holds at most one record a block, so a block's distance bounds the record's.
+            candidates.retain(|&candidate| (block - candidate) * (field_bits.div_ceil(8) as usize) <= model.window);
             let (own_error, _) = visible_error(&own.decode(), &self.pixels[block]);
-            let literal = |bits: u32| f64::from(bits.div_ceil(8)) * LITERAL_BYTE_BITS;
+            let literal = |bits: u32| f64::from(bits.div_ceil(8)) * model.literal_byte;
             let mut best = (f64::from(own_error) + lambda * (literal(field_bits) + literal(index_bits)), None::<Block>);
             for &candidate in &candidates {
                 let Some(other) = Block::unpack(&blocks[candidate]) else { continue };
@@ -812,8 +831,8 @@ impl PageContext<'_> {
                 indices.fit_endpoints(&self.pixels[block]);
                 let indices_kept = other.rotation == own.rotation && indices.colour_index == other.colour_index
                     && indices.alpha_index == other.alpha_index;
-                for (trial, bits) in [(endpoints, MATCH_OVERHEAD_BITS + literal(index_bits)),
-                    (indices, literal(field_bits) + if indices_kept { MATCH_OVERHEAD_BITS } else { literal(index_bits) })] {
+                for (trial, bits) in [(endpoints, model.record_match + literal(index_bits)),
+                    (indices, literal(field_bits) + if indices_kept { model.record_match } else { literal(index_bits) })] {
                     let Some(error) = self.accept(block, &trial.decode(), limit) else { continue };
                     let cost = f64::from(error) + lambda * bits;
                     if cost < best.0 {
@@ -827,6 +846,43 @@ impl PageContext<'_> {
             }
             let mode = Block::unpack(&blocks[block]).map_or(stream, |fields| (fields.mode, fields.index_mode));
             previous.insert(mode, block);
+        }
+    }
+}
+
+/// The coder a coder-aware step prices its matches for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Coder {
+    Zstd,
+    Lz4,
+}
+
+/// A coder's costs in bits, as the coder-aware steps price a block or a `fields` record.
+#[derive(Debug, Clone, Copy)]
+struct CoderModel {
+    literal_byte: f64,
+    /// A new match: its fixed codes, plus this weight times log2 of its offset in bytes.
+    match_overhead: f64,
+    offset_log_weight: f64,
+    /// A block's worth of a match that extends the one before it at the same offset.
+    extend: f64,
+    /// A `fields` record taken whole from an earlier record of its stream.
+    record_match: f64,
+    /// The farthest a match reaches back, in bytes.
+    window: usize,
+}
+
+impl Coder {
+    fn model(self) -> CoderModel {
+        match self {
+            Self::Zstd => CoderModel { literal_byte: LITERAL_BYTE_BITS, match_overhead: MATCH_OVERHEAD_BITS,
+                offset_log_weight: 1.0, extend: REPEAT_MATCH_BITS, record_match: MATCH_OVERHEAD_BITS, window: usize::MAX },
+            // A literal run's length bytes add one per 255 literals; a new match is a token and an offset (the block's
+            // 16 bytes fit the token's match length), and extending one adds one length byte per 255 bytes.
+            Self::Lz4 => CoderModel { literal_byte: LZ4_BYTE_BITS + LZ4_BYTE_BITS / LZ4_LENGTH_BYTE_SPAN,
+                match_overhead: LZ4_TOKEN_BITS + LZ4_OFFSET_BITS, offset_log_weight: 0.0,
+                extend: BLOCK_BYTES as f64 * LZ4_BYTE_BITS / LZ4_LENGTH_BYTE_SPAN,
+                record_match: LZ4_TOKEN_BITS + LZ4_OFFSET_BITS, window: LZ4_WINDOW_BYTES },
         }
     }
 }
