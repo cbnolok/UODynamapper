@@ -11,7 +11,8 @@
 //   bit  7:   is_wet flag (tile has IsWet in tiledata.mul)
 // ============================================================================
 
-import package::shaders::world::land::land_bindings::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM};
+import package::shaders::world::land::land_bindings::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM,
+  LAND_PAGE_LOOKUP_TILE_CAPACITY, LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS};
 import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
 // A layer index no atlas has: the tile falls outside the paged region.
@@ -119,6 +120,15 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   }
 
   return TileUniform(tile_height, tex_size, texture_payload, 0u, vec2<u32>(0u), vec2<u32>(0u), is_wet, terrain_flags, texture_payload, 0.0);
+}
+
+// The mean colours of a Classic texmap's sides (texture_size 4, `payload` its texmap id), each packed as RGBA8 for
+// unpack4x8unorm: low u, high u, low v, high v (land.rs `cc_texmap_edge_colors`). Zero for any other payload.
+fn atlas_read_cc_edge_colors(payload: u32) -> vec4<u32> {
+  if (payload >= LAND_PAGE_LOOKUP_TILE_CAPACITY) { return vec4<u32>(0u); }
+  let lookup_dims = textureDimensions(land_page_lookup);
+  let index = LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS * LAND_PAGE_LOOKUP_TILE_CAPACITY + payload;
+  return textureLoad(land_page_lookup, vec2<i32>(i32(index % lookup_dims.x), i32(index / lookup_dims.x)), 0);
 }
 
 // Convenience wrapper: just return the world-space Y height for a tile.

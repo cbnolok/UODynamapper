@@ -602,7 +602,9 @@ pub fn sys_render_preferences_dialog(
                                 ui.separator();
                                 ui.label("Smooth terrain transitions");
                                 if ui.checkbox(&mut state.cc_terrain_transitions, "Classic (CC)")
-                                    .on_hover_text("Blend adjacent dry Classic terrain textures. Water keeps its authored edges.")
+                                    .on_hover_text("Blend a Classic terrain texture into its neighbour where their edges meet in a visible seam, through a soft, \
+                                        irregular boundary. Matching edges (hand-drawn transitions, a texture's variants), floors and paving, \
+                                        water, caves and land without a texture keep their authored edges.")
                                     .changed() {
                                     settings.graphics.cc_terrain_transitions = state.cc_terrain_transitions;
                                 }

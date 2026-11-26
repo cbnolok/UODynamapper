@@ -93,6 +93,8 @@ struct LandTextureVariationUniform {
 // Rows per role of land_page_lookup: a row per land id, then an area row per
 // land id (LAND_PAGE_LOOKUP_TILE_CAPACITY in render/assets/land.rs).
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 32768u;
+// The role whose row holds a Classic texmap's edge colours (LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS in land.rs).
+const LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS: u32 = 7u;
 @group(3) @binding(104) var<uniform> ATLAS:        AtlasParams;
 @group(3) @binding(105) var<uniform> scene:        SceneUniform;
 @group(3) @binding(106) var<uniform> effects:      LandEffectsUniform;

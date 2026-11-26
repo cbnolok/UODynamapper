@@ -88,6 +88,8 @@ fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
     if (x >= 40 && x <= 41 && y >= 40 && y <= 41) {
         return cc_fixture_tile(u32(1 + x - 40 + (y - 40) * 2), 0u, 0u, 4u);
     }
+    // A built surface (atlas_read_cc_edge_colors) beside the corner: it does not blend.
+    if (x == 39 && y == 40) { var tile = cc_fixture_tile(2u, 0u, 0u, 4u); tile.texture_payload = 7u; return tile; }
     if (y == 50) {
         if (x == 50 || x == 60 || x == 70 || x == 80 || x == 90 || x == 100 || x == 110) { return cc_fixture_tile(1u, 0u, 0u, 4u); }
         if (x == 51) { return cc_fixture_tile(2u, 1u, 0u, 4u); }
@@ -95,7 +97,8 @@ fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
         if (x == 71) { var tile = cc_fixture_tile(2u, 0u, 0u, 4u); tile.texture_extent = vec2<u32>(0u); return tile; }
         if (x == 81) { return cc_fixture_tile(2u, 0u, 0u, 2u); }
         if (x == 91) { var tile = cc_fixture_tile(1u, 0u, 0u, 4u); tile.texture_payload = 99u; return tile; }
-        if (x == 101) { var tile = cc_fixture_tile(2u, 0u, 0u, 4u); tile.texture_payload = 1u; return tile; }
+        // Another texmap whose facing edge matches the owner's (atlas_read_cc_edge_colors): no seam to blend.
+        if (x == 101) { var tile = cc_fixture_tile(2u, 0u, 0u, 4u); tile.texture_payload = 6u; return tile; }
         if (x == 111) { return cc_fixture_tile(5u, 0u, 0u, 4u); }
     }
     if (x == 10 && y == 10) { return bank_fixture_tile(10u, 3.0, 4u, 2u); }
@@ -105,7 +108,18 @@ fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
     if ((x == 9 && y == 10) || (x == 19 && y == 20)) { return bank_fixture_tile(4u, 2.0, 0u, 2u); }
     return bank_fixture_tile(0u, 0.0, 0u, 3u);
 }
+// Edges 40 levels of red apart per texmap, beyond the seam threshold; texmap 6's match texmap 1's. Every texmap but
+// the built surface 7 may blend (CC_TRANSITION_BLENDS).
+fn atlas_read_cc_edge_colors(payload: u32) -> vec4<u32> {
+    var colors = vec4<u32>(select(payload, 1u, payload == 6u) * 40u);
+    colors.x |= select(0xFF000000u, 0u, payload == 7u);
+    return colors;
+}
 "#, "shaders/world/land/atlas.wesl"));
+        // A fixed boundary noise puts every CC boundary on the shared edge, centred between the cells.
+        shaders.set_shader(shader_id(19), Shader::from_wesl(r#"
+fn noise_2d(p: vec2<f32>) -> f32 { return 0.5; }
+"#, "shaders/world/land/noise.wesl"));
         shaders.set_shader(shader_id(9), Shader::from_wesl(r#"
 fn ec_coverage_params(payload: u32) -> vec4<u32> {
     if (payload == 10u || payload == 11u) { return vec4<u32>(500u, 0u, 0u, 2u); }
@@ -289,6 +303,7 @@ fn main() {
     samples[83] = cc_color(vec2<i32>(41, 40), vec2<f32>(0.0, 0.5));
     samples[84] = cc_color(vec2<i32>(40, 40), vec2<f32>(1.0));
     samples[85] = cc_color(vec2<i32>(41, 41), vec2<f32>(0.0));
+    // A quarter of a tile in from the seam the boundary's ramp has not begun: the owner's texture alone.
     samples[86] = cc_color(vec2<i32>(40, 40), vec2<f32>(0.75, 0.5));
     samples[87] = cc_color(vec2<i32>(50, 50), vec2<f32>(1.0, 0.5));
     samples[88] = cc_color(vec2<i32>(60, 50), vec2<f32>(1.0, 0.5));
@@ -298,12 +313,14 @@ fn main() {
     samples[92] = cc_color(vec2<i32>(100, 50), vec2<f32>(1.0, 0.5));
     samples[93] = cc_color(vec2<i32>(51, 50), vec2<f32>(0.0, 0.5));
     samples[94] = cc_color(vec2<i32>(81, 50), vec2<f32>(0.0, 0.5));
+    // The built surface keeps its edge.
     samples[95] = cc_color(vec2<i32>(40, 40), vec2<f32>(0.0, 0.5));
     samples[96] = cc_color(vec2<i32>(41, 40), vec2<f32>(0.0, 1.0));
     samples[97] = cc_color(vec2<i32>(40, 41), vec2<f32>(1.0, 0.0));
-    // UV-coded artwork catches sampling the neighbor's opposite edge.
-    samples[98] = cc_color(vec2<i32>(110, 50), vec2<f32>(1.0, 0.5));
-    samples[99] = cc_color(vec2<i32>(111, 50), vec2<f32>(0.0, 0.5));
+    // Inside the boundary's ramp, 0.06 tile either side of the edge, at weight 0.28175 for the far cell: the UV-coded
+    // artwork shows the neighbour's texels mirrored across the edge, its own side's, not clamped nor wrapped.
+    samples[98] = cc_color(vec2<i32>(110, 50), vec2<f32>(0.94, 0.5));
+    samples[99] = cc_color(vec2<i32>(111, 50), vec2<f32>(0.06, 0.5));
     // Item water uses its own map indices/UV sets, not a terrain payload.
     // Distinct bump/reflection alpha catches using surface alpha as coverage.
     for (var index = 0u; index < 11u; index++) {
@@ -526,12 +543,12 @@ fn main() {
             [0.0; 4], [0.75, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0, 1.0], [0.5, 0.5, 0.0, 1.0], [0.5, 0.5, 0.0, 1.0],
-            [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0], [0.84375, 0.15625, 0.0, 1.0],
+            [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0], [1.0, 0.0, 0.0, 1.0],
             [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0], [0.5, 0.5, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
             [0.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
             [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0],
-            [0.5, 0.25, 0.0, 1.0], [0.5, 0.25, 0.0, 1.0]];
+            [0.735155, 0.140875, 0.0, 1.0], [0.324845, 0.359125, 0.0, 1.0]];
         let water_base = |surface: usize, alpha: f32| [normalized[surface][0] * 0.5,
             normalized[surface][1] * 0.5, normalized[surface][2] * 0.5, alpha];
         let base = water_base(0, normalized[1][3]);

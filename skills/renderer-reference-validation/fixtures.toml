@@ -376,6 +376,35 @@ y = 488
 z = -5
 
 [[fixture]]
+name = "britain-cc-terrain-transitions-paving"
+guards = """Classic terrain transitions on, Classic land: Britain's cobblestones, flagstones and brick borders stay \
+clean, the brick and flagstone patterns hard, and the dirt and grass under the keep's wall fade into each other; \
+before 2026-11-26 every texture change smeared the neighbour's edge texels across the tile, dirtying roads and \
+paving."""
+tier = "quick"
+tags = ["terrain", "cc-terrain-transitions", "britain"]
+map = 1
+x = 1450
+y = 1650
+z = 0
+sources = ["cc/cc"]
+settings = { graphics = { cc_terrain_transitions = true } }
+
+[[fixture]]
+name = "britain-cc-terrain-transitions-dirt-grass"
+guards = """Classic terrain transitions on, Classic land: the dirt road and grass south of Britain meet through a \
+soft, noise-broken boundary where their edges differ and keep the hand-drawn transition tiles' own edges, with no streaks \
+inside the road (2026-11-26)."""
+tier = "full"
+tags = ["terrain", "cc-terrain-transitions", "britain"]
+map = 1
+x = 1370
+y = 1750
+z = 0
+sources = ["cc/cc"]
+settings = { graphics = { cc_terrain_transitions = true } }
+
+[[fixture]]
 name = "minoc-wide-water-statics"
 guards = "At overview zoom, Minoc's water statics keep their liquid material and foam coverage above the seabed and below bridges."
 tier = "quick"

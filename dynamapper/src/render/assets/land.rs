@@ -58,7 +58,8 @@ const CLASSIC_LAND_ART_TILE_CAPACITY: u32 = 16_384;
 const TILEMETA_FLAG_WET: u64 = 0x80;
 
 enum LandShaderAtlasSource<'a> {
-    Cc(&'a TexLandCcPackage),
+    /// The Classic texmaps, and what the Classic source holds for each land id.
+    Cc(&'a TexLandCcPackage, &'a cache::ClassicLandIndex),
     /// The EC-layout package of the land source, and the other one for the ids it lacks or a route names (routing.rs).
     /// `primary_ids` holds, per lookup row, the land id of `primary` the row is written from: the id a route names,
     /// else the row's own.
@@ -103,7 +104,7 @@ const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
 /// Lookup rows per role: a row per land id, then an area row per land id (`routing::LandRowMap`). Mirrored as
 /// `LAND_PAGE_LOOKUP_TILE_CAPACITY` in land/land_bindings.wesl and `LIQUID_LOOKUP_CAPACITY` in ec_liquid.wesl.
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = routing::LAND_ROUTE_ROW_COUNT as u32;
-const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 7;
+const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 8;
 const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
@@ -111,6 +112,16 @@ const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
 const LAND_PAGE_LOOKUP_ROLE_ANIMATED: u32 = 4;
 const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
 const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6;
+/// A Classic texmap's edge colours (`cc_texmap_edge_colors`), on the Classic atlas' rows: the Classic terrain
+/// transitions blend two texmaps only where their facing edges differ (land/cc_transitions.wesl). Mirrored as
+/// `LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS` in land/land_bindings.wesl.
+const LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS: u32 = 7;
+/// The strip of a Classic texmap's side averaged into its edge colour: this fraction of the texmap's width or height,
+/// at least one texel.
+const CC_TEXMAP_EDGE_STRIP_DIVISOR: usize = 8;
+/// Set in the alpha byte of a Classic texmap's first edge colour when the Classic transitions may blend it: not drawn
+/// for a built surface (`cache::is_built_land_name`). Read as `CC_TRANSITION_BLENDS` in land/cc_transitions.wesl.
+const CC_TEXMAP_BLENDS: u32 = 0xFF00_0000;
 /// `w` of a liquid-params entry: the scroll comes from the source water tweaks.
 const LIQUID_PARAMS_FROM_SOURCE: u32 = 1;
 
@@ -621,6 +632,41 @@ fn land_lookup_values_from_ec_slot(
         .unwrap_or([0, 0, 0, 0])
 }
 
+/// The mean colours of the sides of the `width`×`height` texmap at `x`,`y` of an RGBA8 atlas layer `layer_width` texels
+/// wide, each the mean of a strip 1/`CC_TEXMAP_EDGE_STRIP_DIVISOR` of the texmap deep and packed as RGBA8 (R in the
+/// low byte, alpha 0, the first's left for `CC_TEXMAP_BLENDS`), in the order low u, high u, low v, high v (`CC_EDGE_*`
+/// in land/cc_transitions.wesl). Classic texmaps tile per cell, u along world x and v along world y, so two cells meet
+/// along these strips: where their colours agree the art already joins (a material's variants, the hand-drawn
+/// transition texmaps), and the Classic transitions leave the edge alone.
+fn cc_texmap_edge_colors(layer: &[u8], layer_width: usize, x: usize, y: usize, width: usize, height: usize) -> [u32; 4] {
+    const RGBA: usize = 4;
+    let strip_x = (width / CC_TEXMAP_EDGE_STRIP_DIVISOR).max(1);
+    let strip_y = (height / CC_TEXMAP_EDGE_STRIP_DIVISOR).max(1);
+    let mean = |columns: std::ops::Range<usize>, rows: std::ops::Range<usize>| {
+        let mut sum = [0u64; 3];
+        let mut count = 0u64;
+        for row in rows {
+            for column in columns.clone() {
+                let texel = ((y + row) * layer_width + x + column) * RGBA;
+                for (channel, total) in sum.iter_mut().enumerate() {
+                    *total += u64::from(layer[texel + channel]);
+                }
+                count += 1;
+            }
+        }
+        sum.iter().enumerate().fold(0u32, |packed, (channel, total)| {
+            let value = (total + count / 2) / count.max(1);
+            packed | ((value as u32) << (8 * channel))
+        })
+    };
+    [
+        mean(0..strip_x, 0..height),
+        mean(width - strip_x..width, 0..height),
+        mean(0..width, 0..strip_y),
+        mean(0..width, height - strip_y..height),
+    ]
+}
+
 fn write_land_lookup_entry(
     bytes: &mut [u8],
     tile_id: u32,
@@ -739,7 +785,7 @@ fn create_land_shader_images(
     };
 
     let (primary_page_count, mut atlas_width, mut atlas_height) = match &source {
-        LandShaderAtlasSource::Cc(package) => (
+        LandShaderAtlasSource::Cc(package, _) => (
             package.pages().len().max(1) as u32,
             package.atlas_width().max(1),
             package.atlas_height().max(1),
@@ -771,12 +817,12 @@ fn create_land_shader_images(
                     && secondary.package.atlas_width() == primary.atlas_width()
                     && secondary.package.atlas_height() == primary.atlas_height()
             }),
-        LandShaderAtlasSource::Cc(_) => false,
+        LandShaderAtlasSource::Cc(..) => false,
     };
     let mut atlas_bytes = Vec::new();
     for page_index in 0..primary_page_count {
         let layer = match &source {
-            LandShaderAtlasSource::Cc(package) => decode_tex_land_cc_page_rgba(package, page_index)?,
+            LandShaderAtlasSource::Cc(package, _) => decode_tex_land_cc_page_rgba(package, page_index)?,
             LandShaderAtlasSource::Ec { primary, .. } if bc7_pages => read_tex_land_ec_page_bc7_layer(primary, page_index)?,
             LandShaderAtlasSource::Ec { primary, .. } => {
                 decode_tex_land_ec_page_rgba(primary, page_index, atlas_width, atlas_height)?
@@ -794,6 +840,24 @@ fn create_land_shader_images(
         atlas_bytes.extend_from_slice(&layer);
     }
 
+    // Read before the layers move into the atlas image.
+    let cc_edge_colors: Vec<(u32, [u32; 4])> = match &source {
+        LandShaderAtlasSource::Cc(package, classic) => {
+            let layer_bytes = (atlas_width * atlas_height) as usize * 4;
+            (0..routing::LAND_ROUTE_TILE_COUNT as u32).filter_map(|id| {
+                let slot = package.present_slot(id)?;
+                let layer = atlas_bytes.get(slot.page_index as usize * layer_bytes..)?;
+                let mut colors = cc_texmap_edge_colors(layer, atlas_width as usize, slot.x as usize, slot.y as usize,
+                    slot.width as usize, slot.height as usize);
+                if !classic.texmap_is_built(id) {
+                    colors[0] |= CC_TEXMAP_BLENDS;
+                }
+                Some((id, colors))
+            }).collect()
+        }
+        LandShaderAtlasSource::Ec { .. } => Vec::new(),
+    };
+
     let mut atlas = Image::new(
         Extent3d {
             width: atlas_width,
@@ -805,7 +869,7 @@ fn create_land_shader_images(
         match &source {
             LandShaderAtlasSource::Ec { .. } if bc7_pages => TextureFormat::Bc7RgbaUnorm,
             LandShaderAtlasSource::Ec { .. } => TextureFormat::Rgba8Unorm,
-            LandShaderAtlasSource::Cc(_) => TextureFormat::Rgba8UnormSrgb,
+            LandShaderAtlasSource::Cc(..) => TextureFormat::Rgba8UnormSrgb,
         },
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
@@ -823,13 +887,13 @@ fn create_land_shader_images(
     let mut lookup_bytes = vec![0u8; (lookup_width * lookup_height * 16) as usize];
     // The rows written: the Classic texmap ids, or the EC-layout land ids and the area rows resolved.
     let written_rows = match &source {
-        LandShaderAtlasSource::Cc(_) => routing::LAND_ROUTE_TILE_COUNT as u32,
+        LandShaderAtlasSource::Cc(..) => routing::LAND_ROUTE_TILE_COUNT as u32,
         LandShaderAtlasSource::Ec { primary_ids, .. } => primary_ids.len() as u32,
     };
 
     for tile_id in 0..written_rows.min(max_cc_tile_id) {
         match &source {
-            LandShaderAtlasSource::Cc(package) => {
+            LandShaderAtlasSource::Cc(package, _) => {
                 if let Some(slot) = package.present_slot(tile_id) {
                     write_land_lookup_entry(
                         &mut lookup_bytes,
@@ -854,6 +918,9 @@ fn create_land_shader_images(
                 }
             }
         };
+    }
+    for (id, colors) in cc_edge_colors {
+        write_land_lookup_entry(&mut lookup_bytes, id, LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS, colors);
     }
 
     let mut lookup = Image::new(
@@ -881,7 +948,7 @@ fn land_shader_source_from_cache<'a>(
     // The atlas holds the first loaded source of the preferred source's chain (routing.rs).
     match cache.routes().atlas() {
         crate::settings::LandTextureSource::Cc => {
-            cache.tex_land_cc.as_deref().map(LandShaderAtlasSource::Cc)
+            cache.tex_land_cc.as_deref().map(|package| LandShaderAtlasSource::Cc(package, cache.classic_land()))
         }
         crate::settings::LandTextureSource::Ec | crate::settings::LandTextureSource::Kr => {
             let primary = cache.atlas_enhanced_land()?.as_ref();
@@ -1687,6 +1754,49 @@ mod tests {
             let block = |tile: i32| tile.div_euclid(MAP_STORAGE_BLOCK_TILE_DIM as i32);
             assert!(tiles(GX).all(|tile| blocks_x.contains(&block(tile))), "scale {scale}");
             assert!(tiles(GY).all(|tile| blocks_y.contains(&block(tile))), "scale {scale}");
+        }
+    }
+
+    /// A Classic texmap's edge colours are the rounded means of its own strips along each side, low u, high u, low v,
+    /// high v, packed R, G, B from the low byte, whatever lies around it on the layer.
+    #[test]
+    fn cc_texmap_edge_colors_average_each_side_of_the_slot() {
+        const LAYER_WIDTH: usize = 20;
+        const LAYER_HEIGHT: usize = 20;
+        const X: usize = 2;
+        const Y: usize = 3;
+        const SIDE: usize = 16;
+        // Two texels deep, the strip of a 16-texel texmap.
+        const STRIP: usize = SIDE / CC_TEXMAP_EDGE_STRIP_DIVISOR;
+        const OUTSIDE: [u8; 4] = [255, 0, 255, 255];
+        let mut layer = [OUTSIDE; LAYER_WIDTH * LAYER_HEIGHT];
+        for row in 0..SIDE {
+            for column in 0..SIDE {
+                // Red rises along u, green along v, blue is constant, alpha is ignored.
+                let u = if column < STRIP { 10 } else if column >= SIDE - STRIP { 30 } else { 20 };
+                let v = if row < STRIP { 40 } else if row >= SIDE - STRIP { 60 } else { 50 };
+                layer[(Y + row) * LAYER_WIDTH + X + column] = [u, v, 7, 0];
+            }
+        }
+        let pack = |r: u32, g: u32, b: u32| r | (g << 8) | (b << 16);
+        // A side's strip crosses both strips of the other axis: (2 × 40 + 12 × 50 + 2 × 60) / 16 = 50.
+        assert_eq!(cc_texmap_edge_colors(layer.as_flattened(), LAYER_WIDTH, X, Y, SIDE, SIDE),
+            [pack(10, 50, 7), pack(30, 50, 7), pack(20, 40, 7), pack(20, 60, 7)]);
+        // A texmap narrower than the divisor still averages one texel per side.
+        assert_eq!(cc_texmap_edge_colors(layer.as_flattened(), LAYER_WIDTH, X, Y, 1, 1), [pack(10, 40, 7); 4]);
+    }
+
+    /// Floors, flagstones and brick are built surfaces, worn or not and with their names cut by the tiledata field;
+    /// grown land, cobblestone roads, and names only starting like a built one's, are not.
+    #[test]
+    fn built_land_names_are_floors_flagstones_and_brick() {
+        for name in ["brick", "decimated_flagstone", "wooden floor", "decimated_brick", "Marble", "sand stone", "stone",
+            "tile", "decimated_stone_pave"] {
+            assert!(cache::is_built_land_name(name), "{name}");
+        }
+        for name in ["grass", "dirt", "decimated_dirt", "rock", "sand", "stone moss", "NoName", "", "cobblestones",
+            "decimated_cobbleston", "til", "furrows", "embank"] {
+            assert!(!cache::is_built_land_name(name), "{name}");
         }
     }
 

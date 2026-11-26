@@ -150,6 +150,30 @@ pub struct LandTextureCache {
 pub struct ClassicLandIndex {
     texmap_ids: Vec<Option<u32>>,
     art: Vec<bool>,
+    /// Per texmap id, whether a land id drawing it is a built surface ([`is_built_land_name`]).
+    built_texmaps: Vec<bool>,
+}
+
+/// The tiledata names of the land built rather than grown: floors, flagstones, brick. Their texmaps lay out patterns
+/// (borders, tile grids, planks) that end exactly at the cell's edge, so the optional Classic terrain transitions leave
+/// them hard, as the Enhanced Client keeps its floors (docs/agent_notes/terrain_transition_controls.md). Cobblestone
+/// roads have no pattern to break and fade into the ground beside them.
+const BUILT_LAND_NAMES: &[&str] = &["brick", "flagstone", "marble", "planks", "sand stone", "stone", "stone_paver",
+    "tile", "wooden floor"];
+/// The prefix of the tiledata names of the same land drawn worn ("decimated_dirt").
+const DECIMATED_LAND_NAME_PREFIX: &str = "decimated_";
+/// The length of a tiledata name field: a name this long may have been cut short ("decimated_cobbleston").
+const TILEDATA_NAME_LENGTH: usize = 20;
+
+/// Whether the land tiledata name `name` is a built surface's ([`BUILT_LAND_NAMES`]), worn or not, its end cut by the
+/// name field or not.
+pub fn is_built_land_name(name: &str) -> bool {
+    let base = name.strip_prefix(DECIMATED_LAND_NAME_PREFIX).unwrap_or(name);
+    let cut = name.len() >= TILEDATA_NAME_LENGTH;
+    !base.is_empty() && BUILT_LAND_NAMES.iter().any(|built| {
+        built.eq_ignore_ascii_case(base) || (cut && built.len() > base.len()
+            && built.as_bytes()[..base.len()].eq_ignore_ascii_case(base.as_bytes()))
+    })
 }
 
 impl ClassicLandIndex {
@@ -158,14 +182,25 @@ impl ClassicLandIndex {
         tex_land_cc: Option<&udd_assets::tex_land_cc::TexLandCcPackage>,
         tex_art_cc: Option<&udd_assets::tex_art_cc::TexArtCcPackage>,
     ) -> Self {
-        let texmap_ids = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| {
+        let texmap_ids: Vec<Option<u32>> = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| {
             let texture_id = tilemeta.and_then(|meta| meta.land_tiles().get(id as usize))
                 .map(|tile| u32::from(tile.texture_id)).filter(|&texture_id| texture_id != 0).unwrap_or(id);
             tex_land_cc?.present_slot(texture_id).map(|_| texture_id)
         }).collect();
         let art = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| tex_art_cc.and_then(|art| art.present_slot(id))
             .is_some_and(|slot| slot.is_land() && slot.width != 0 && slot.height != 0)).collect();
-        Self { texmap_ids, art }
+        let mut built_texmaps = vec![false; LAND_ROUTE_TILE_COUNT];
+        for (tile, texmap_id) in tilemeta.map_or(&[][..], |meta| meta.land_tiles()).iter().zip(&texmap_ids) {
+            if let Some(built) = texmap_id.and_then(|id| built_texmaps.get_mut(id as usize)) {
+                *built |= is_built_land_name(tile.name_ascii());
+            }
+        }
+        Self { texmap_ids, art, built_texmaps }
+    }
+
+    /// Whether the texmap `texmap_id` is drawn for a built surface's land ([`is_built_land_name`]).
+    pub fn texmap_is_built(&self, texmap_id: u32) -> bool {
+        self.built_texmaps.get(texmap_id as usize).copied().unwrap_or(false)
     }
 
     /// The `tex_land_cc` slot id `land_id` draws, if it has a texmap.
