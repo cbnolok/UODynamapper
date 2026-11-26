@@ -8,7 +8,7 @@ use crate::prelude::*;
 use crate::world::coords::UOVec4;
 use crate::world::mobile_motion::{direction_of_step, step_secs, MobileMotion, Movement};
 use crate::world::statics::StaticsStoreRes;
-use crate::world::walk_z::{body_step, MapWalkCells};
+use crate::world::walk_z::{body_step, nearest_floor_z, MapWalkCells};
 use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -76,7 +76,7 @@ const MOUSE_RUN_SPEED_MULTIPLIER: f32 = 2.0;
 
 /// Whether the player is drawn as a body, and whether it rides: then it moves at the client's pace
 /// (`mobile_motion::step_secs`) times the movement speed, instead of the free speed of the marker.
-fn drawn_body(settings: &Settings) -> Option<bool> {
+pub(crate) fn drawn_body(settings: &Settings) -> Option<bool> {
     let world = &settings.core.world;
     (world.player_body != 0 && !world.hide_player).then_some(world.player_mount_body != 0)
 }
@@ -363,7 +363,7 @@ fn sys_player_move(
 
 /// The map data a drawn body walks on.
 #[derive(bevy::ecs::system::SystemParam)]
-struct GroundData<'w> {
+pub(crate) struct GroundData<'w> {
     map_planes: Option<Res<'w, MapPlanesRes>>,
     statics: Option<Res<'w, StaticsStoreRes>>,
     tilemeta: Option<Res<'w, TileMetaPackageRes>>,
@@ -387,18 +387,34 @@ impl GroundData<'_> {
 
     fn walk(&self, pos: UOVec4, dir: IVec2) -> Option<BodyStep> {
         let direction = direction_of_step(dir)?;
-        let map = usize::from(pos.m);
+        let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
+        self.with_cells(pos.m, |cells| match body_step(cells, x, y, z, direction) {
+            Some((to_x, to_y, to_z)) => BodyStep::Walk(IVec2::new(to_x - x, to_y - y), uo_z(to_z)),
+            None => BodyStep::Blocked,
+        })
+    }
+
+    /// The floor of the cell of `pos` nearest its z (`nearest_floor_z`): its land or the top of a static a walker
+    /// stands on. `None` without the map's data or with neither.
+    pub(crate) fn nearest_floor(&self, pos: UOVec4) -> Option<i8> {
+        let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
+        self.with_cells(pos.m, |cells| nearest_floor_z(cells, x, y, z).map(uo_z)).flatten()
+    }
+
+    /// `read` on the walk's cells of the map `map`; `None` without its data.
+    fn with_cells<T>(&self, map: u8, read: impl FnOnce(&mut MapWalkCells<'_>) -> T) -> Option<T> {
+        let map = usize::from(map);
         let plane = self.map_planes.as_ref()?.0.get(map)?.as_ref()?;
         let mut statics = self.statics.as_ref()?.0.get(map)?.as_ref()?.lock();
         let tilemeta = &self.tilemeta.as_ref()?.0;
         let mut cells = MapWalkCells::new(plane.package(), plane.size_cells(), &mut statics, tilemeta);
-        let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
-        Some(match body_step(&mut cells, x, y, z, direction) {
-            Some((to_x, to_y, to_z)) => BodyStep::Walk(IVec2::new(to_x - x, to_y - y),
-                to_z.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8),
-            None => BodyStep::Blocked,
-        })
+        Some(read(&mut cells))
     }
+}
+
+/// A walk's z as a UO position's.
+fn uo_z(z: i32) -> i8 {
+    z.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8
 }
 
 fn sys_smooth_player_transform(

@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 use bytemuck::{Pod, Zeroable};
+use crate::world::caves::CaveStatic;
 
 // The KR client's static shadow (research P3.4; art/client_shadow.wesl). `SpriteInstance::client_shadow_flags` bits,
 // kept in sync with client_shadow.wesl.
@@ -20,6 +21,17 @@ pub(crate) const STATIC_FLAG_CAVE: u32 = 1 << 12;
 /// darkened and partly desaturated (art/depth.wesl `cave_outside_tone`, caves.rs `CaveSurroundings::Dimmed`). Kept
 /// in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1 << 15;
+
+/// The cave bits of `is_wet_flags` of a static or a mobile the caves view as `view` (caves.rs), `in_player_cave`
+/// while the player is in a cave: lifted with a cave, or outside the player's and darkened. A mobile the player's cave
+/// would hide still draws, darkened, as it is never left out.
+pub(crate) fn cave_instance_flags(view: CaveStatic, in_player_cave: bool) -> u32 {
+    match view {
+        CaveStatic::Lifted => STATIC_FLAG_CAVE,
+        _ if in_player_cave => STATIC_FLAG_CAVE_OUTSIDE,
+        _ => 0,
+    }
+}
 /// `SpriteInstance::is_wet_flags` bit: the static is a wall with a floor laid on its top in the farther row, a Surface
 /// or Bridge in the cell west or north of it whose top is the wall's (`wall_cap_meets_floor_flag`): the perspective
 /// camera orders its cap in that row (art/depth.wesl `perspective_cap_row_shift`). Kept in sync with art/depth.wesl.

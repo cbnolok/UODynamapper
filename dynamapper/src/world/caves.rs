@@ -164,6 +164,10 @@ const BLOCK_CELLS: usize = (MAP_STORAGE_BLOCK_TILE_DIM * MAP_STORAGE_BLOCK_TILE_
 const CHUNK_CELLS: usize = (PACKAGE_CHUNK_CELL_DIM * PACKAGE_CHUNK_CELL_DIM) as usize;
 /// Surface statics no one stands on: roofs, and the impassable ones items are put on (tables, counters).
 const NOT_A_FLOOR_FLAGS: u64 = TaeFlag::Roof.bits() | TaeFlag::Impassable.bits();
+/// The tile flags and height a mobile is read with by the caves' static rules (`CavesRes::mobile_view`): no floor,
+/// no water, nothing the rules single out.
+const MOBILE_TILE_FLAGS: u64 = 0;
+const MOBILE_TILE_HEIGHT: i8 = 0;
 /// `ItemSurfaces` entry of a graphic that is no floor.
 const NOT_A_FLOOR: i16 = i16::MIN;
 
@@ -897,6 +901,18 @@ impl CavesRes {
         }
     }
 
+    /// What the caves do to a mobile standing at `z` on the cell (`x`, `y`): what they do to a static there that is
+    /// neither a floor nor water (`PlayerCave::static_view`, `CaveMap::static_view`). On a cave's floor the mobile is
+    /// `Lifted` with the floor it stands on: that floor is drawn in front of what is around the cave, and covered a
+    /// mobile left behind it whole.
+    pub fn mobile_view(&self, x: i32, y: i32, z: i8) -> CaveStatic {
+        match (self.player(), self.active()) {
+            (Some(cave), _) => cave.static_view(x, y, z, MOBILE_TILE_FLAGS, MOBILE_TILE_HEIGHT, || None),
+            (None, Some(caves)) => caves.static_view(x, y, z),
+            (None, None) => CaveStatic::Outside,
+        }
+    }
+
     /// How far the land takes the tone of what is outside the player's cave (`SceneUniform::land_outside_dimming`,
     /// `LAND_OUTSIDE_DIMMED`): all of it is outside the cave but for its mouth.
     pub fn land_outside_dimming(&self) -> f32 {
@@ -1436,6 +1452,28 @@ mod tests {
         caves.player = player_cave(&cells, 1, 1, 0, CaveSurroundings::Black).map(Arc::new);
         assert_eq!(light(&caves, 40, 5), None);
         assert_eq!(caves.land_outside_dimming(), 0.0);
+    }
+
+    /// A mobile on the floor of the player's cave, or of a cave drawn over the map, is lifted with it, as is one on its
+    /// exit at its level; one out on the open land, or over a cave, is not.
+    #[test]
+    fn a_mobile_on_a_caves_floor_is_lifted_with_it() {
+        let mut caves = CavesRes::default();
+        assert_eq!(caves.mobile_view(1, 1, 0), CaveStatic::Outside);
+        // A tunnel under rock over 0..3 by 0..3, opening east onto land at its floor's level over x = 3..6.
+        let cells = (0..3).fold(Cells::default().tunnel(0, 0, 3, 3, 0),
+            |cells, y| (3..6).fold(cells, |cells, x| cells.with(x, y, 0, &[])));
+        caves.player = player_cave(&cells, 1, 1, 0, CaveSurroundings::Dimmed).map(Arc::new);
+        assert_eq!(caves.mobile_view(1, 1, 0), CaveStatic::Lifted);
+        assert_eq!(caves.mobile_view(3, 1, 0), CaveStatic::Lifted, "on the exit");
+        assert_eq!(caves.mobile_view(5, 1, 0), CaveStatic::Outside, "out on the land");
+        assert_eq!(caves.mobile_view(1, 1, ROCK as i8), CaveStatic::Hidden, "on the hill over the cave");
+        caves.player = None;
+        let tunnel = Cells::default().tunnel(2, 3, 5, 4, 0).with(1, 3, 0, &[]);
+        caves.active = Some(Arc::new(CaveMap::new(&tunnel.shown(), &tunnel)));
+        assert_eq!(caves.mobile_view(3, 3, 0), CaveStatic::Lifted);
+        assert_eq!(caves.mobile_view(3, 3, ROCK as i8), CaveStatic::Hidden);
+        assert_eq!(caves.mobile_view(10, 10, 0), CaveStatic::Outside);
     }
 
     /// The player's cave found on the packages, from the Minoc mine's entrance, deeper in, out of it, and in the

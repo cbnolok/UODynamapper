@@ -10,9 +10,12 @@
 //!   style and time of day keeps its own, and closing this window saves the presets as closing Shading does.
 //! - The player's look: hidden, the marker cube, a human or a human on a horse (`core.world`, saved with the core
 //!   settings). The rider plays the mounted actions of `render::mobiles`.
-//! - The player's z: set live, it moves the player up or down on its cell as the altitude keys do, so the z-view cut
-//!   ("Show Only the Player's Floor", `world::z_view`) and the player's cave (`world::caves`) follow it. The next step
-//!   of a drawn body takes its z from the ground again. The position, z included, is saved with the session.
+//! - The player's z: set live, it moves the player up or down on its cell, so the z-view cut ("Show Only the Player's
+//!   Floor", `world::z_view`) and the player's cave (`world::caves`) follow it. A drawn body stands on the floor of its
+//!   cell nearest the z (`walk_z::nearest_floor_z`, as a step it cannot take puts it): set between two storeys, it
+//!   stood inside the upper one's floor, which the cut keeps up to `PLAYER_CEILING_MIN_RISE` over the player, and was
+//!   covered by it. The marker goes to the z itself, as the altitude keys move it. The next step of a drawn body takes
+//!   its z from the ground again. The position, z included, is saved with the session.
 
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleWorldScene};
 use crate::render::lighting::client_night::{
@@ -27,6 +30,7 @@ use crate::ui::dialogs::shading::{
     active_render_style, store_active_and_apply_render_preset, ShaderPresetPeriod, PRESET_PERIOD_BUTTONS,
 };
 use crate::world::player::Player;
+use crate::world::player_movement::{drawn_body, GroundData};
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
@@ -63,7 +67,7 @@ const LIGHT_LEVEL_TIP: &str =
 const SCENE_LIGHT_TIP: &str =
     "The share of the day's light the level leaves where no light source shines: (32 - level) / 32 in Classic, 1 - level / 31 in the other styles, before their night map tint.";
 const PLAYER_Z_TIP: &str =
-    "The player's z, from -128 to 127. With Show Only the Player's Floor, what is above it is hidden, and under the land it shows the cave the player stands in. Walking takes the z from the ground again.";
+    "The player's z, from -128 to 127. A body stands on the floor of its cell nearest it, the land or a floor; the marker goes to the z itself. With Show Only the Player's Floor, what is above it is hidden, and under the land it shows the cave the player stands in. Walking takes the z from the ground again.";
 const SHOW_ONLY_PLAYER_FLOOR_TIP: &str =
     "Hides the roofs and upper floors over the player, and the land over a cave the player is in, as the clients do. The same setting as in Options.";
 
@@ -171,6 +175,12 @@ fn clamp_player_z(z: i32) -> i8 {
     z.clamp(*PLAYER_Z_RANGE.start(), *PLAYER_Z_RANGE.end()) as i8
 }
 
+/// The z the slider's `z` puts the player at: a drawn body (`drawn_body`) on the floor nearest it, `nearest_floor`,
+/// or at it where the cell has none; the marker at it.
+fn standing_z(z: i8, drawn_body: bool, nearest_floor: impl FnOnce(i8) -> Option<i8>) -> i8 {
+    if drawn_body { nearest_floor(z).unwrap_or(z) } else { z }
+}
+
 /// Moves the player to `z` on its cell, as the altitude keys do: the position, and the transform's height at once.
 fn set_player_z(player: &mut Player, transform: &mut Transform, z: i8) {
     let Some(pos) = player.current_pos.as_mut() else {
@@ -189,6 +199,7 @@ fn sys_render_world_scene(
     mut shader_presets: ResMut<LandShaderModePresets>,
     mut settings: ResMut<Settings>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
+    ground: GroundData,
     mut was_open: Local<bool>,
 ) {
     // One more pass after closing, to save the presets.
@@ -304,6 +315,10 @@ fn sys_render_world_scene(
         settings.world_rendering.show_only_player_floor = show_only_player_floor;
     }
     if let (Some(z), Ok((mut player, mut transform))) = (z_choice, player_q.single_mut()) {
+        let z = match player.current_pos {
+            Some(pos) => standing_z(z, drawn_body(&settings).is_some(), |z| ground.nearest_floor(UOVec4 { z, ..pos })),
+            None => z,
+        };
         set_player_z(&mut player, &mut transform, z);
     }
     state.presets_edited |= presets_edited;
@@ -385,5 +400,20 @@ mod tests {
         set_player_z(&mut player, &mut transform, Z);
         assert!(player.current_pos == Some(UOVec4 { z: Z, ..start }));
         assert_eq!(transform.translation, UOVec4 { z: Z, ..start }.to_bevy_vec3_ignore_map());
+    }
+
+    /// Set between two storeys, a body stands on the nearer floor, not inside the upper one, whose floor the z-view
+    /// cut keeps over it; the marker stays at the z, and a body over a cell without floors too.
+    #[test]
+    fn a_body_stands_on_the_floor_nearest_the_slider() {
+        // A house's storeys at 30 and 50 over land at 7 (Britain, map 1, 1409,1596).
+        const FLOORS: [i8; 3] = [7, 30, 50];
+        let nearest = |z: i8| FLOORS.into_iter().min_by_key(|floor| (i32::from(z) - i32::from(*floor)).abs());
+        assert_eq!(standing_z(44, true, nearest), 50);
+        assert_eq!(standing_z(36, true, nearest), 30);
+        assert_eq!(standing_z(20, true, nearest), 30);
+        assert_eq!(standing_z(127, true, nearest), 50);
+        assert_eq!(standing_z(44, false, nearest), 44);
+        assert_eq!(standing_z(44, true, |_| None), 44);
     }
 }

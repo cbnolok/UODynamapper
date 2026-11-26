@@ -42,9 +42,9 @@ use super::static_source::{
 };
 use super::static_batches::{
     CLIENT_SHADOW_FLAG_CASTS, CLIENT_SHADOW_FLAG_WALL, GroundTileInstance, RenderStaticChunkBatches,
-    RenderStaticInstances, RenderStaticLandInstances, STATIC_FLAG_CAP_MEETS_FLOOR, STATIC_FLAG_CAVE,
-    STATIC_FLAG_CAVE_OUTSIDE, STATIC_FLAG_FLAT_ART, STATIC_HUE_FLAG_EC_SPRITE, SpriteInstance, StaticChunkBatch,
-    StaticChunkBatchKey, StaticPickTile, StaticRenderTile, static_hue_payload, static_sprite_opacity,
+    RenderStaticInstances, RenderStaticLandInstances, STATIC_FLAG_CAP_MEETS_FLOOR, STATIC_FLAG_FLAT_ART,
+    STATIC_HUE_FLAG_EC_SPRITE, SpriteInstance, StaticChunkBatch, StaticChunkBatchKey, StaticPickTile, StaticRenderTile,
+    cave_instance_flags, static_hue_payload, static_sprite_opacity,
 };
 use super::static_chunk_cache::{
     CachedStaticChunk, CachedStaticChunkStats, StaticAssembly, StaticCut, StaticAtlasRetrySignature, StaticChunkCacheConfig,
@@ -1032,11 +1032,7 @@ fn emit_static_render_tile(
         y: cell_y,
         buried_by_land_z,
     };
-    let cave_flags = match cave {
-        CaveStatic::Lifted => STATIC_FLAG_CAVE,
-        CaveStatic::Outside if player_cave.is_some() => STATIC_FLAG_CAVE_OUTSIDE,
-        _ => 0,
-    };
+    let cave_flags = cave_instance_flags(cave, player_cave.is_some());
     // A static drawn from the Kingdom Reborn packages renders wet by its Kingdom Reborn material.
     let renders_wet = visual_kind.map_or_else(|| static_tile_renders_wet(tilemeta, tilemeta_package,
         u32::from(render_tile.graphic), frame.art_source), |kind|

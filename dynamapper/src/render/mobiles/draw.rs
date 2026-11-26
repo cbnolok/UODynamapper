@@ -10,7 +10,8 @@ use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 use bytemuck::{Pod, Zeroable};
-use crate::render::statics::static_batches::{SpriteInstance, CLIENT_SHADOW_FLAG_CASTS, STATIC_HUE_FLAG_EC_SPRITE};
+use crate::render::statics::static_batches::{cave_instance_flags, SpriteInstance, CLIENT_SHADOW_FLAG_CASTS,
+    STATIC_HUE_FLAG_EC_SPRITE};
 use crate::render::lighting::static_lights::RenderStaticLightInstances;
 use crate::render::scene::SceneStateData;
 use crate::render::statics::statics_collect::static_art_billboard_local_light_corners;
@@ -18,6 +19,7 @@ use crate::render::statics::static_placement::{apply_cc_static_world_anchor_tran
     CC_TILE_PIXEL_WIDTH, CC_WORLD_Y_PER_PIXEL, STATIC_ART_Y_BIAS};
 use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
+use crate::world::caves::CavesRes;
 use crate::world::mobile_motion::MobileMotion;
 use crate::world::player::Player;
 use super::clips::{AnimSource, AtlasEntry, ClipKey, MobileClips};
@@ -291,7 +293,7 @@ pub fn sys_draw_mobiles(
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
     settings: Res<Settings>,
-    scene_state: Res<SceneStateData>,
+    (scene_state, caves): (Res<SceneStateData>, Res<CavesRes>),
     static_lights: Option<Res<RenderStaticLightInstances>>,
 ) {
     let (Some(mut draw_assets), Some(mut atlas)) = (draw_assets, atlas) else { return };
@@ -327,6 +329,7 @@ pub fn sys_draw_mobiles(
             clips.get_or_load(drawn.key, &packages.0);
         }
         let frames = layers_to_draw(frames, &mut shown, |key| clips.loading(key), |key| clips.resident(key).is_some());
+        let cave_flags = mobile_cave_flags(&caves, transform.translation);
         // The upscales of the nearest the player go first.
         let distance = player.map_or(0.0, |player| transform.translation.xz().distance(player.xz()));
         let mut switches = Vec::with_capacity(frames.len());
@@ -381,7 +384,7 @@ pub fn sys_draw_mobiles(
                 clip.touch_pages(&mut atlas, now);
                 // Both frames of an in-between come from the clip, so they share its mirroring.
                 instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
-                    drawn.tie_level, source, local_lights));
+                    drawn.tie_level, source, cave_flags, local_lights));
             }
         }
         shown.upscales = MobileUpscaleSwitches(switches);
@@ -410,8 +413,18 @@ pub fn sys_draw_mobiles(
     }
 }
 
-/// The instance of `frames` at a mobile's position `translation` (world x and z the UO x and y, world y its z), lit by
-/// `local_lights` of a map when given.
+/// The cave bits of the instances of a mobile at `translation` (`cave_instance_flags`), from the cell it is ordered
+/// from: on a cave's floor it is lifted with the floor, which would otherwise be drawn in front of it and cover it
+/// whole; outside the player's cave it is darkened with what is around it.
+fn mobile_cave_flags(caves: &CavesRes, translation: Vec3) -> u32 {
+    let (x, y) = mobile_depth_cell(translation.x, translation.z);
+    let z = crate::world::coords::scale_bevy_units_to_uo_z(translation.y).round() as i8;
+    cave_instance_flags(caves.mobile_view(x as i32, y as i32, z), caves.player().is_some())
+}
+
+/// The instance of `frames` at a mobile's position `translation` (world x and z the UO x and y, world y its z), with
+/// the cave bits `cave_flags` (`mobile_cave_flags`), lit by `local_lights` of a map when given.
+#[allow(clippy::too_many_arguments)]
 fn mobile_instance(
     translation: Vec3,
     frames: LayerFrames,
@@ -419,6 +432,7 @@ fn mobile_instance(
     offset_px: (f32, f32),
     tie_level: u32,
     source: AnimSource,
+    cave_flags: u32,
     local_lights: Option<(&RenderStaticLightInstances, u32)>,
 ) -> MobileSpriteInstance {
     let (world_x, world_z) = apply_cc_static_world_anchor_translation(translation.x, translation.z);
@@ -442,7 +456,7 @@ fn mobile_instance(
         tile_y,
         priority_z_units,
         sort_bias_ordinal: tie_level,
-        is_wet_flags: 0,
+        is_wet_flags: cave_flags,
         hue_id: 0,
         hue_flags: if source == AnimSource::Enhanced { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
         flat_quad: 0,
@@ -478,6 +492,22 @@ mod tests {
         assert_eq!(mobile_depth_cell(1473.75, 1721.25), (1474.0, 1722.0), "north-east");
         assert_eq!(mobile_depth_cell(1472.5, 1722.5), (1473.0, 1723.0), "south-west");
         assert_eq!(mobile_depth_cell(1472.75, 1721.75), (1473.0, 1722.0), "north-west, from the cell it leaves");
+    }
+
+    /// A mobile on a cave's floor is lifted with it, darkened outside the player's cave, and never left out; away from
+    /// the caves it keeps its depth. Without caves no cell is a cave's.
+    #[test]
+    fn a_mobile_takes_the_cave_bits_of_where_it_stands() {
+        use crate::render::statics::static_batches::{STATIC_FLAG_CAVE, STATIC_FLAG_CAVE_OUTSIDE};
+        use crate::world::caves::CaveStatic;
+        assert_eq!(cave_instance_flags(CaveStatic::Lifted, true), STATIC_FLAG_CAVE);
+        assert_eq!(cave_instance_flags(CaveStatic::Lifted, false), STATIC_FLAG_CAVE);
+        assert_eq!(cave_instance_flags(CaveStatic::Outside, true), STATIC_FLAG_CAVE_OUTSIDE);
+        assert_eq!(cave_instance_flags(CaveStatic::Hidden, true), STATIC_FLAG_CAVE_OUTSIDE);
+        assert_eq!(cave_instance_flags(CaveStatic::Outside, false), 0);
+        assert_eq!(cave_instance_flags(CaveStatic::Hidden, false), 0);
+        let on_floor = crate::world::coords::UOVec4::new(2565, 487, 0, 1).to_bevy_vec3_ignore_map();
+        assert_eq!(mobile_cave_flags(&CavesRes::default(), on_floor), 0);
     }
 
     #[test]
