@@ -1,7 +1,7 @@
 //! Lossless supercompression experiments on the BC7 pages of the mobile animation packages: how the pages would store
 //! and decode under other entropy coders, levels, chunkings and dictionaries, and after reversible transforms of the
-//! block stream. Measurement only: nothing here writes a package. The findings are in
-//! `docs/agent_notes/bc7_anim_supercompression.md`.
+//! block stream. Measurement only, except `condition`, which writes a lossy variant's pages into a copy of a package
+//! for in-game comparisons. The findings are in `docs/agent_notes/bc7_anim_supercompression.md`.
 //!
 //! - `audit <package> <cc|ec>`: the entries by kind and codec, the page extents and how many pages a clip reads.
 //! - `blocks <package> <cc|ec>`: BC7 modes, fully transparent blocks and their encodings, repeated blocks.
@@ -19,7 +19,10 @@
 //!   puts each size class on pages of its own, and a spec can name a method per class (see `study.rs`).
 //! - `lossy <rgba package> <bc7 package> <cc|ec> --variants ...`: lossy conditioning of the pages against the source
 //!   frames (the library RDO, coder-aware block and field reuse, temporal block reuse on an anchor-aligned layout,
-//!   endpoint coarsening, flat blocks), its size under each method and its quality (see `lossy.rs`).
+//!   endpoint coarsening, flat blocks), its size under each method and its quality (see `lossy.rs`); `--store` writes
+//!   each variant's pages, `--ladder-dir` the visual comparison videos.
+//! - `condition <bc7 package> <cc|ec> <pages> <output>`: the package with the pages of one variant of `lossy --store`,
+//!   stored with the package's codec (see `condition.rs`).
 //!
 //! A method is `stored` (the page as the package holds it, read through the container) or
 //! `<transform>+<backend>`, e.g. `none+zstd:9`, `split1+lz4hc:12`, `fields-shuf+zstd:19` (see `transforms.rs` and
@@ -27,7 +30,9 @@
 
 mod backends;
 mod bc7block;
+mod condition;
 mod corpus;
+mod ladder;
 mod lossy;
 mod repack;
 mod study;
@@ -84,6 +89,7 @@ enum Command {
     Bodies(study::BodiesArgs),
     Crowd(study::CrowdArgs),
     Lossy(lossy::LossyArgs),
+    Condition(condition::ConditionArgs),
 }
 
 #[derive(Args)]
@@ -263,6 +269,7 @@ fn main() -> eyre::Result<()> {
         Command::Bodies(args) => study::bodies(&args),
         Command::Crowd(args) => study::crowd_study(&args),
         Command::Lossy(args) => lossy::lossy(&args),
+        Command::Condition(args) => condition::condition(&args),
     }
 }
 

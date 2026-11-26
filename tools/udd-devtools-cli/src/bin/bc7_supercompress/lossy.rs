@@ -1,7 +1,9 @@
 //! Lossy conditioning of the BC7 pages, measured against the source frames: the packer's own pages in RGBA8888 (a
 //! `--raw` package packed beside the BC7 one, so both share one layout), encoded here with the converter's BC7
 //! encoder, then changed by a chain of steps that trade error for a smaller coded page. Measurement only: nothing
-//! here writes a package. The findings are in `docs/agent_notes/bc7_anim_supercompression.md`, "Lossy conditioning".
+//! here writes a package (`--store` writes the pages, which `condition` puts into a copy of the package, and
+//! `--ladder-dir` the visual comparison videos, see `ladder.rs`). The findings are in
+//! `docs/agent_notes/bc7_anim_supercompression.md`, "Lossy conditioning".
 //!
 //! A variant is a chain of steps joined by `+`, each applied to the result of the previous one; every step keeps the
 //! alpha of every texel exactly as the plain encode decodes it, except the library RDO, whose alpha changes are
@@ -44,6 +46,7 @@ use uot_texture_codecs::bc7::{Bc7EncoderBackend, ImageExtent, RawImageFormat, de
 
 use crate::bc7block::{Block, MODE_4, MODE_6, Rgba, TEXELS};
 use crate::corpus::{Anim, BLOCK_SIDE, Kind, Package};
+use crate::ladder;
 use crate::repack::{self, SlotFrame};
 use crate::study::{Classes, body_sides};
 use crate::transforms::BLOCK_BYTES;
@@ -93,6 +96,8 @@ const VIDEO_LOOPS: usize = 6;
 const VIDEO_GAP: usize = 4;
 const VIDEO_BACKGROUND: [u8; 3] = [96, 96, 96];
 const VIDEO_CRF: &str = "14";
+/// The font of the `--ladder-dir` videos' labels.
+const LABEL_FONT: &str = "/usr/share/fonts/TTF/DejaVuSansMono.ttf";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SlotLayout {
@@ -143,6 +148,21 @@ pub struct LossyArgs {
     /// The videos' nearest-neighbour upscale.
     #[arg(long, default_value_t = VIDEO_SCALE)]
     clip_scale: usize,
+    /// Writes the visual comparison of the `--clip` clips here: a ladder and a blink video per body (`ladder.rs`).
+    #[arg(long)]
+    ladder_dir: Option<PathBuf>,
+    /// The ladder videos' file name prefix and title, e.g. `classic` or `enhanced`.
+    #[arg(long, default_value = "")]
+    ladder_prefix: String,
+    /// A line under a version's name in the ladder videos, `version=text` (`source`, `plain` or a variant).
+    #[arg(long = "note")]
+    notes: Vec<String>,
+    /// A body's name in the ladder videos' titles and file names, `body=name`.
+    #[arg(long = "body-name")]
+    body_names: Vec<String>,
+    /// The ladder videos' label font.
+    #[arg(long, default_value = LABEL_FONT)]
+    font: PathBuf,
 }
 
 /// A frame's pixels on a page: one placement (Enhanced records of one source frame share it).
@@ -1306,8 +1326,21 @@ pub fn lossy(args: &LossyArgs) -> eyre::Result<()> {
     let totals = totals.into_inner().expect("lock");
     let names: Vec<String> = std::iter::once("plain".to_string()).chain(variants.iter().map(|(name, _)| name.clone())).collect();
     print_report(&names, &methods, &totals, &classes, measured_pages);
+    let kept = kept.into_inner().expect("lock");
     if let Some(dir) = &args.clip_dir {
-        render_clips(&frames, &kept.into_inner().expect("lock"), &names, dir, args.clip_scale)?;
+        render_clips(&frames, &kept, &names, dir, args.clip_scale)?;
+    }
+    if let Some(dir) = &args.ladder_dir {
+        let pairs = |list: &[String]| -> eyre::Result<HashMap<String, String>> {
+            list.iter().map(|pair| pair.split_once('=').map(|(key, text)| (key.to_string(), text.to_string()))
+                .ok_or_else(|| eyre::eyre!("{pair}: not key=text"))).collect()
+        };
+        let clips: Vec<(String, Vec<ladder::Frame>)> = frames.clips.iter().map(|(name, slots)| {
+            (name.clone(), slots.iter().filter_map(|slot| kept.get(slot)).map(|frame| ladder::Frame {
+                width: frame.width, height: frame.height, anchor: frame.anchor, versions: &frame.versions }).collect())
+        }).collect();
+        ladder::render(&clips, &ladder::Options { dir, prefix: &args.ladder_prefix, names: &names,
+            notes: &pairs(&args.notes)?, body_names: &pairs(&args.body_names)?, font: &args.font })?;
     }
     Ok(())
 }
