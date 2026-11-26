@@ -55,6 +55,16 @@ const ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX: f32 = 8.0;
 const ENHANCED_GROUND_STRIP_PX: f32 = CC_TILE_PIXEL_WIDTH;
 /// The Enhanced client's ground strips; below the last, it draws nothing (here the last strip takes it).
 const ENHANCED_GROUND_STRIPS: u32 = 4;
+/// ClassicUO's cut above a Classic frame's anchor, in screen pixels: none, the frame is cut at its anchor
+/// (`MobileView.DrawInternal`: the first slice is the frame's height plus its centre y less the mount offset, down to
+/// the mobile's position whatever the layer's offset).
+const CLASSIC_GROUND_CUT_ABOVE_ANCHOR_PX: f32 = 0.0;
+/// The height of the Classic ground strip, in screen pixels: one diagonal cell, the reach of the rows it is ordered
+/// over (the land of the next row covers what lies below, as in ClassicUO). Being the only strip, it also takes
+/// everything below it, as ClassicUO's second slice takes the rest of the frame.
+const CLASSIC_GROUND_STRIP_PX: f32 = CC_TILE_PIXEL_WIDTH;
+/// ClassicUO's slices below the cut: one, at the mobile's depth + 2, two rows (one cell nearer in each map axis).
+const CLASSIC_GROUND_STRIPS: u32 = 1;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
@@ -76,7 +86,10 @@ pub struct MobileSpriteInstance {
 /// frame down to 8 pixels above its anchor as one card at the mobile, then 4 strips, each one diagonal cell tall and
 /// moved one cell nearer in x and y, and nothing below. Each strip so lies over the land of the rows it covers, which
 /// drawn flat behind the mobile would otherwise cover its legs: the Enhanced frames reach well below their anchor (a
-/// ridden horse's hooves, after the layer offsets point up). The Classic frames keep one card at the anchor.
+/// ridden horse's hooves, after the layer offsets point up). ClassicUO draws a Classic frame in two slices
+/// (`MobileView.DrawInternal`): down to the anchor at the mobile, the rest at its depth + 2, one cell nearer in x and
+/// y. A Classic frame reaching below and beside its anchor, as the ophidian's tail (body 86), so lies
+/// over the land of the next row instead of under it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct MobileGroundStrips {
@@ -99,7 +112,13 @@ impl MobileGroundStrips {
                 strips: ENHANCED_GROUND_STRIPS,
                 _pad: 0,
             },
-            AnimSource::Classic => Self::default(),
+            AnimSource::Classic => Self {
+                cut_local_y: (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX + CLASSIC_GROUND_CUT_ABOVE_ANCHOR_PX)
+                    * CC_WORLD_Y_PER_PIXEL,
+                strip_height: CLASSIC_GROUND_STRIP_PX * CC_WORLD_Y_PER_PIXEL,
+                strips: CLASSIC_GROUND_STRIPS,
+                _pad: 0,
+            },
         }
     }
 }
@@ -564,23 +583,30 @@ mod tests {
         (mobile, land)
     }
 
-    #[test]
-    fn the_enhanced_legs_lie_over_the_flat_land_in_front() {
-        // Screen pixels around the anchor: as far as an Enhanced frame reaches sideways and the strips reach down.
+    /// No flat land at the mobile's z covers a pixel of `ground`'s card from 80 pixels over its anchor down to
+    /// `reach_down_px` below it, as far as a frame reaches sideways, at rest and sliding east, south-east and
+    /// north-west. Each pixel is taken at its centre, as a fragment is, never on a cell's edge.
+    fn assert_the_card_lies_over_the_flat_land_in_front(ground: MobileGroundStrips, reach_down_px: f32) {
         const REACH_RIGHT_PX: i32 = 120;
+        const REACH_UP_PX: i32 = 80;
         const STEP_PX: usize = 2;
-        let reach_down_px =
-            ENHANCED_GROUND_STRIPS as f32 * ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX;
-        let ground = MobileGroundStrips::of(AnimSource::Enhanced);
-        // At rest, and sliding east, south-east and north-west.
+        const PIXEL_CENTRE_PX: f32 = 0.5;
         for (x, y) in [(1473.0, 1722.0), (1473.4, 1722.0), (1473.5, 1722.5), (1472.75, 1721.75)] {
             for right_px in (-REACH_RIGHT_PX..=REACH_RIGHT_PX).step_by(STEP_PX) {
-                for below_px in (-80..reach_down_px as i32).step_by(STEP_PX) {
-                    let (mobile, land) = mobile_and_land_distances(ground, x, y, right_px as f32, below_px as f32);
+                for below_px in (-REACH_UP_PX..reach_down_px as i32).step_by(STEP_PX) {
+                    let (mobile, land) = mobile_and_land_distances(ground, x, y, right_px as f32 + PIXEL_CENTRE_PX,
+                        below_px as f32 + PIXEL_CENTRE_PX);
                     assert!(mobile > land, "({x}, {y}): the land covers the pixel {right_px}, {below_px}");
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_enhanced_legs_lie_over_the_flat_land_in_front() {
+        // As far as the strips reach down.
+        assert_the_card_lies_over_the_flat_land_in_front(MobileGroundStrips::of(AnimSource::Enhanced),
+            ENHANCED_GROUND_STRIPS as f32 * ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX);
         // Without the strips, the land of the next row covers what lies below the anchor beside it: a hoof.
         let (mobile, land) = mobile_and_land_distances(MobileGroundStrips::default(), 1473.0, 1722.0, 30.0, 10.0);
         assert!(mobile < land);
@@ -596,8 +622,25 @@ mod tests {
         assert_eq!(at(ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX - 0.5), 1.0);
         assert_eq!(at(ENHANCED_GROUND_STRIP_PX - ENHANCED_GROUND_CUT_ABOVE_ANCHOR_PX + 0.5), 2.0);
         assert_eq!(at(1000.0), ENHANCED_GROUND_STRIPS as f32, "the last strip takes what lies below");
+    }
+
+    #[test]
+    fn a_classic_tail_lies_over_the_flat_land_in_front() {
+        // One diagonal cell below the anchor, the rows the strip is ordered in; the land of the row after covers
+        // what lies lower, as in ClassicUO.
+        assert_the_card_lies_over_the_flat_land_in_front(MobileGroundStrips::of(AnimSource::Classic),
+            CLASSIC_GROUND_STRIP_PX - CLASSIC_GROUND_CUT_ABOVE_ANCHOR_PX);
+    }
+
+    #[test]
+    fn a_classic_frame_comes_nearer_below_its_anchor_in_one_slice() {
         let classic = MobileGroundStrips::of(AnimSource::Classic);
-        assert_eq!(ground_strip(classic, -1000.0), 0.0, "a Classic frame keeps one card");
+        let at = |below_anchor_px: f32| ground_strip(classic,
+            (CELL_CENTRE_ABOVE_NEAR_VERTEX_PX - below_anchor_px) * CC_WORLD_Y_PER_PIXEL);
+        assert_eq!(at(-30.0), 0.0, "the body, over its anchor");
+        assert_eq!(at(-0.5), 0.0, "just over the anchor");
+        assert_eq!(at(0.5), 1.0, "just below the anchor");
+        assert_eq!(at(1000.0), 1.0, "the slice takes the rest of the frame");
     }
 
     #[test]

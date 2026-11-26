@@ -1316,3 +1316,27 @@ The same happened in KR-like and UOD-Painterly, which draw the Enhanced frames, 
   `horse-enhanced-before-after.mp4` (walk and run in six directions, slopes, the planter, the statue and its
   pedestal), `horse-other-styles-before-after.mp4` (KR-like, UOD-Painterly, Classic unchanged),
   `stygian-before-after.mp4` and `foot-before-after.mp4` (the human on foot and an unridden horse).
+
+### A Classic ophidian's tail under the land in front (2026-11-26)
+
+The user saw the Classic ophidian (body 86) standing with its tail cut along a cell edge, the land drawn over it, in
+the sharpening comparison clips (field west of Yew, map 1). Measured in all four styles with Classic art (the art
+source picks the frames, so Enhanced, KR-like and UOD-Painterly showed it too with art CC), standing after walks east,
+south, west and south-west: in every facing the tail lying below and beside the anchor lost the part over the next
+row's cells.
+
+- **Cause.** `MobileGroundStrips::of` (`render/mobiles/draw.rs`) gave Classic frames no strips: one card at the
+  anchor's row, so the land of row + 1 (at its z - 2) covered every pixel of the card over it, which starts at the
+  anchor's height beside it. The note above assumed Classic frames hardly reach below their anchor; the ophidian's tail
+  lies flat on the ground below and beside it.
+- **What ClassicUO does.** `MobileView.DrawInternal` draws a frame in two slices: down to the mobile's anchor (the
+  frame's height plus its centre y, less the mount offset) at the mobile's depth + 1, the rest at depth + 1 + 2, two
+  rows nearer.
+- **Fix.** Classic frames take one ground strip cut at the anchor, which takes the rest of the frame (row + 2, same
+  priority z and tie level), through the Enhanced strips' mechanism. Every pixel down to a diagonal cell below the
+  anchor lies over the flat land of its rows (test `a_classic_tail_lies_over_the_flat_land_in_front`); lower, the land
+  of row + 3 covers it, as in ClassicUO. The Enhanced frames are unchanged.
+- **Statics.** As for the Enhanced strips: a static of row + 1 or row + 2 whose art reaches below the anchor now draws
+  behind those pixels, as in ClassicUO (its lower slice sorts over them too).
+- **Evidence.** `uodynamapper-scratch/ophidian-tail/clips/` (before | after): `ophidian-before-after.mp4`, and
+  `walk-before-after.mp4` (human 400, Classic dragon 12, daemon 9 walking in the four styles).
