@@ -279,8 +279,12 @@ These need a person at the GUI or in a running client; the code side is done.
 - Mobile sharpening defaults: the strength now comes per body from `runtime_specs/mobiles/Sharpening.kdl` (by
   package, size class and body, 2026-11-26), and each style's `mobile_sharpening` (Shading Controls' Mobile Sharpening
   Scale) multiplies it, shipping at 1; [motion note](agent_notes/mobile_animation_motion.md#per-body-strength-and-edge-options-sharpeningkdl-2026-11-26).
-  Open: confirm the file's starting values on more bodies and in play (the comparison clips kept them), and whether
-  the Enhanced package should ship an edge option (`alpha_contrast` about 0.5 recommended; all off for now).
+  Open: confirm the file's starting values on more bodies and in play (the comparison clips kept them). The Enhanced
+  package ships `outline=1.0` (the user's pick, 2026-11-26), about +0.1 to +0.2 ms for a daemon since its taps are
+  gathers. Baking the outline into the package at pack time was measured and not shipped
+  ([note](agent_notes/mobile_animation_motion.md#the-outlines-cost-and-a-baked-outline-2026-11-26)): it would need a
+  package flag so the renderer skips its own outline (a format change, the user's call). Under SPAN 2x the run-time
+  line is one texel of the 2x frame, half as wide as at 1x; open whether an upscaled body should get a 2-texel line.
 - Light-source items glow on the Classic paperdoll and the old-style gump paperdoll (the user liked the idea,
   2026-11-06). The Enhanced client's own paperdoll (`Paperdoll.uop`) already has the halo painted into lit items'
   frames (lit lantern 0xA15: a 375x306 frame, mostly partly transparent), so it needs nothing. An item

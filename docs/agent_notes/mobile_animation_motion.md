@@ -1092,7 +1092,9 @@ comes per body from `runtime_specs/mobiles/Sharpening.kdl`, and the style's `mob
 - **Shipped values** (2026-11-26): Classic default 0.3, ≤96 0.7, ≤192 0.6, ≤384 0.4, the orc (17) 1.0; Enhanced default
   0.2, ≤96 0.5, ≤192 0.4, ≤384 0.3. No edge option is on. The comparison clips (below) kept them: at scale 1 every
   body firms up without grain (the Classic lich's dithered robe shows most, still fine); at 2 every Classic body turns
-  checkered and the Enhanced ones only start to grain.
+  checkered and the Enhanced ones only start to grain. Later the same day every Classic size took 0.7 and the
+  Enhanced monsters twice the first values (the humans, elves and gargoyles 0.4), and the Enhanced default took
+  `outline=1.0` (see [the outline's cost](#the-outlines-cost-and-a-baked-outline-2026-11-26)).
 - **Reload**: like `Strides.kdl`: the bundled file and the user's copy (`cache/runtime_specs/mobiles/Sharpening.kdl`,
   read in its place) are checked once a second; a save applies within a second. A copy that no longer reads keeps
   the table in force and warns (console and in-game system message) with the line. A bundled file that does not read
@@ -1121,8 +1123,10 @@ comes per body from `runtime_specs/mobiles/Sharpening.kdl`, and the style's `mob
   half-transparent fringe texels without changing the silhouette's size or colour, costs no taps of its own, and
   works the same through KR-like's client filter. `contour` 0.3 to 0.4 on top gives a Classic-like dark rim if that
   is wanted; 0.8 is too dark for the rendered art. `outline` changes the look most (0.5 a soft line, 1 a hard black
-  one, heavy on a human) and costs the most (about +0.3 to +0.6 ms for a daemon filling a tenth of the window). `fringe_sharpening` 0 barely shows at the shipped
-  strengths.
+  one, heavy on a human) and costs the most (about +0.3 to +0.6 ms for a daemon filling a tenth of the window; since
+  the gathers below +0.1 to +0.2). `fringe_sharpening` 0 barely shows at the shipped strengths. The user chose
+  `outline` 1 for the Enhanced package from the clips (2026-11-26): far better than any other option, then `contour`
+  0.8, then 0.4.
 
 Validation (2026-11-26, test packages, the field west of Yew, map 1):
 
@@ -1149,6 +1153,70 @@ Validation (2026-11-26, test packages, the field west of Yew, map 1):
   1, 2 for the orc, human, lich, giant spider and ophidian; `edges-enhanced-human.mp4`,
   `edges-enhanced-daemon.mp4` (off, fringe 0, contrast 0.5 and 0.8, contour 0.4 and 0.8, outline 0.5 and 1, a
   combination) and `edges-kr-daemon.mp4`.
+
+### The outline's cost and a baked outline (2026-11-26)
+
+The outline was the one edge option with a cost worth a look (+0.3 to +0.6 ms for a daemon above), and the user chose
+it at 1. Measured as above (gfx engine time per frame, variants alternated in one launch through the user's
+`Sharpening.kdl`, paired medians of 4 to 5 rounds), on dev's shaders with a measurement-only selector in the shader:
+
+- **Cause: the four cross taps**, not the blend. With the taps skipped and the line drawn from the centre's alpha
+  alone, the daemon (zoom 0.25) costs +0.04 ms in Enhanced and +0.015 in KR-like against +0.31 and +0.59 with them.
+  Each tap went through the whole frame read: the rectangle test, the crossfade's second frame (RIFE in-betweens and
+  SPAN 2x frames alike), and in KR-like the client bilinear of four loads (sixteen under the emulated mip box), all for
+  one alpha, on every fragment of the padded card in both the opaque and the transparent pass. Skipping the taps in
+  the opaque pass saves about half (Enhanced +0.18, KR-like +0.25); skipping them on solid texels (alpha ≥ 0.99)
+  nothing, as the texture cache holds those reads anyway.
+- **Change** (`mobile_outline_cross_alpha`, art/main.wesl; `mobile_frames_cross_alpha` and
+  `mobile_frames_bilinear_alpha`, art/mobile_frames.wesl): the taps read only alpha, with `textureGather`, masked by
+  the frame's rectangle as before. The nearest styles take two gathers (the texel's upper-left and lower-right
+  corners cover its four neighbours); KR-like one gather per bilinear tap, weighted as the client filter weighs them;
+  under KR-like's mip box (zoomed out past the client's view) the old taps stay. A crossfade gathers both frames,
+  each frame's alpha takes the alpha contrast, and the two mix as before. Four `textureLoad`s instead of the gathers
+  cost the same in Enhanced (+0.15).
+- **Same pixels**: the frozen crowd (5x3 of the human male, daemon and human female) captured byte for byte alike with the old
+  taps, the gathers and the loads in Enhanced, KR-like and UOD-Painterly. A diff mode in the shader (magenta where
+  the gathered cross alpha differs from the old taps' by more than 0.0005) showed none in 120 captures (4 styles, zoom
+  0.3, 1 and 2, with an animated crossfading player) and none in 18 more with SPAN 2x (balanced) and RIFE x2; its
+  control (magenta wherever the cross alpha is above 0) lit every outlined card.
+- **Cost before and after** (outline 1 against off, each tree in its own launches; off frame times alike in both):
+
+  | Scene | Enhanced | KR-like | UOD-Painterly |
+  |---|---|---|---|
+  | Daemon, zoom 0.25 (base 12.7 / 14.9 / 25.2 ms) | +0.26 → +0.14 | +0.53 → +0.18 | +0.25 → +0.11 |
+  | Crowd 10x6 + player, zoom 1 (base 15.3 / 15.6 / 29.6 ms) | +0.50 → +0.27 | +1.11 → +0.49 | +0.67 → +0.33 |
+
+  Classic (no outline in its section): −0.01 against off in both trees. Off, the outline's branch is not taken: the
+  frozen crowd with every edge option off is byte for byte alike before and after in Classic, Enhanced and
+  UOD-Painterly; in KR-like, before and after differ by 49 pixels one level apart, less than two launches of dev's
+  own shaders do (80 to 96). The regression harness (quick tier, player hidden, 103 captures) against
+  `before-outline`: 88 identical, 15 within tolerance, none changed.
+
+**A baked outline** (measured, not shipped). A prototype of the EC packer (`UDD_BAKE_OUTLINE`, not committed) padded
+every frame by a texel each side and wrote the same formula into its pixels, before the cleanup filter. Packed from
+the Enhanced client (fp), BC7 with the field split and Zstd 17, the GPU encoder, on this machine:
+
+| | `mobile_anim_ec.uddp` | pages | filled | wall time | CPU time |
+|---|---|---|---|---|---|
+| As shipped | 1,979,399,165 B | 2473 | 26.8 % | 274 s | 1408 s |
+| Outline baked | 2,280,498,216 B | 2661 | 29.2 % | 347 s | 2080 s |
+
++15.2 % on disk (+301 MB) and +26 % pack time (an upper bound: the prototype is unoptimized; its trimming took 24 s
+instead of 4). Look (clips below, a baked package with the outline off at run time against the run-time outline,
+sharpening kept in both): under SPAN 2x the baked line is upscaled with the frame, two screen texels wide and smoothed,
+while the run-time line is one texel of the 2x frame, half as wide as at 1x; at 1x with RIFE x2 the baked line on the
+daemon came out lighter and patchier than the run-time one in both Enhanced and KR-like (not traced; the BC7 encode of
+a one-texel ring of part alpha is the first suspect). A bake also loses the per-body choice and the opacity and colour
+at run time (each change is a repack), lies before the sharpening and every in-between, and draws twice unless the
+package tells the renderer to skip its own outline and padding: a package flag, a format change. Recommendation: keep
+the outline at run time. Since the gathers it costs less than the ~0.15 ms bar for a daemon in Enhanced and
+UOD-Painterly and just above it in KR-like (0.18).
+
+Clips (`outline/clips/` in the scratch folder, walking east from 2093,790 on map 1, the crowd of 7x4 humans, daemons,
+liches and orcs standing): `old-vs-gathers-human.mp4`,
+`old-vs-gathers-daemon.mp4`, `old-vs-gathers-crowd.mp4` (Enhanced, dev's taps against the gathers),
+`baked-vs-runtime-human-span.mp4` and `baked-vs-runtime-daemon-1x.mp4` (Enhanced over KR-like, SPAN balanced and RIFE
+x2, run-time against baked).
 
 ## Block-compressed frame atlas (2026-11-21)
 
