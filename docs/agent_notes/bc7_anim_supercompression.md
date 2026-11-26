@@ -4,7 +4,8 @@ Can the BC7 pages of the mobile animation packages be stored smaller without cha
 it cost the game to decode them (2026-11-25)? The brief proposed regrouping, dictionaries, byte shuffles, BC7-aware
 field splits and block reuse in front of LZ4; the container's codec for these pages is Zstd, so everything here is
 measured against Zstd 9 as the packages store it, and against LZ4 HC. Nothing in the production packers or the format
-changed: `udd-bc7-supercompress` (`tools/udd-devtools-cli/src/bin/bc7_supercompress/`) only reads packages.
+changed: `udd-bc7-supercompress` (`tools/udd-devtools-cli/src/bin/bc7_supercompress/`) only reads packages. What
+changing the blocks would buy is the third study, [Lossy conditioning](#lossy-conditioning).
 
 ## LZ4 HC on the animation pages
 
@@ -320,6 +321,8 @@ stored pages:
   pages at Zstd 9 on these samples, the lossless part being 7.7 and 7.4 % of it.
 
 ## Not built (phases 6 and 7)
+
+Both were measured later as lossy steps: see [Lossy conditioning](#lossy-conditioning).
 
 - **6, temporal XOR or prediction against a reference frame.** The packer trims each frame to its silhouette and
   places it at a 4-pixel-aligned spot of the page; the block grid follows the trimmed box, which moves with the
@@ -760,3 +763,489 @@ smaller on the full package, at most 5 % slower to decode):
   transposed field records, block reuse (all under [Negative results](#negative-results)), phase 6. The unpredicted
   byte layout `pred-none-bytes` (0 to 1 point better than `fields` with Zstd) is worth measuring only if the field
   split is adopted with Zstd.
+
+## Lossy conditioning
+
+Third study (2026-11-26): how much smaller can the pages get if the BC7 blocks may change, for how much quality, and
+is there a better trade than the library RDO? Measurements only: no packer, format or renderer change.
+
+### Method
+
+`udd-bc7-supercompress lossy` (`lossy.rs`, block model in `bc7block.rs`) reads two packages packed from this commit's
+`udd-cli` on the CPU, from the clients under `/mnt/dati/_proj_local/_uo_clients/`:
+- a BC7 package with RDO off (Classic 867 478 192 bytes, 1210 pages; Enhanced 1 939 014 497 bytes, 2291 pages, the
+  sizes of [BC7 RDO](#bc7-rdo));
+- the same packer with `--raw`: RGBA8888 pages with the same layout, the source pixels.
+
+For each page it rebuilds the packer's pixels (content, extruded gutters, transparent background), encodes them with
+the converter's encoder (`encode_to_bc7`, `AnalyticalWide`), then runs each variant on the blocks. `--check` confirms
+the pipeline: on 21 Classic pages the plain encode equals the package's blocks bit for bit, and the rebuilt pixels
+equal the RGBA package's. Every candidate is measured against the source frames, not against the plain encode.
+
+Sizes are each page as one frame under each method (`none+zstd:9` is today's format). Quality, per size class of the
+body (≤ 96 / 97–192 / 193–384 / > 384 px, as above):
+- **PSNR** over the visible texels (source alpha > 0), RGB.
+- **Alpha:** texels whose alpha differs from the source, and **silhouette** texels, whose coverage (alpha 0 or not)
+  differs. Every step here except the library RDO keeps every texel's alpha exactly as the plain encode decodes it,
+  so its silhouette changes are 0 by construction. (The plain encode itself already changes coverage on 71 texels of
+  the Classic sample and on 1.28 M of the Enhanced one, whose alpha is graded.)
+- **SSIMULACRA2** on every 50th placement, the frame composited over grey 128 on a canvas of at least 64 px.
+- **Flicker:** the RMS of the change between the decodes of consecutive frames of a clip, over the texels whose
+  source is identical and visible at the same place relative to the anchor. The source does not change there, so
+  every level of it is coding noise that moves; the plain encode has 3.6 (Classic) and 3.7 (Enhanced).
+
+Samples are every 60th page: 21 Classic and 39 Enhanced pages (22 and 40 in the aligned layout).
+
+### The steps
+
+- **`rdo:<λ>:<look-back>`:** `uot_texture_codecs::bc7::rdo` (the bc7enc_rdo port), one window over the page, as
+  the packer's `--bc7-rdo` (the packer splits a page into row chunks; the difference is a few blocks at chunk edges).
+- **`zrdo:<λ>:<rms>`, Zstd-priced block reuse:** a visible block may become an earlier block of the page, whole. The
+  candidates are the block at the last match offset, the blocks to the left and above, the co-located blocks of the
+  clip's adjacent frames (±1 block, relative to the anchor), and the last 8 blocks of the page with the same mode and
+  a similar mean (a hash, so the reach is the whole page). A candidate is accepted only if it keeps the alpha of every
+  texel and its RMS error over the visible texels is at most `rms` levels above the plain encode's. Among them, the
+  cheapest by error + λ × bits wins, the bits from a model of Zstd's sequences: 7 bits a literal byte, 12 bits plus
+  log2 of the offset for a new match, 2 bits for a match that continues the previous one at the same offset.
+- **`fields:<λ>:<rms>`, field-split-aware reuse:** priced for the `fields` layout. A block may take the endpoint
+  fields of an earlier block of its mode (its indices picked again), or its index bits (its endpoints fitted again
+  by least squares), so that one of its two records repeats in its mode's stream.
+- **`lrdo` and `lfields`:** the same two steps priced for the LZ4 block format: raw literals (8 bits a byte plus a
+  length byte per 255), a token and a 2-byte offset per new match, a length byte per 255 bytes to extend one, no
+  repeat offsets, and candidates beyond the 64 KiB window dropped.
+- **`coarse:<bits>:<rms>`, XUBC7-lossy-like endpoint quantisation:** each colour endpoint rounded to a multiple of
+  `1 << bits` in its stored precision (alpha endpoints and p-bits kept), the indices picked again; kept per block
+  within `rms`.
+- **`flat:<rms>`:** an opaque block within `rms` of its mean becomes a solid mode 6 block with zero indices.
+- **`reuse:<rms>[:<radius>]`, temporal reuse:** on the anchor-aligned layout (below), a block takes the block of the
+  previous or next frame of its clip at the same place relative to the anchor (or ±`radius` blocks), when that block
+  is earlier on the page and the error stays within `rms`; a tie goes to the last offset used, so runs stay one match.
+
+Steps chain with `+`, each against the plain encode's error, so a chain does not compound its bound.
+
+### Results on the samples
+
+Δ against the plain encode under the same method; PSNR and SSIMULACRA2 as differences; flicker as measured.
+
+Classic (plain: 34.00 dB, SSIMULACRA2 81.18, flicker 3.61; `rdo:1:64` and `rdo:1:256` without SSIMULACRA2):
+
+| Variant | Zstd 9 | Zstd 19 | fields + Zstd 19 | fields + LZ4 HC 12 | Δ PSNR dB | Δ SSIMULACRA2 | Flicker | Silhouette texels changed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `rdo:0.5:64` | −1.26 % | −1.82 % | −1.55 % | −0.96 % | −0.81 | −2.07 | 4.50 | +5034 |
+| `rdo:1:64` | −4.30 % | | −4.13 % | | −2.03 | | 5.74 | +8167 |
+| `rdo:1:256` | −7.53 % | | −6.63 % | | −2.31 | | 6.04 | +8488 |
+| `rdo:2:64` | −10.08 % | −11.10 % | −9.15 % | −6.28 % | −4.33 | −9.40 | 8.11 | +13406 |
+| `rdo:4:64` | −17.79 % | −18.97 % | −16.15 % | −11.42 % | −7.24 | −15.37 | 11.46 | +25305 |
+| `rdo:1:1024` | −13.07 % | −13.23 % | −10.50 % | −8.90 % | −2.63 | −4.83 | 6.36 | +4228 |
+| `rdo:1:4096` | −17.80 % | −17.69 % | −13.40 % | −12.27 % | −2.83 | −4.94 | 6.51 | +2172 |
+| `zrdo:10:3` | −3.26 % | −3.14 % | −2.66 % | −2.52 % | −0.11 | −0.11 | 3.76 | +0 |
+| `zrdo:30:3` | −5.06 % | −4.96 % | −4.10 % | −3.74 % | −0.24 | −0.28 | 3.92 | +0 |
+| `zrdo:100:6` | −15.15 % | −15.14 % | −12.55 % | −11.17 % | −1.59 | −1.63 | 5.52 | +0 |
+| `fields:10:3` | −2.72 % | −2.74 % | −3.73 % | −3.11 % | −0.17 | −0.27 | 3.58 | +0 |
+| `fields:30:3` | −7.44 % | −7.70 % | −9.43 % | −7.86 % | −0.77 | −1.18 | 3.83 | +0 |
+| `fields:100:3` | −8.97 % | −9.38 % | −11.36 % | −9.49 % | −1.21 | −2.28 | 4.03 | +0 |
+| `fields:100:6` | −13.18 % | −13.90 % | −16.80 % | −14.29 % | −2.07 | −3.77 | 4.54 | +0 |
+| `coarse:1:2` | −4.77 % | −5.30 % | −5.03 % | −4.28 % | −0.40 | −1.06 | 3.95 | +0 |
+| `coarse:2:2` | −10.28 % | −11.16 % | −10.67 % | −9.28 % | −0.61 | −2.46 | 4.08 | +0 |
+| `coarse:2:4` | −11.06 % | −12.27 % | −11.63 % | −10.29 % | −1.03 | −4.18 | 4.33 | +0 |
+| `coarse:3:4` | −15.27 % | −16.68 % | −15.53 % | −14.24 % | −1.68 | −5.77 | 5.04 | +0 |
+| `flat:2` | −0.65 % | −0.65 % | −0.54 % | −0.53 % | −0.02 | −0.04 | 3.65 | +0 |
+| `flat:4` | −3.05 % | −3.08 % | −2.76 % | −2.64 % | −0.23 | −0.32 | 3.93 | +0 |
+| `flat:8` | −9.46 % | −9.62 % | −8.89 % | −8.33 % | −1.48 | −1.22 | 5.06 | +0 |
+| `coarse:2:2+flat:4` | −12.63 % | −13.57 % | −12.83 % | −11.29 % | −0.80 | −2.70 | 4.34 | +0 |
+| `coarse:2:2+zrdo:30:3` | −14.22 % | −15.04 % | −13.85 % | −12.14 % | −0.79 | −2.63 | 4.29 | +0 |
+| `coarse:2:2+fields:30:3` | −11.24 % | −12.16 % | −13.63 % | −11.62 % | −1.10 | −2.55 | 4.08 | +0 |
+
+Enhanced (plain: 31.73 dB, SSIMULACRA2 82.15, flicker 3.75):
+
+| Variant | Zstd 9 | Zstd 19 | fields + Zstd 19 | fields + LZ4 HC 12 | Δ PSNR dB | Δ SSIMULACRA2 | Flicker | Silhouette texels changed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `rdo:1:64` | −5.28 % | −6.06 % | −4.80 % | −3.38 % | −1.03 | −2.05 | 4.90 | +233307 |
+| `rdo:1:256` | −8.07 % | −8.60 % | −7.06 % | −5.42 % | −1.22 | −2.20 | 5.12 | +208668 |
+| `rdo:2:64` | −9.96 % | −10.91 % | −8.81 % | −6.16 % | −2.52 | −4.18 | 6.52 | +383282 |
+| `zrdo:30:3` | −4.27 % | −4.14 % | −3.57 % | −3.20 % | −0.09 | −0.09 | 3.80 | +0 |
+| `zrdo:100:6` | −10.41 % | −10.33 % | −8.89 % | −7.73 % | −0.60 | −0.47 | 4.50 | +0 |
+| `fields:30:3` | −5.91 % | −5.90 % | −6.14 % | −5.10 % | −0.15 | +0.00 | 3.79 | +0 |
+| `fields:100:3` | −7.11 % | −7.15 % | −7.38 % | −6.11 % | −0.35 | −0.23 | 3.87 | +0 |
+| `coarse:1:2` | −3.86 % | −4.21 % | −4.30 % | −3.65 % | −0.52 | −1.65 | 4.10 | +0 |
+| `coarse:2:2` | −7.51 % | −7.94 % | −8.09 % | −6.98 % | −0.58 | −2.75 | 4.18 | +0 |
+| `coarse:2:4` | −9.14 % | −9.76 % | −9.91 % | −8.71 % | −1.23 | −5.01 | 4.65 | +0 |
+| `coarse:3:4` | −10.88 % | −11.47 % | −11.20 % | −10.26 % | −1.16 | −3.55 | 4.60 | +0 |
+| `flat:4` | −2.63 % | −2.65 % | −2.40 % | −2.25 % | −0.10 | −0.09 | 3.88 | +0 |
+| `flat:8` | −7.89 % | −8.01 % | −7.58 % | −6.99 % | −0.76 | −0.42 | 4.55 | +0 |
+| `coarse:2:2+flat:4` | −9.53 % | −10.01 % | −9.96 % | −8.68 % | −0.66 | −2.81 | 4.29 | +0 |
+| `coarse:2:2+zrdo:30:3` | −10.73 % | −11.10 % | −10.77 % | −9.36 % | −0.65 | −2.79 | 4.18 | +0 |
+| `coarse:2:4+zrdo:30:3` | −12.11 % | −12.67 % | −12.39 % | −10.91 % | −1.27 | −5.02 | 4.64 | +0 |
+| `coarse:2:2+fields:30:3` | −8.76 % | −9.12 % | −9.45 % | −7.97 % | −0.57 | −1.93 | 4.11 | +0 |
+
+**The library RDO** buys size with a lot of error, and changes silhouettes:
+- At λ 1, look-back 64 (the packer's) it saves 4.3 % (Classic) and 5.3 % (Enhanced) for 2.0 and 1.0 dB and 2 points
+  of SSIMULACRA2 (Enhanced). λ 2 and 4 save 10 and 18 % for 4.3 and 7.2 dB.
+- **A longer look-back pays more than a higher λ:** 256, 1024 and 4096 blocks save 7.5, 13.1 and 17.8 % (Classic,
+  Zstd 9) for 2.3, 2.6 and 2.8 dB. The whole page (up to 262 144 blocks) was not run: the step takes 5.3, 13, 56 and
+  137 s a page on one thread for those four windows, against 0.26 s for the encode itself, so a whole-page window
+  would take hours a page.
+- **It moves alpha:** 2 000 to 25 000 more silhouette texels on 21 Classic pages, 209 000 to 383 000 on 39 Enhanced
+  ones. The brief's rule is that silhouettes do not change; the RDO would need an alpha constraint first.
+- Its saving survives the coders unevenly: at look-back 4096, −17.8 % under Zstd 9 is −13.4 % under `fields` +
+  Zstd 19, since a whole-block copy breaks into one match per record stream.
+
+**Coder-aware block reuse (`zrdo`) gets the RDO's saving for a tenth of its error.** `zrdo:30:3` saves 5.1 / 4.3 %
+(about what λ 1 saves) for 0.24 / 0.09 dB, no silhouette change, and flicker barely up. λ above 30 changes nothing:
+the error bound decides how many blocks may move, the price only which candidate. `zrdo:100:6` saves 15.2 / 10.4 %
+for 1.6 / 0.6 dB, still a quarter of the RDO's error at that size.
+
+**The field-split-aware variant (`fields`)** pays under `fields` + Zstd 19: −9.4 % (Classic) for 0.8 dB, and −6.1 %
+(Enhanced) for 0.15 dB with no SSIMULACRA2 change, more than `zrdo` there. Under plain Zstd it is weaker.
+
+**Endpoint coarsening is the cheapest per dB but the most visible to SSIMULACRA2.** `coarse:2:2` saves 10.3 / 7.5 %
+for 0.6 dB, at 0.15 s a page, but costs 2.5 to 2.8 points of SSIMULACRA2 (flat gradients step), where `zrdo` at the
+same PSNR costs a fraction of a point. One bit is weak (−4 to −5 %), three bits cost 1.7 to 2.7 dB. With `zrdo:30:3`
+after it, `coarse:2:2+zrdo:30:3` is the strongest chain at that quality: −14.2 / −10.7 % for 0.8 / 0.65 dB. Further
+steps on top add little (`flat`, `fields`: under a point).
+
+**Flat blocks (`flat`)** are rare: within 4 levels, 4.6 % (Classic) and 8.5 % (Enhanced) of the visible blocks, for
+−3.1 / −2.6 %.
+
+**An LZ4-priced RDO is no better than the Zstd-priced one under LZ4 HC 12.** On the same samples, under LZ4 HC 12
+(Classic columns first, then Enhanced):
+
+| Variant | LZ4 HC 12 | fields + LZ4 HC 12 | Δ PSNR dB | LZ4 HC 12 | fields + LZ4 HC 12 | Δ PSNR dB |
+|---|---:|---:|---:|---:|---:|---:|
+| `zrdo:30:3` | −3.45 % | −3.74 % | −0.24 | −2.69 % | −3.20 % | −0.09 |
+| `lrdo:30:3` | −3.54 % | −2.30 % | −0.16 | −2.78 % | −2.12 % | −0.06 |
+| `zrdo:100:6` | −12.13 % | −11.17 % | −1.59 | −7.46 % | −7.73 % | −0.60 |
+| `lrdo:100:6` | −12.45 % | −8.78 % | −1.33 | −7.73 % | −6.01 % | −0.48 |
+| `fields:30:3` | −7.71 % | −7.86 % | −0.77 | −4.64 % | −5.10 % | −0.15 |
+| `lfields:30:3` | −7.76 % | −7.15 % | −0.68 | −4.76 % | −4.43 % | −0.13 |
+| `lfields:100:3` | −9.73 % | −9.17 % | −1.18 | −5.86 % | −5.60 % | −0.33 |
+| `lfields:100:6` | −14.29 % | −14.08 % | −2.02 | −8.09 % | −8.04 % | −0.72 |
+| `coarse:2:2+lrdo:30:3` | −11.42 % | −11.00 % | −0.73 | −7.71 % | −8.55 % | −0.63 |
+| `coarse:2:2+lfields:30:3` | −11.45 % | −11.36 % | −1.06 | −7.13 % | −7.70 % | −0.57 |
+
+The LZ4 model takes fewer candidates (a new match costs 24 bits, twice Zstd's, and the window stops at 4096 blocks),
+so at the same bound it gets a fraction of a point more per dB under plain LZ4 HC and less under `fields` + LZ4 HC,
+where the Zstd-priced `fields` still wins. Whatever the coder, the bound sets the trade; the model only picks among
+candidates the bound allows.
+
+### Temporal reuse on an anchor-aligned layout
+
+The packer places each frame's trimmed box at a 4-pixel-aligned spot, so a body part falls on a different block grid
+in each frame. `--layout aligned` replays the packer (as `repack.rs` does) with each frame padded on the left and top
+by its anchor's phase, so that every anchor falls on a block corner and every frame of a clip shares one grid relative
+to its anchor.
+
+**What the alignment costs, full packages (plain encode, no reuse):**
+
+| Package | Pages | Blocks | Zstd 9 | fields + Zstd 19 | PSNR dB |
+|---|---:|---:|---:|---:|---:|
+| Classic, stored layout | 1210 | 217 063 107 | 816.67 MiB | 752.47 MiB | 33.21 |
+| Classic, aligned | 1299 (+7.4 %) | 225 183 380 (+3.74 %) | 812.83 MiB (−0.47 %) | 751.49 MiB (−0.13 %) | 33.26 |
+| Enhanced, stored layout | 2291 | 428 210 672 | 1798.33 MiB | 1658.59 MiB | 31.37 |
+| Enhanced, aligned | 2343 (+2.3 %) | 444 352 947 (+3.77 %) | 1792.69 MiB (−0.31 %) | 1658.23 MiB (−0.02 %) | 31.42 |
+
+The padding is transparent blocks, which cost Zstd next to nothing, and the aligned pages come out slightly smaller:
+frames of a clip now share their block grid, so more of their blocks repeat. The real cost is the page count: 7.4 %
+more Classic pages (each a 2048 × 2048 allocation to the reader, and more pages for a clip to touch) and 2.3 % more
+Enhanced ones. The layout would be a packer change (the anchor's phase as padding before the allocator).
+
+On the aligned samples (Δ against the aligned plain encode):
+
+Classic (plain: 33.01 dB, SSIMULACRA2 91.68, flicker 3.45):
+
+| Variant | Zstd 9 | Zstd 19 | fields + Zstd 19 | fields + LZ4 HC 12 | Δ PSNR dB | Δ SSIMULACRA2 | Flicker | Silhouette texels changed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `reuse:0` | −0.04 % | −0.04 % | −0.03 % | −0.03 % | +0.00 | +0.00 | 3.42 | +0 |
+| `reuse:1` | −0.79 % | −0.77 % | −0.63 % | −0.45 % | −0.01 | −0.01 | 3.38 | +0 |
+| `reuse:2` | −1.98 % | −1.95 % | −1.63 % | −1.13 % | −0.05 | −0.03 | 3.40 | +0 |
+| `reuse:4` | −4.72 % | −4.72 % | −3.91 % | −2.67 % | −0.23 | −0.09 | 3.62 | +0 |
+| `reuse:8` | −10.47 % | −10.59 % | −8.80 % | −5.74 % | −1.17 | −0.36 | 4.61 | +0 |
+| `reuse:2:0` | −1.67 % | −1.64 % | −1.40 % | −0.98 % | −0.04 | −0.03 | 3.37 | +0 |
+| `reuse:4:0` | −3.55 % | −3.53 % | −3.03 % | −2.06 % | −0.16 | −0.08 | 3.43 | +0 |
+| `coarse:2:2` | −9.98 % | −10.83 % | −10.30 % | −8.65 % | −0.51 | −0.95 | 3.88 | +0 |
+| `fields:30:3` | −7.88 % | −8.21 % | −9.46 % | −7.60 % | −0.62 | −0.47 | 3.52 | +0 |
+| `coarse:2:2+reuse:2` | −11.41 % | −12.26 % | −11.49 % | −9.47 % | −0.54 | −0.96 | 3.80 | +0 |
+| `coarse:2:2+reuse:2+fields:30:3` | −11.65 % | −12.63 % | −13.63 % | −11.25 % | −0.90 | −0.88 | 3.72 | +0 |
+
+Enhanced (plain: 31.40 dB, SSIMULACRA2 83.05, flicker 3.56):
+
+| Variant | Zstd 9 | Zstd 19 | fields + Zstd 19 | fields + LZ4 HC 12 | Δ PSNR dB | Δ SSIMULACRA2 | Flicker | Silhouette texels changed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `reuse:0` | −0.14 % | −0.13 % | −0.11 % | −0.12 % | +0.00 | −0.01 | 3.48 | +0 |
+| `reuse:1` | −1.71 % | −1.62 % | −1.44 % | −1.37 % | −0.01 | −0.03 | 3.35 | +0 |
+| `reuse:2` | −2.94 % | −2.83 % | −2.48 % | −2.21 % | −0.04 | −0.04 | 3.35 | +0 |
+| `reuse:4` | −5.27 % | −5.16 % | −4.48 % | −3.69 % | −0.14 | −0.16 | 3.44 | +0 |
+| `reuse:8` | −9.58 % | −9.53 % | −8.27 % | −6.47 % | −0.65 | −0.73 | 3.93 | +0 |
+| `reuse:2:0` | −2.66 % | −2.55 % | −2.26 % | −2.04 % | −0.03 | −0.04 | 3.33 | +0 |
+| `coarse:2:2` | −8.24 % | −8.84 % | −8.85 % | −7.61 % | −0.59 | −3.32 | 4.05 | +0 |
+| `coarse:2:2+reuse:2` | −10.23 % | −10.75 % | −10.52 % | −9.12 % | −0.61 | −3.34 | 3.82 | +0 |
+
+`reuse:<rms>:0` takes only the co-located block, the default also its 8 neighbours.
+
+- **Exact reuse is nearly nil:** with the grid aligned, 0.20 % (Classic) and 0.35 % (Enhanced) of the visible blocks
+  of the full packages equal the co-located block of an adjacent frame (±1 block), for −0.08 / −0.14 % under Zstd 9
+  (`reuse:0`). A body moves by fractions of a block
+  and is shaded again in every frame.
+- **Reuse within an error bound** is the cleanest of the lossy steps per dB: `reuse:2` saves 2.0 / 2.9 % for 0.05 /
+  0.04 dB, `reuse:4` 4.7 / 5.3 % for 0.23 / 0.14 dB, and it lowers flicker (a reused block cannot flicker). It does
+  not reach the other steps' sizes: `reuse:8` −10.5 / −9.6 % costs 1.2 / 0.65 dB.
+- **By action**, idle clips are where it works. Share of each action's visible blocks that `reuse:2` takes on the
+  full packages (movement clips as `movement_action` / `move_action` resolve walk and run, idle ones stand; "other"
+  is every other action, attacks, casts, deaths and fidgets):
+
+  | Package | Walk / run | Stand | Other | Whole package, Zstd 9 | fields + Zstd 19 | Δ PSNR dB |
+  |---|---:|---:|---:|---:|---:|---:|
+  | Classic | 2.5 % | 18.4 % | 3.7 % | −2.65 % | −2.18 % | −0.06 |
+  | Enhanced | 2.2 % | 12.4 % | 4.2 % | −2.88 % | −2.46 % | −0.04 |
+
+  A walking or attacking body moves and is shaded again in every frame; a standing one breathes in place, and a
+  fifth of its blocks can stay. Exact reuse follows the same pattern at a tenth of the rate (stand 1.0 / 0.8 %).
+- On top of `coarse:2:2` it adds 1.4 / 2.0 points.
+
+### Full packages
+
+Classic:
+
+| Variant | Zstd 9 MiB | Zstd 19 MiB | fields + Zstd 19 MiB | fields + LZ4 HC 12 MiB | PSNR dB | Δ dB | Δ SSIMULACRA2 | Flicker |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain | 816.67 | 787.24 | 752.47 | 862.15 | 33.21 |  |  | 4.15 |
+| `zrdo:30:3` | 769.76 (−5.74 %) | 743.00 (−5.62 %) | 717.15 (−4.69 %) | 825.61 (−4.24 %) | 33.01 | −0.21 | −0.25 | 4.41 |
+| `fields:30:3` | 750.99 (−8.04 %) | 721.79 (−8.31 %) | 678.03 (−9.89 %) | 791.47 (−8.20 %) | 32.60 | −0.61 | −0.80 | 4.32 |
+| `zrdo:100:6` | 691.89 (−15.28 %) | 667.22 (−15.25 %) | 656.18 (−12.80 %) | 764.31 (−11.35 %) | 31.91 | −1.30 | −1.08 | 5.77 |
+| `coarse:2:2+zrdo:30:3` | 698.33 (−14.49 %) | 666.28 (−15.37 %) | 645.95 (−14.16 %) | 755.79 (−12.34 %) | 32.51 | −0.71 | −2.15 | 4.80 |
+
+Enhanced:
+
+| Variant | Zstd 9 MiB | Zstd 19 MiB | fields + Zstd 19 MiB | fields + LZ4 HC 12 MiB | PSNR dB | Δ dB | Δ SSIMULACRA2 | Flicker |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain | 1798.33 | 1748.62 | 1658.59 | 1885.96 | 31.37 |  |  | 4.79 |
+| `zrdo:30:3` | 1708.84 (−4.98 %) | 1664.16 (−4.83 %) | 1588.54 (−4.22 %) | 1814.95 (−3.77 %) | 31.27 | −0.10 | −0.13 | 4.83 |
+| `fields:30:3` | 1682.04 (−6.47 %) | 1635.10 (−6.49 %) | 1544.51 (−6.88 %) | 1778.16 (−5.72 %) | 31.21 | −0.15 | −0.20 | 4.81 |
+| `zrdo:100:6` | 1592.11 (−11.47 %) | 1549.38 (−11.39 %) | 1494.02 (−9.92 %) | 1722.37 (−8.67 %) | 30.74 | −0.62 | −0.73 | 5.64 |
+| `coarse:2:2+zrdo:30:3` | 1584.18 (−11.91 %) | 1533.59 (−12.30 %) | 1461.14 (−11.91 %) | 1690.32 (−10.37 %) | 30.72 | −0.64 | −2.85 | 5.30 |
+
+Per size class (full packages, Δ PSNR dB / Δ SSIMULACRA2 / flicker):
+
+Classic (plain: ≤ 96 px 31.64 dB / 86.43,
+97–192 px 33.38 dB / 78.00, 193–384 px 33.31 dB / 78.01, > 384 px 34.29 dB / 84.38):
+
+| Variant | ≤ 96 px | 97–192 px | 193–384 px | > 384 px |
+|---|---:|---:|---:|---:|
+| `zrdo:30:3` | −0.14 / −0.15 / 4.74 | −0.22 / −0.30 / 4.25 | −0.23 / −1.15 / 4.42 | −0.24 / −1.41 / 4.22 |
+| `fields:30:3` | −0.32 / −0.58 / 4.63 | −0.64 / −1.48 / 4.17 | −0.64 / −2.49 / 4.29 | −0.86 / −2.13 / 4.20 |
+| `zrdo:100:6` | −0.73 / −0.60 / 5.54 | −1.27 / −1.68 / 5.54 | −1.44 / −5.43 / 6.09 | −1.73 / −6.73 / 5.81 |
+| `coarse:2:2+zrdo:30:3` | −0.60 / −1.95 / 5.11 | −0.75 / −2.86 / 4.64 | −0.69 / −3.34 / 4.79 | −0.82 / −3.49 / 4.67 |
+
+Enhanced (plain: ≤ 96 px 29.79 dB / 84.65,
+97–192 px 31.36 dB / 75.45, 193–384 px 32.04 dB / 78.26, > 384 px 32.20 dB / 83.61):
+
+| Variant | ≤ 96 px | 97–192 px | 193–384 px | > 384 px |
+|---|---:|---:|---:|---:|
+| `zrdo:30:3` | −0.09 / −0.07 / 4.45 | −0.10 / −0.19 / 5.11 | −0.10 / −0.55 / 4.98 | −0.10 / −1.22 / 4.82 |
+| `fields:30:3` | +0.04 / −0.05 / 4.49 | −0.08 / −0.52 / 5.03 | −0.23 / −1.23 / 4.93 | −0.40 / −2.16 / 4.81 |
+| `zrdo:100:6` | −0.35 / −0.31 / 4.81 | −0.59 / −1.21 / 5.80 | −0.78 / −3.79 / 6.05 | −0.81 / −7.06 / 6.05 |
+| `coarse:2:2+zrdo:30:3` | −0.56 / −2.66 / 4.87 | −0.64 / −3.59 / 5.59 | −0.68 / −3.62 / 5.48 | −0.72 / −4.28 / 5.31 |
+
+The larger bodies lose more SSIMULACRA2 than PSNR: their smooth shading shows endpoint steps and reused blocks more
+than the small sprites' texture does. The package figure is weighted by placements, most of them small, and it hides
+where `zrdo:100:6` hurts: on bodies above 192 px it loses 3.8 to 7.1 points, more than `coarse:2:2+zrdo:30:3`
+(3.3 to 4.3), and its flicker rises by 1.2 to 2.0 levels against 0.6 to 0.8. `zrdo:30:3` stays within 1.4 points
+everywhere.
+
+### Decode and crowds
+
+The lossy steps change only which bytes the blocks hold, so a reader decodes them as it does today. `crowd`
+(above) was run on each candidate's stored pages (`--pages`, the blocks the full runs kept), with the configs of
+[Crowds](#crowds-under-the-loader-order): today's Zstd 9 per page, and `fields` + Zstd 19 and `fields` + LZ4 HC 12
+joined per clip, each without and with an 8-page decoded cache. Timed alone (the benchmark marker held), same
+machine as the earlier tables.
+
+Random crowds, Classic (median of 20; MiB and Δ against the plain encode under the same config):
+
+| Pages | Config | MiB | Cache | Page decodes | Decode ms | First drawable, warm / cold | Mobile p50, warm | All preloaded, warm / cold |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| plain | Zstd 9 | 816.7 | 0 | 766 | 2390 | 77.3 / 83.8 | 39.0 | 599 / 606 |
+|  |  |  | 8 | 332 | 996 | 58.0 / 69.8 | 29.4 | 454 / 465 |
+|  | fields + Zstd 19, per clip | 752.5 | 0 | 766 | 2687 | 86.5 / 93.1 | 43.7 | 673 / 680 |
+|  |  |  | 8 | 332 | 1180 | 66.2 / 76.4 | 33.0 | 515 / 527 |
+|  | fields + LZ4 HC 12, per clip | 862.1 | 0 | 766 | 1136 | 36.9 / 43.9 | 18.5 | 285 / 292 |
+|  |  |  | 8 | 332 | 559 | 28.3 / 41.3 | 14.3 | 220 / 234 |
+| `zrdo:30:3` | Zstd 9 | 769.8 (−5.7 %) | 0 | 766 | 2365 | 76.9 / 83.3 | 36.7 | 593 / 600 |
+|  |  |  | 8 | 332 | 971 | 56.5 / 67.6 | 28.1 | 439 / 451 |
+|  | fields + Zstd 19, per clip | 717.2 (−4.7 %) | 0 | 766 | 2738 | 88.6 / 94.4 | 42.9 | 686 / 692 |
+|  |  |  | 8 | 332 | 1215 | 66.6 / 77.0 | 33.3 | 529 / 539 |
+|  | fields + LZ4 HC 12, per clip | 825.6 (−4.2 %) | 0 | 766 | 1127 | 36.5 / 43.3 | 17.8 | 282 / 290 |
+|  |  |  | 8 | 332 | 535 | 28.0 / 40.5 | 14.1 | 218 / 230 |
+| `coarse:2:2+zrdo:30:3` | Zstd 9 | 698.3 (−14.5 %) | 0 | 766 | 2298 | 74.1 / 80.1 | 37.0 | 576 / 582 |
+|  |  |  | 8 | 332 | 958 | 56.1 / 66.7 | 27.6 | 435 / 446 |
+|  | fields + Zstd 19, per clip | 645.9 (−14.2 %) | 0 | 766 | 2618 | 83.7 / 89.5 | 41.1 | 657 / 663 |
+|  |  |  | 8 | 332 | 1156 | 63.3 / 72.8 | 31.8 | 501 / 511 |
+|  | fields + LZ4 HC 12, per clip | 755.8 (−12.3 %) | 0 | 766 | 1152 | 37.3 / 43.9 | 18.5 | 289 / 296 |
+|  |  |  | 8 | 332 | 546 | 28.6 / 40.3 | 14.4 | 223 / 235 |
+| `zrdo:100:6` | Zstd 9 | 691.9 (−15.3 %) | 0 | 766 | 2160 | 70.2 / 75.7 | 34.3 | 542 / 548 |
+|  |  |  | 8 | 332 | 922 | 52.4 / 63.5 | 26.3 | 407 / 418 |
+|  | fields + Zstd 19, per clip | 656.2 (−12.8 %) | 0 | 766 | 2759 | 89.4 / 94.5 | 44.4 | 691 / 696 |
+|  |  |  | 8 | 332 | 1233 | 67.3 / 77.3 | 33.8 | 526 / 536 |
+|  | fields + LZ4 HC 12, per clip | 764.3 (−11.3 %) | 0 | 766 | 1178 | 37.7 / 44.5 | 18.6 | 295 / 302 |
+|  |  |  | 8 | 332 | 557 | 28.8 / 40.8 | 14.5 | 225 / 237 |
+
+Page decode ms p50 / p95, Classic, 4 workers busy (decompress and inverse, whole page):
+
+| Pages | Method | ≤ 96 px | 97–192 px | 193–384 px | > 384 px |
+|---|---|---:|---:|---:|---:|
+| plain | Zstd 9 | 2.70 / 4.70 | 2.76 / 4.06 | 2.59 / 3.71 | 1.23 / 3.33 |
+|  | fields + Zstd 19 | 6.18 / 8.58 | 6.41 / 7.71 | 5.80 / 7.35 | 2.81 / 6.45 |
+|  | fields + LZ4 HC 12 | 4.63 / 6.46 | 4.38 / 5.84 | 3.80 / 5.59 | 1.96 / 4.57 |
+| `zrdo:30:3` | Zstd 9 | 2.83 / 4.36 | 2.78 / 4.41 | 2.40 / 4.14 | 1.22 / 3.35 |
+|  | fields + Zstd 19 | 6.26 / 9.36 | 6.43 / 8.05 | 5.81 / 8.27 | 3.02 / 7.17 |
+|  | fields + LZ4 HC 12 | 4.67 / 5.65 | 4.34 / 5.07 | 3.84 / 4.82 | 1.75 / 4.38 |
+| `coarse:2:2+zrdo:30:3` | Zstd 9 | 2.69 / 4.43 | 2.61 / 4.97 | 2.48 / 4.08 | 1.21 / 3.29 |
+|  | fields + Zstd 19 | 6.18 / 8.25 | 6.19 / 7.53 | 5.66 / 7.06 | 2.76 / 6.55 |
+|  | fields + LZ4 HC 12 | 4.62 / 6.44 | 4.35 / 5.50 | 3.82 / 4.69 | 1.69 / 4.42 |
+| `zrdo:100:6` | Zstd 9 | 2.62 / 4.05 | 2.65 / 3.47 | 2.21 / 3.41 | 1.12 / 2.82 |
+|  | fields + Zstd 19 | 6.47 / 10.47 | 6.32 / 8.94 | 5.77 / 8.77 | 2.81 / 7.03 |
+|  | fields + LZ4 HC 12 | 4.70 / 6.38 | 4.45 / 5.97 | 3.94 / 5.77 | 2.11 / 5.19 |
+
+Random crowds, Enhanced (median of 20; MiB and Δ against the plain encode under the same config):
+
+| Pages | Config | MiB | Cache | Page decodes | Decode ms | First drawable, warm / cold | Mobile p50, warm | All preloaded, warm / cold |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| plain | Zstd 9 | 1798.3 | 0 | 821 | 2840 | 92.4 / 103.0 | 46.7 | 711 / 723 |
+|  |  |  | 8 | 455 | 1478 | 74.4 / 91.2 | 37.6 | 585 / 603 |
+|  | fields + Zstd 19, per clip | 1658.6 | 0 | 821 | 3270 | 104.7 / 114.4 | 52.2 | 818 / 829 |
+|  |  |  | 8 | 455 | 1739 | 85.4 / 99.7 | 43.6 | 657 / 672 |
+|  | fields + LZ4 HC 12, per clip | 1886.0 | 0 | 821 | 1176 | 38.1 / 49.7 | 19.6 | 295 / 307 |
+|  |  |  | 8 | 455 | 682 | 31.3 / 48.8 | 15.8 | 246 / 265 |
+| `zrdo:30:3` | Zstd 9 | 1708.8 (−5.0 %) | 0 | 821 | 2565 | 84.6 / 94.2 | 43.3 | 644 / 655 |
+|  |  |  | 8 | 455 | 1351 | 68.1 / 84.0 | 35.0 | 529 / 547 |
+|  | fields + Zstd 19, per clip | 1588.5 (−4.2 %) | 0 | 821 | 3034 | 99.1 / 109.2 | 51.0 | 761 / 771 |
+|  |  |  | 8 | 455 | 1702 | 80.5 / 95.9 | 41.0 | 631 / 645 |
+|  | fields + LZ4 HC 12, per clip | 1814.9 (−3.8 %) | 0 | 821 | 1196 | 38.9 / 49.5 | 20.1 | 300 / 312 |
+|  |  |  | 8 | 455 | 699 | 31.8 / 48.8 | 16.4 | 249 / 266 |
+| `coarse:2:2+zrdo:30:3` | Zstd 9 | 1584.2 (−11.9 %) | 0 | 821 | 2757 | 89.5 / 98.1 | 45.4 | 690 / 701 |
+|  |  |  | 8 | 455 | 1428 | 72.5 / 86.1 | 36.6 | 560 / 576 |
+|  | fields + Zstd 19, per clip | 1461.1 (−11.9 %) | 0 | 821 | 2994 | 98.2 / 107.8 | 49.2 | 752 / 760 |
+|  |  |  | 8 | 455 | 1646 | 79.5 / 93.3 | 40.9 | 626 / 640 |
+|  | fields + LZ4 HC 12, per clip | 1690.3 (−10.4 %) | 0 | 821 | 1240 | 40.4 / 50.4 | 20.4 | 311 / 322 |
+|  |  |  | 8 | 455 | 714 | 33.0 / 48.7 | 16.5 | 258 / 275 |
+| `zrdo:100:6` | Zstd 9 | 1592.1 (−11.5 %) | 0 | 821 | 2622 | 84.4 / 94.4 | 44.3 | 657 / 666 |
+|  |  |  | 8 | 455 | 1363 | 69.6 / 84.4 | 35.7 | 532 / 548 |
+|  | fields + Zstd 19, per clip | 1494.0 (−9.9 %) | 0 | 821 | 3026 | 97.6 / 106.1 | 50.9 | 759 / 769 |
+|  |  |  | 8 | 455 | 1639 | 79.9 / 93.8 | 40.6 | 616 / 632 |
+|  | fields + LZ4 HC 12, per clip | 1722.4 (−8.7 %) | 0 | 821 | 1434 | 46.3 / 57.5 | 23.6 | 360 / 371 |
+|  |  |  | 8 | 455 | 824 | 37.7 / 54.0 | 19.7 | 294 / 312 |
+
+Page decode ms p50 / p95, Enhanced, 4 workers busy (decompress and inverse, whole page):
+
+| Pages | Method | ≤ 96 px | 97–192 px | 193–384 px | > 384 px |
+|---|---|---:|---:|---:|---:|
+| plain | Zstd 9 | 3.49 / 5.75 | 3.40 / 4.83 | 2.39 / 4.06 | 1.31 / 3.46 |
+|  | fields + Zstd 19 | 7.28 / 10.30 | 7.11 / 8.46 | 5.82 / 7.90 | 3.11 / 7.28 |
+|  | fields + LZ4 HC 12 | 4.86 / 5.58 | 4.43 / 5.13 | 3.79 / 4.61 | 1.77 / 4.11 |
+| `zrdo:30:3` | Zstd 9 | 3.28 / 4.44 | 3.29 / 4.02 | 2.36 / 3.81 | 1.28 / 3.34 |
+|  | fields + Zstd 19 | 6.94 / 9.00 | 6.96 / 8.55 | 5.74 / 7.94 | 3.01 / 7.07 |
+|  | fields + LZ4 HC 12 | 4.90 / 5.96 | 4.50 / 5.88 | 3.88 / 4.85 | 1.78 / 4.19 |
+| `coarse:2:2+zrdo:30:3` | Zstd 9 | 3.38 / 4.99 | 3.33 / 5.01 | 2.45 / 4.84 | 1.31 / 3.53 |
+|  | fields + Zstd 19 | 6.98 / 9.06 | 6.82 / 9.12 | 5.71 / 8.08 | 3.07 / 7.19 |
+|  | fields + LZ4 HC 12 | 4.97 / 6.29 | 4.60 / 5.94 | 3.96 / 5.56 | 1.81 / 4.54 |
+| `zrdo:100:6` | Zstd 9 | 3.28 / 4.79 | 3.27 / 4.00 | 2.27 / 3.76 | 1.25 / 3.23 |
+|  | fields + Zstd 19 | 6.97 / 8.69 | 6.86 / 8.20 | 5.71 / 7.87 | 3.06 / 6.74 |
+|  | fields + LZ4 HC 12 | 5.50 / 7.21 | 5.18 / 6.63 | 4.22 / 6.05 | 2.30 / 5.36 |
+
+**Decode does not get slower, with one exception:**
+- Under Zstd 9 and `fields` + Zstd 19 the conditioned pages decode as fast as the plain ones or up to 10 % faster:
+  more of each page is matches, less is literals for Zstd's entropy stage. The first drawable moves by −9 to +3 %
+  (Classic) and −9 to −3 % (Enhanced).
+- Under `fields` + LZ4 HC 12 they are within 6 %, except `zrdo:100:6` on Enhanced: 22 % slower (1434 against 1176 ms,
+  first drawable 46 against 38 ms). A whole-block match is one short LZ4 sequence, and 15 % of the visible blocks
+  became one. Its Classic run shows +4 %, so this is the one figure worth timing again before relying on it.
+- These packages were packed again from this commit, so the plain figures differ from the
+  [Crowds](#crowds-under-the-loader-order) tables (Enhanced: 821 page decodes against 804, first drawable 92 against
+  83 ms); compare within these tables. Differences under about 5 % are run-to-run noise.
+
+The trade between the configs is the one [Crowds](#crowds-under-the-loader-order) measured; conditioning adds its
+disk saving to whichever is chosen and nothing to the load.
+
+### Encode time
+
+On one thread per page (20 pages at once, the times summed over the pages' threads):
+- the plain encode: 0.26 s a Classic page, 0.17 s an Enhanced one (the sample pages; 0.06 s averaged over all
+  Classic pages, most of which are small);
+- `coarse` 0.15 s, `flat` 0.02 s, `reuse` 0.2 s (0.03 s at radius 0), `zrdo` / `lrdo` 0.6 s, `fields` / `lfields`
+  0.8 s a page;
+- the library RDO 5.3 s (look-back 64), 13 s (256), 56 s (1024), 137 s (4096) a page.
+
+A full Classic run of three variants with every measure took 19 minutes on 20 threads; the steps alone add about a
+minute (Classic) and two (Enhanced) to a repack, against the 25 and 51 minutes of the packer's RDO (λ 1).
+
+### Clips
+
+Side-by-side videos, nearest-upscaled, anchored, looped, in
+`/home/claudio/rust-target/uodynamapper-scratch/bc7-lossy/clips/`:
+
+Each video is `<body>-<action or movement>-<direction>_<encodes>.mp4`, panels left to right: the source frames, the
+plain encode, then the variants (`<encodes>` counts the plain encode and the variants).
+
+- Classic, 4×, panels source | plain | `zrdo:30:3` | `coarse:2:2+zrdo:30:3` | `zrdo:100:6` | `rdo:1:64`:
+  - `400-walk-2_5.mp4`, the human male walking;
+  - `400-5-3_5.mp4`, his fidget (action 5; his stand clip is a single frame);
+  - `17-walk-3_5.mp4`, an orc walking, a mid-size body.
+- Enhanced, 3×, panels source | plain | `zrdo:30:3` | `coarse:2:2+zrdo:30:3` | `zrdo:100:6` (the library RDO is left
+  out: it takes 5 s a page for each of these large pages and is dominated on every measure):
+  - `12-walk-2_4.mp4`, a dragon walking, a large body;
+  - `9-walk-2_4.mp4` and `9-stand-3_4.mp4`, a daemon walking and standing.
+- The same six clips with `fields:30:3` alone, panels source | plain | `fields:30:3`, at the same scales: the files
+  ending `_2.mp4`.
+
+What to look at: banding on the large bodies' smooth shading under `coarse` and `zrdo:100:6`, and the shimmer of
+`rdo:1:64` at the silhouette, which no other step moves.
+
+### Verdict
+
+Every candidate below keeps silhouettes and alpha exact and decodes as fast as the plain encode (one exception
+under LZ4 HC, in 3); they differ in size and visible error. Figures are full packages under `fields` + Zstd 19
+per clip (codec 4), Classic / Enhanced.
+
+1. **Mild: `fields:30:3` (or `zrdo:30:3` for a non-split codec).** −9.9 / −6.9 % for −0.61 / −0.15 dB and −0.8 /
+   −0.2 SSIMULACRA2; `zrdo:30:3` gives −4.7 / −4.2 % there for −0.21 / −0.10 dB. Under Zstd 9 or LZ4 HC without the
+   split, `zrdo:30:3` is the one (−5.7 / −5.0 % at Zstd 9), about what the packer's RDO saves today at a tenth of its
+   error. Both cost 0.6 to 0.8 s a page. The least likely to be seen; worth a look on the large Enhanced bodies,
+   where `fields:30:3` loses 2.2 points.
+2. **Strong: `coarse:2:2+zrdo:30:3`.** −14.2 / −11.9 % (−106 / −197 MiB) for −0.71 / −0.64 dB, but −2.2 / −2.9
+   SSIMULACRA2 (−3.3 to −4.3 on bodies above 192 px): endpoint steps on smooth shading. Needs the visual decision.
+3. **Alternative: `zrdo:100:6`.** −12.8 / −9.9 % for −1.30 / −0.62 dB. Its package SSIMULACRA2 is better than the
+   strong chain's (−1.1 / −0.7), but on bodies above 192 px it is worse (−3.8 to −7.1) and its flicker the highest
+   of the three; under `fields` + LZ4 HC 12 its Enhanced crowd decoded 22 % slower. At most the strong chain's size
+   (smaller only on Classic under Zstd 9) and worse where it shows; kept for the visual comparison only.
+
+Not recommended:
+- **The library RDO** (any λ or look-back): dominated by `zrdo` at every size, changes silhouettes, and a long
+  look-back costs minutes a page.
+- **An LZ4-priced RDO:** within a fraction of a point of the Zstd-priced steps under LZ4 HC 12 and worse under the
+  field split. The error bound, not the coder model, sets the trade.
+- **Temporal reuse on an aligned layout:** −2.2 / −2.5 % under codec 4 for 0.05 dB, almost all from idle clips,
+  against a packer layout change and 7.4 % more Classic pages. On top of `coarse:2:2` it adds 1.4 / 2.0 points.
+- **Flat blocks:** rare (−2.6 to −3.1 % within 4 levels).
+
+Which deserve a visual decision: the mild `fields:30:3` / `zrdo:30:3` (whether anyone can tell), the strong
+`coarse:2:2+zrdo:30:3`, and `zrdo:100:6` against it. Any of them would be a packer step after the encode, before the
+page codec, with no format or reader change.
+
+To reproduce:
+
+```sh
+B=/home/claudio/rust-target/uodynamapper/release/udd-bc7-supercompress
+udd-cli pack pack-mobile-anims --ccdir "<Classic>" --output cc_bc7.uddp --bc-encode-device cpu
+udd-cli pack pack-mobile-anims --ccdir "<Classic>" --output cc_rgba.uddp --bc-encode-device cpu --raw --zstd=3
+# and pack-ec-mobile-anims --ecdir "<Enhanced>" for ec_bc7 and ec_rgba
+$B lossy cc_rgba.uddp cc_bc7.uddp cc --every 60 --check --ssim-every 50 \
+    --variants rdo:1:64,zrdo:30:3,fields:30:3,coarse:2:2,coarse:2:2+zrdo:30:3,flat:4   # and the others
+$B lossy cc_rgba.uddp cc_bc7.uddp cc --layout aligned --every 60 --ssim-every 50 --variants reuse:0,reuse:2,reuse:4
+$B lossy cc_rgba.uddp cc_bc7.uddp cc --ssim-every 50 --variants zrdo:30:3,coarse:2:2+zrdo:30:3 --store store/cc
+$B crowd cc_bc7.uddp cc --bounds 96,192,384 --lru 0,8 --mix random --pages store/cc/zrdo_30_3 \
+    --config today=none+zstd:9 --config f19c=fields+zstd:19@clip --config f4c=fields+lz4hc:12@clip
+$B lossy cc_rgba.uddp cc_bc7.uddp cc --every 100000 --variants zrdo:30:3,coarse:2:2+zrdo:30:3,zrdo:100:6,rdo:1:64 \
+    --methods none+zstd:9 --clip 400:walk:2 --clip 400:5:3 --clip 17:walk:3 --clip-dir clips
+$B lossy ec_rgba.uddp ec_bc7.uddp ec --every 100000 --variants zrdo:30:3,coarse:2:2+zrdo:30:3,zrdo:100:6 \
+    --methods none+zstd:9 --clip 12:walk:2 --clip 9:walk:2 --clip 9:stand:3 --clip-scale 3 --clip-dir clips
+```
