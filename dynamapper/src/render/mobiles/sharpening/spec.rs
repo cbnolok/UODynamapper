@@ -385,6 +385,10 @@ mod tests {
         assert_eq!(spec.resolve(AnimSource::Enhanced, 9, Some(388)).sharpening, 0.4);
         assert_eq!(spec.resolve(AnimSource::Enhanced, 17, Some(80)).sharpening, 1.0, "a small Enhanced monster");
         assert_eq!(spec.resolve(AnimSource::Enhanced, 401, Some(150)).sharpening, 0.4, "an Enhanced human");
+        assert_eq!(spec.resolve(AnimSource::Enhanced, 401, Some(150)).outline, 1.0, "the Enhanced outline");
+        assert_eq!(spec.resolve(AnimSource::Enhanced, 17, Some(80)).outline, 1.0, "a small Enhanced monster's");
+        assert_eq!(spec.resolve(AnimSource::Enhanced, 17, Some(80)).contour, 0.0, "no Enhanced contour");
+        assert_eq!(spec.resolve(AnimSource::Classic, 400, Some(77)).outline, 0.0, "no Classic outline");
     }
 
     #[test]

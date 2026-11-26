@@ -40,6 +40,10 @@
 // than the small ones, so every Classic size takes the small bodies' 0.7 (the orc CAS's strongest). The Enhanced
 // frames are rendered art with an anti-aliased rim; the Enhanced monsters look better at scale 2 than at 1, so their
 // values are twice the first ones, while the Enhanced humans, elves and gargoyles keep the first values (0.4).
+// The user, 2026-11-26, from clips of the edge options: the full outline (outline=1) reads far better on the Enhanced
+// frames than any other edge option, a contour of 0.8, then 0.4, coming after it. Every Enhanced body takes it.
+// To try the outline with a contour as well, set the Enhanced default to
+//     default sharpening=0.4 outline=1.0 contour=0.8
 
 classic {
     default sharpening=0.7
@@ -51,7 +55,7 @@ classic {
 }
 
 enhanced {
-    default sharpening=0.4
+    default sharpening=0.4 outline=1.0
     size max=96 sharpening=1.0
     size max=192 sharpening=0.8
     size max=384 sharpening=0.6
