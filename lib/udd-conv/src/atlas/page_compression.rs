@@ -35,8 +35,10 @@ pub const BC7_PAGE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDictLev
 /// compression time (about 5 minutes more for EC), level 7 0.6–0.8 % larger; decoding takes 2.3–4.5 ms a page at
 /// every level. With the field split the whole packages are 8.0 % (EC) to 8.8 % (CC) smaller at 19 than plain Zstd 9
 /// (`docs/agent_notes/bc7_anim_supercompression.md`; the user, 2026-11-26: "okay for zstd 19 where its compression
-/// ratio/decompression time makes sense").
-pub const MOBILE_ANIM_PAGE_ZSTD_LEVEL: i32 = 19;
+/// ratio/decompression time makes sense"). Level 17 keeps 8.3 % (CC) and 7.4 % (EC) of that for about half the extra
+/// pack time (sampled on every 8th page), which the user took on 2026-11-26 ("you can keep 17 then, if the extra time
+/// is halved for only a little less compression efficiency").
+pub const MOBILE_ANIM_PAGE_ZSTD_LEVEL: i32 = 17;
 
 /// How a mobile animation page is coded unless the packer is asked for another way.
 pub const MOBILE_ANIM_PAGE_CODING: MobileAnimPageCoding = MobileAnimPageCoding::FieldsZstd;

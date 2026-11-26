@@ -48,7 +48,7 @@ not read: repack the Enhanced packages and remove them.
 
 Without a format flag the packers write block-compressed textures with Zstd, RDO off: the art,
 Enhanced land and auxiliary texture pages BC7 with Zstd 19, the mobile animation pages BC7 in
-the BC7 field split with Zstd 19 (below), the single gumps BC1 (Classic) or BC7 (Enhanced) with Zstd 19, and the effects textures
+the BC7 field split with Zstd 17 (below), the single gumps BC1 (Classic) or BC7 (Enhanced) with Zstd 19, and the effects textures
 BC7; `--zstd=LEVEL` picks another level. `--raw --zstd=19` (`--art-raw`, `--land-raw` in
 `pack-ec-textures`) writes the lossless RGBA8888 pages, and `--raw` the lossless single gumps
 and effects textures. Classic land (`pack-texmaps`), the gump paperdoll atlas pages and
@@ -60,8 +60,9 @@ and effects textures. Classic land (`pack-texmaps`), the gump paperdoll atlas pa
 `--page-coding` says (the 2x pages of `--prescale` too):
 
 - `fields-zstd`, the default: each BC7 page split into its blocks' fields (container codec 4,
-  `docs/dev_wiki/UDDP_FORMATS.md`), then Zstd at `--zstd=LEVEL` or 19. The packages are 8 to 9 %
-  smaller than with plain Zstd 9 (Classic 8.7 %, Enhanced 7.8 %), and Dynamapper joins only the blocks of the clips it draws.
+  `docs/dev_wiki/UDDP_FORMATS.md`), then Zstd at `--zstd=LEVEL` or 17. The packages are 7 to 9 %
+  smaller than with plain Zstd 9 (Classic 8.3 %, Enhanced 7.4 % at 17; 8.7 % and 7.8 % at 19 for about twice the
+  extra pack time), and Dynamapper joins only the blocks of the clips it draws.
 - `fields-lz4hc`: the split, then LZ4 HC (codec 5), which takes no `--zstd` level: about 5 %
   larger than plain Zstd 9, and 2.4 times as fast to decode as plain Zstd 9.
 - `zstd`: plain Zstd of the blocks, as before 2026-11-26.

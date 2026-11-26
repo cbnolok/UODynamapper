@@ -725,9 +725,9 @@ the smallest it makes sense"):
 - **Format.** Container codec 4 (`Bc7FieldsZstd`) is the split of this study's layout and checks
   (`udd_container::bc7_fields`), then one Zstd frame; codec 5 (`Bc7FieldsLz4Hc`) is the split, then one LZ4 HC block.
   The codec's high bit is Meta32 bit 17, and a reader refuses reserved bits (`docs/dev_wiki/UDDP_FORMATS.md`).
-- **Packers.** The mobile animation packers (and the 2x pages of `--prescale`) default to codec 4 at Zstd 19
+- **Packers.** The mobile animation packers (and the 2x pages of `--prescale`) default to codec 4 at Zstd 17 (19 until the same evening)
   (`MOBILE_ANIM_PAGE_COMPRESSION`); `--page-coding fields-lz4hc` writes codec 5 and `--page-coding zstd` plain Zstd.
-  The GUI's mobile cards have the same choice; Quick Convert packs codec 4 at 19.
+  The GUI's mobile cards have the same choice; Quick Convert packs codec 4 at 17.
 - **Reader.** `udd_assets::animation::mobile_pages` keeps a split page split and joins only a clip's blocks
   (`FieldsPage`), in an LRU of `MOBILE_PAGE_CACHE_PAGES` = 6 decoded pages shared by the loader's workers, which wait
   for a page another worker is decoding. Every frame and every clip of both repacked packages comes out byte for
@@ -753,6 +753,11 @@ are slower than the study's above, the split's more than Zstd 9's:
   | 17 | −8.30 % | 84.6 | −7.40 % | 165.7 |
   | 18 | −8.45 % | 109.8 | −7.68 % | 222.2 |
   | 19 | −8.83 % | 179.0 | −8.04 % | 366.0 |
+
+  The user took 17 the same day ("you can keep 17 then, if the extra time is halved for only a little less compression
+  efficiency"): `MOBILE_ANIM_PAGE_ZSTD_LEVEL` is 17, so the packers, the GUI cards and Quick Convert default to it.
+  The package sizes and pack times in the table above are level 19's; expect about 0.4 to 0.6 points less saving and
+  about half the extra time.
 
 - **Cache size.** `crowd --lru 0,2,4,6,8,16`, 20 crowds of 34 mobiles in the loader's order. A random crowd's page
   decodes reach their floor at 2 pages (Classic 766, 340, 335, 332, 332, 332; Enhanced 804, 457, 455, 455, 455,

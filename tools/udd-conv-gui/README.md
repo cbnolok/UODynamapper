@@ -111,9 +111,9 @@ starts. They are saved as `bc_encode_device` and `bc7_rdo_device`. An older
 settings file without them loads both as Auto, the CLI's default.
 
 The mobile animation cards' **Page Coding** is `--page-coding`: Split + Zstd (the default, at
-the card's Zstd level, 19 by default), Split + LZ4 HC (the level unused) or plain Zstd. It is
+the card's Zstd level, 17 by default), Split + LZ4 HC (the level unused) or plain Zstd. It is
 saved as `page_coding_mobile_anim_cc` and `page_coding_mobile_anim_ec` (`FieldsZstd`,
-`FieldsLz4Hc`, `Zstd`); Quick Convert always packs Split + Zstd at level 19.
+`FieldsLz4Hc`, `Zstd`); Quick Convert always packs Split + Zstd at level 17.
 
 When an upscale profile is selected in the GUI, it is loaded at conversion start
 and used only for image targets that match the profile. Existing GUI upscale
