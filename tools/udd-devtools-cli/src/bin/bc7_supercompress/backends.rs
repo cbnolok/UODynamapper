@@ -21,6 +21,14 @@ const LARGE_INPUT_PARAMETERS: [(i32, [u32; 6], zstd_safe::Strategy); 2] = [
 ];
 /// Bytes of the chunk-size table of an LZ4 chunked payload, per chunk: LZ4 blocks don't end themselves.
 const LZ4_CHUNK_SIZE_BYTES: usize = 4;
+/// The smallest LZMA2 dictionary liblzma accepts (`LZMA_DICT_SIZE_MIN`).
+const LZMA2_DICT_SIZE_MIN: u32 = 4096;
+/// xz's presets run from 0 to 9.
+const XZ_PRESET_MAX: u32 = 9;
+/// The dictionary of each xz preset (`lzma_lzma_preset`; liblzma's options have no getter). From preset 3 up the
+/// dictionary holds a whole 4 MiB page, so presets 6 and 9 differ only in what they allocate.
+const XZ_PRESET_DICT_SIZES: [u32; XZ_PRESET_MAX as usize + 1] =
+    [1 << 18, 1 << 20, 1 << 21, 1 << 22, 1 << 22, 1 << 23, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
 const PERCENT: u64 = 100;
 const KIB: usize = 1024;
 
@@ -43,6 +51,10 @@ pub enum Backend {
     /// The builder's `ZstdOrLz4HcLevel` on a page under its strips size: LZ4 HC at `lz4_level` when it is at most
     /// `max_growth_percent` larger than one Zstd frame at `zstd_level`, else that frame.
     Rule { zstd_level: i32, lz4_level: i32, max_growth_percent: u32 },
+    /// One raw LZMA2 stream (no xz headers) at an xz preset, `extreme` its `e` variant. The dictionary is cut to the
+    /// payload (the smallest power of two that holds it, below the preset's), which leaves the output as it is and
+    /// keeps the decoder from allocating the preset's 8 to 64 MiB.
+    Xz { preset: u32, extreme: bool },
 }
 
 impl fmt::Display for Backend {
@@ -59,6 +71,8 @@ impl fmt::Display for Backend {
             Self::Lz4HcDict { level, chunk: Some(chunk) } => write!(f, "lz4hc-dict-chunks:{level}:{}", chunk / KIB),
             Self::Rule { zstd_level, lz4_level, max_growth_percent } =>
                 write!(f, "rule:{zstd_level}:{lz4_level}:{max_growth_percent}"),
+            Self::Xz { preset, extreme: false } => write!(f, "xz:{preset}"),
+            Self::Xz { preset, extreme: true } => write!(f, "xz:{preset}e"),
         }
     }
 }
@@ -85,6 +99,17 @@ impl Backend {
                 lz4_level: number(2)? as i32,
                 max_growth_percent: u32::try_from(number(3)?).ok()?,
             },
+            ("xz", 2) => {
+                let (digits, extreme) = match parts[1].strip_suffix('e') {
+                    Some(digits) => (digits, true),
+                    None => (parts[1], false),
+                };
+                let preset: u32 = digits.parse().ok()?;
+                if preset > XZ_PRESET_MAX {
+                    return None;
+                }
+                Self::Xz { preset, extreme }
+            }
             _ => return None,
         })
     }
@@ -125,6 +150,8 @@ pub enum StoredCodec {
     ZstdDict,
     /// One LZ4 block per chunk; `chunk_sizes` is what the size table holds (counted in the payload size).
     Lz4 { chunk_sizes: Vec<u32>, chunk: usize, dictionary: bool },
+    /// One raw LZMA2 stream with a dictionary of `dict_size` bytes, which a reader would know from the payload's size.
+    Lzma2 { dict_size: u32 },
 }
 
 pub type CoderResult<T> = Result<T, String>;
@@ -180,6 +207,65 @@ fn lz4_chunks(data: &[u8], level: i32, chunk: usize, dictionary: Option<&Diction
     Ok(Encoded { bytes, codec: StoredCodec::Lz4 { chunk_sizes, chunk, dictionary: dictionary.is_some() } })
 }
 
+/// LZMA2 filter options of an xz preset with the dictionary cut to `data_len`.
+fn lzma2_filters(preset: u32, extreme: bool, data_len: usize) -> CoderResult<(liblzma::stream::Filters, u32)> {
+    let flags = if extreme { liblzma::stream::PRESET_EXTREME } else { 0 };
+    let mut options = liblzma::stream::LzmaOptions::new_preset(preset | flags).map_err(|error| error.to_string())?;
+    let needed = u32::try_from(data_len.max(1).next_power_of_two()).map_err(|_| "payload too large for LZMA2")?;
+    let dict_size = needed.clamp(LZMA2_DICT_SIZE_MIN, XZ_PRESET_DICT_SIZES[preset as usize]);
+    options.dict_size(dict_size);
+    let mut filters = liblzma::stream::Filters::new();
+    filters.lzma2(&options);
+    Ok((filters, dict_size))
+}
+
+fn lzma2_encode(data: &[u8], preset: u32, extreme: bool) -> CoderResult<Encoded> {
+    let (filters, dict_size) = lzma2_filters(preset, extreme, data.len())?;
+    let mut stream = liblzma::stream::Stream::new_raw_encoder(&filters).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::with_capacity(data.len() / 2 + LZMA2_DICT_SIZE_MIN as usize);
+    loop {
+        let consumed = stream.total_in() as usize;
+        if bytes.capacity() - bytes.len() < LZMA2_DICT_SIZE_MIN as usize {
+            bytes.reserve(bytes.capacity());
+        }
+        let status = stream.process_vec(&data[consumed..], &mut bytes, liblzma::stream::Action::Finish)
+            .map_err(|error| error.to_string())?;
+        if status == liblzma::stream::Status::StreamEnd {
+            break;
+        }
+    }
+    Ok(Encoded { bytes, codec: StoredCodec::Lzma2 { dict_size } })
+}
+
+fn lzma2_decode_into(bytes: &[u8], dict_size: u32, raw_len: usize, out: &mut Vec<u8>) -> CoderResult<()> {
+    let mut options = liblzma::stream::LzmaOptions::new_preset(0).map_err(|error| error.to_string())?;
+    options.dict_size(dict_size);
+    let mut filters = liblzma::stream::Filters::new();
+    filters.lzma2(&options);
+    let mut stream = liblzma::stream::Stream::new_raw_decoder(&filters).map_err(|error| error.to_string())?;
+    out.reserve(raw_len);
+    loop {
+        let consumed = stream.total_in() as usize;
+        let before = out.len();
+        let status = stream.process_vec(&bytes[consumed..], out, liblzma::stream::Action::Finish)
+            .map_err(|error| error.to_string())?;
+        if status == liblzma::stream::Status::StreamEnd {
+            break;
+        }
+        if out.len() >= raw_len {
+            // The payload holds more than the page: the end marker never came within `raw_len`.
+            return Err(format!("LZMA2 stream longer than {raw_len} bytes"));
+        }
+        if out.len() == before && stream.total_in() as usize == consumed {
+            return Err("truncated LZMA2 stream".into());
+        }
+    }
+    if out.len() != raw_len {
+        return Err(format!("LZMA2 stream decoded to {} bytes, not {raw_len}", out.len()));
+    }
+    Ok(())
+}
+
 pub fn encode(backend: Backend, data: &[u8], dictionary: Option<&Dictionary>) -> CoderResult<Encoded> {
     let need = || dictionary.ok_or_else(|| format!("{backend} needs a dictionary"));
     Ok(match backend {
@@ -214,6 +300,7 @@ pub fn encode(backend: Backend, data: &[u8], dictionary: Option<&Dictionary>) ->
                 Encoded { bytes: zstd, codec: StoredCodec::Zstd }
             }
         }
+        Backend::Xz { preset, extreme } => lzma2_encode(data, preset, extreme)?,
     })
 }
 
@@ -291,6 +378,7 @@ pub fn decode_into(encoded: &Encoded, raw_len: usize, dictionary: Option<&Dictio
             }
             Ok(())
         }
+        StoredCodec::Lzma2 { dict_size } => lzma2_decode_into(&encoded.bytes, *dict_size, raw_len, out),
     }
 }
 
@@ -402,7 +490,8 @@ mod tests {
         let pages = vec![Arc::new(page.clone()); 4];
         let dictionary = train_dictionary(&pages, 4 * KIB, 1, 8 * KIB).unwrap();
         for name in ["zstd:3", "zstd:3:long", "zstd-chunks:3:16", "zstd-dict:9", "zstd-dict:19", "zstd-dict-chunks:3:16", "lz4hc:9",
-            "lz4hc-chunks:9:16", "lz4hc-dict:9", "lz4hc-dict-chunks:9:16", "rule:3:9:20", "rule:3:9:0"] {
+            "lz4hc-chunks:9:16", "lz4hc-dict:9", "lz4hc-dict-chunks:9:16", "rule:3:9:20", "rule:3:9:0", "xz:1", "xz:6",
+            "xz:9e"] {
             let backend = Backend::parse(name).unwrap();
             assert_eq!(backend.to_string(), name);
             let encoded = encode(backend, &page, Some(&dictionary)).unwrap();
@@ -413,10 +502,31 @@ mod tests {
     #[test]
     fn a_damaged_payload_fails_to_decode() {
         let page = sample_page();
-        for name in ["zstd:3", "lz4hc:9", "lz4hc-chunks:9:16"] {
+        for name in ["zstd:3", "lz4hc:9", "lz4hc-chunks:9:16", "xz:6"] {
             let mut encoded = encode(Backend::parse(name).unwrap(), &page, None).unwrap();
             encoded.bytes.truncate(encoded.bytes.len() / 2);
             assert!(decode(&encoded, page.len(), None).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn an_lzma2_stream_of_another_length_is_rejected() {
+        let page = sample_page();
+        let encoded = encode(Backend::parse("xz:6").unwrap(), &page, None).unwrap();
+        assert!(decode(&encoded, page.len() - 1, None).is_err());
+        assert!(decode(&encoded, page.len() + 1, None).is_err());
+        let mut corrupt = encoded.bytes.clone();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0xFF;
+        let corrupt = Encoded { bytes: corrupt, codec: encoded.codec.clone() };
+        assert_ne!(decode(&corrupt, page.len(), None).ok(), Some(page));
+    }
+
+    #[test]
+    fn xz_names_parse_within_the_presets() {
+        assert_eq!(Backend::parse("xz:9e"), Some(Backend::Xz { preset: 9, extreme: true }));
+        for bad in ["xz:10", "xz:e", "xz:-1", "xz:6:1"] {
+            assert_eq!(Backend::parse(bad), None, "{bad}");
         }
     }
 

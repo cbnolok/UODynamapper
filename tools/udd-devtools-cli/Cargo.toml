@@ -13,7 +13,7 @@ dev-tool-tests = []
 gpu-bench = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:wesl", "dep:dds"]
 web-codecs = ["dep:libwebp-sys", "dep:image"]
 # The lossless supercompression experiments on the BC7 mobile animation pages (udd-bc7-supercompress).
-bc7-supercompress = ["dep:zstd", "dep:lz4"]
+bc7-supercompress = ["dep:zstd", "dep:lz4", "dep:liblzma", "dep:guillotiere"]
 
 [dependencies]
 udd-assets = { path = "../../lib/udd-assets" }
@@ -33,6 +33,10 @@ image = { workspace = true, features = ["png"], optional = true }
 zstd = { workspace = true, optional = true }
 # The container's LZ4 HC; its C library also has the dictionary functions the experiments declare.
 lz4 = { version = "1.28", optional = true }
+# LZMA2 through xz's liblzma, built from the crate's vendored source: the densest, slowest coder the experiments try.
+liblzma = { version = "0.4.9", default-features = false, features = ["static"], optional = true }
+# The mobile animation packer's allocator, to lay a body's frames out on pages of their own as the packer would.
+guillotiere = { version = "0.7", optional = true }
 
 [[bin]]
 name = "udd-devtools-cli"

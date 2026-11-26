@@ -19,6 +19,61 @@ const BITS_PER_BYTE: u32 = 8;
 /// index selector, endpoints and p-bits are read (Microsoft's BC7 format reference, checked against the
 /// field sums in the tests).
 const INDEX_BITS: [u32; 8] = [45, 46, 29, 30, 78, 62, 63, 30];
+
+/// The fields between the mode bits and the indices of each BC7 mode, in their order in the block (Microsoft's BC7
+/// format reference): the header (partition, rotation, index selector), then the endpoint values channel by channel
+/// (red of every endpoint, green, blue, then alpha when the mode has it), then the p-bits.
+#[derive(Debug, Clone, Copy)]
+struct ModeLayout {
+    subsets: u32,
+    colour_bits: u32,
+    alpha_bits: u32,
+    pbits: u32,
+    header_bits: u32,
+}
+
+impl ModeLayout {
+    const fn endpoints(self) -> usize {
+        2 * self.subsets as usize
+    }
+    /// Endpoint values: one per channel and endpoint.
+    const fn values(self) -> usize {
+        self.endpoints() * if self.alpha_bits > 0 { 4 } else { 3 }
+    }
+    const fn value_bits(self, value: usize) -> u32 {
+        if value < 3 * self.endpoints() { self.colour_bits } else { self.alpha_bits }
+    }
+    /// Bit offset of endpoint value `value` within the prefix (the fields after the mode bits).
+    const fn value_offset(self, value: usize) -> u32 {
+        let colour = 3 * self.endpoints();
+        if value < colour {
+            self.header_bits + value as u32 * self.colour_bits
+        } else {
+            self.header_bits + colour as u32 * self.colour_bits + (value - colour) as u32 * self.alpha_bits
+        }
+    }
+    const fn pbit_offset(self) -> u32 {
+        self.value_offset(self.values())
+    }
+    /// The header and p-bits, the prefix bits that are no endpoint value.
+    const fn side_bits(self) -> u32 {
+        self.header_bits + self.pbits
+    }
+}
+
+/// Subsets, colour and alpha bits per endpoint value, p-bits, header bits (partition, rotation, index selector).
+const MODE_LAYOUTS: [ModeLayout; 8] = [
+    ModeLayout { subsets: 3, colour_bits: 4, alpha_bits: 0, pbits: 6, header_bits: 4 },
+    ModeLayout { subsets: 2, colour_bits: 6, alpha_bits: 0, pbits: 2, header_bits: 6 },
+    ModeLayout { subsets: 3, colour_bits: 5, alpha_bits: 0, pbits: 0, header_bits: 6 },
+    ModeLayout { subsets: 2, colour_bits: 7, alpha_bits: 0, pbits: 4, header_bits: 6 },
+    ModeLayout { subsets: 1, colour_bits: 5, alpha_bits: 6, pbits: 0, header_bits: 3 },
+    ModeLayout { subsets: 1, colour_bits: 7, alpha_bits: 8, pbits: 0, header_bits: 2 },
+    ModeLayout { subsets: 1, colour_bits: 7, alpha_bits: 7, pbits: 2, header_bits: 0 },
+    ModeLayout { subsets: 2, colour_bits: 5, alpha_bits: 5, pbits: 4, header_bits: 6 },
+];
+/// The most endpoint values of a mode (modes 0 and 2: three subsets of red, green and blue).
+const MAX_VALUES: usize = 18;
 /// Bits of the fields between the mode bits and the indices.
 const fn prefix_bits(mode: usize) -> u32 {
     BLOCK_BITS - INDEX_BITS[mode] - (mode as u32 + 1)
@@ -48,7 +103,43 @@ pub enum Transform {
     /// A mode map, then per mode the blocks' fields between the mode bits and the indices, byte-padded, then per mode
     /// their indices, byte-padded, then the reserved blocks. `shuffle` byte-transposes each mode's run of records.
     Fields { shuffle: bool },
+    /// The `Fields` layout with each block's endpoint values replaced by their residuals against a neighbour of the
+    /// same mode (modulo the field's width), in `layout`; `xor_indices` also XORs each index record with that of the
+    /// predicting neighbour. Undone in raster order, each block from the blocks above and before it.
+    Predict { predictor: Predictor, layout: ResidualLayout, xor_indices: bool },
 }
+
+/// The block whose endpoint values predict a block's: always one of the same mode, earlier in raster order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Predictor {
+    /// No prediction: the values as they are (to measure a layout alone).
+    None,
+    /// The previous block of the same mode (its previous record in the `Fields` layout).
+    Previous,
+    /// The block above when it has the same mode, else the previous one of the same mode.
+    Up,
+    /// LOCO-I's median edge detector over the blocks to the left, above and above-left when all three have the same
+    /// mode, else the block above, the one to the left or the previous one of the same mode.
+    Median,
+}
+
+/// How the residuals are stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResidualLayout {
+    /// In the fields' own bits: the `Fields` records with each value replaced by its residual.
+    Packed,
+    /// Per block the header and p-bits in whole bytes, then each residual in a byte, zigzag-coded (small magnitudes
+    /// of either sign become small bytes).
+    Bytes,
+    /// `Bytes`, byte-transposed per mode: the first byte of every record of the mode, then the second, and so on.
+    Planes,
+}
+
+const PREDICTORS: [(Predictor, &str); 4] =
+    [(Predictor::None, "none"), (Predictor::Previous, "prev"), (Predictor::Up, "up"), (Predictor::Median, "med")];
+const RESIDUAL_LAYOUTS: [(ResidualLayout, &str); 3] =
+    [(ResidualLayout::Packed, "packed"), (ResidualLayout::Bytes, "bytes"), (ResidualLayout::Planes, "planes")];
+const XOR_INDICES_SUFFIX: &str = "xi";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransformError {
@@ -56,6 +147,10 @@ pub enum TransformError {
     ModeMap { block: usize, value: u8 },
     PaddingBits { block: usize },
     BadTile,
+    /// A rectangle that leaves the page's grid of blocks, or a grid that does not hold the page.
+    Rect { x: usize, y: usize, width: usize, height: usize },
+    /// A byte-wide endpoint residual (`pred-*-bytes`, `pred-*-planes`) outside its field's range.
+    Residual { block: usize, value: u8 },
 }
 
 impl fmt::Display for TransformError {
@@ -65,6 +160,10 @@ impl fmt::Display for TransformError {
             Self::ModeMap { block, value } => write!(f, "mode map entry {value} of block {block} is no mode"),
             Self::PaddingBits { block } => write!(f, "padding bits set in the fields of block {block}"),
             Self::BadTile => write!(f, "split element must divide the block and tiles must hold a block"),
+            Self::Rect { x, y, width, height } => {
+                write!(f, "block rectangle {width}x{height} at {x},{y} is not within the page's grid")
+            }
+            Self::Residual { block, value } => write!(f, "endpoint residual {value} of block {block} exceeds its field"),
         }
     }
 }
@@ -78,6 +177,22 @@ impl Transform {
             "modesort" => Self::ModeSort,
             "fields" => Self::Fields { shuffle: false },
             "fields-shuf" => Self::Fields { shuffle: true },
+            _ if text.starts_with("pred-") => {
+                let mut parts = text["pred-".len()..].split('-');
+                let predictor = parts.next()?;
+                let predictor = PREDICTORS.iter().find(|(_, name)| *name == predictor)?.0;
+                let layout = parts.next()?;
+                let layout = RESIDUAL_LAYOUTS.iter().find(|(_, name)| *name == layout)?.0;
+                let xor_indices = match parts.next() {
+                    None => false,
+                    Some(XOR_INDICES_SUFFIX) => true,
+                    Some(_) => return None,
+                };
+                if parts.next().is_some() {
+                    return None;
+                }
+                Self::Predict { predictor, layout, xor_indices }
+            }
             _ => {
                 let rest = text.strip_prefix("split")?;
                 let (element, tile) = match rest.split_once('t') {
@@ -101,6 +216,12 @@ impl Transform {
             Self::Fields { shuffle: true } => "fields-shuf".into(),
             Self::Split { element_bytes, tile_blocks: None } => format!("split{element_bytes}"),
             Self::Split { element_bytes, tile_blocks: Some(tile) } => format!("split{element_bytes}t{tile}"),
+            Self::Predict { predictor, layout, xor_indices } => {
+                let predictor = PREDICTORS.iter().find(|(p, _)| *p == predictor).expect("every predictor is named").1;
+                let layout = RESIDUAL_LAYOUTS.iter().find(|(l, _)| *l == layout).expect("every layout is named").1;
+                let suffix = if xor_indices { format!("-{XOR_INDICES_SUFFIX}") } else { String::new() };
+                format!("pred-{predictor}-{layout}{suffix}")
+            }
         }
     }
 
@@ -109,21 +230,28 @@ impl Transform {
         matches!(self, Self::None | Self::Split { .. })
     }
 
-    pub fn forward(self, input: &[u8], out: &mut Vec<u8>) -> Result<(), TransformError> {
+    /// Transforms `input`, a page `blocks_wide` blocks wide (only `Predict` reads the grid).
+    pub fn forward(self, input: &[u8], blocks_wide: usize, out: &mut Vec<u8>) -> Result<(), TransformError> {
         out.clear();
         match self {
             Self::None => out.extend_from_slice(input),
             Self::Split { element_bytes, tile_blocks } => split_forward(input, element_bytes, tile_blocks, out)?,
             Self::ModeSort => mode_sort_forward(input, out),
             Self::Fields { shuffle } => fields_forward(input, shuffle, out),
+            Self::Predict { predictor, layout, xor_indices } => {
+                predict_forward(input, grid_width(blocks_wide)?, Prediction { predictor, layout, xor_indices }, out)
+            }
         }
         Ok(())
     }
 
-    /// Undoes [`Self::forward`] of a `raw_len`-byte input.
-    pub fn inverse(self, input: &[u8], raw_len: usize, out: &mut Vec<u8>) -> Result<(), TransformError> {
+    /// Undoes [`Self::forward`] of a `raw_len`-byte input `blocks_wide` blocks wide.
+    pub fn inverse(self, input: &[u8], raw_len: usize, blocks_wide: usize, out: &mut Vec<u8>)
+        -> Result<(), TransformError> {
         out.clear();
         match self {
+            Self::Predict { predictor, layout, xor_indices } => predict_inverse(input, raw_len, grid_width(blocks_wide)?,
+                Prediction { predictor, layout, xor_indices }, out)?,
             Self::None => {
                 check_len(raw_len, input.len())?;
                 out.extend_from_slice(input);
@@ -141,6 +269,10 @@ impl Transform {
 
 fn check_len(expected: usize, actual: usize) -> Result<(), TransformError> {
     if expected == actual { Ok(()) } else { Err(TransformError::Length { expected, actual }) }
+}
+
+fn grid_width(blocks_wide: usize) -> Result<usize, TransformError> {
+    if blocks_wide == 0 { Err(TransformError::Rect { x: 0, y: 0, width: 0, height: 0 }) } else { Ok(blocks_wide) }
 }
 
 /// Transposes `records` records of `record_len` bytes: byte `lane` of record `i` goes to `lane * records + i`.
@@ -371,20 +503,7 @@ fn fields_inverse(input: &[u8], raw_len: usize, shuffle: bool, out: &mut Vec<u8>
                 continue;
             }
         };
-        // One instance per mode, so the record lengths and shifts are constants. A page's modes come in runs (most
-        // blocks are the one transparent block), so this branch predicts better than a table-driven join, which
-        // measured 50 % slower.
-        let joined = match mode {
-            0 => join_block::<0>(prefixes, indices, n, target),
-            1 => join_block::<1>(prefixes, indices, n, target),
-            2 => join_block::<2>(prefixes, indices, n, target),
-            3 => join_block::<3>(prefixes, indices, n, target),
-            4 => join_block::<4>(prefixes, indices, n, target),
-            5 => join_block::<5>(prefixes, indices, n, target),
-            6 => join_block::<6>(prefixes, indices, n, target),
-            _ => join_block::<7>(prefixes, indices, n, target),
-        };
-        if !joined {
+        if !join_mode(mode, prefixes, indices, n, target) {
             unpadded = Some(block);
             break;
         }
@@ -392,6 +511,145 @@ fn fields_inverse(input: &[u8], raw_len: usize, shuffle: bool, out: &mut Vec<u8>
     if let Some(block) = unpadded {
         out.truncate(start);
         return Err(TransformError::PaddingBits { block });
+    }
+    Ok(())
+}
+
+/// Writes block `n` of `mode` (0 to 7) from its records; false when a record's padding bits are set.
+#[inline(always)]
+fn join_mode(mode: u8, prefixes: &[u8], indices: &[u8], n: usize, target: &mut [u8]) -> bool {
+    // One instance per mode, so the record lengths and shifts are constants. A page's modes come in runs (most
+    // blocks are the one transparent block), so this branch predicts better than a table-driven join, which
+    // measured 50 % slower.
+    match mode {
+        0 => join_block::<0>(prefixes, indices, n, target),
+        1 => join_block::<1>(prefixes, indices, n, target),
+        2 => join_block::<2>(prefixes, indices, n, target),
+        3 => join_block::<3>(prefixes, indices, n, target),
+        4 => join_block::<4>(prefixes, indices, n, target),
+        5 => join_block::<5>(prefixes, indices, n, target),
+        6 => join_block::<6>(prefixes, indices, n, target),
+        _ => join_block::<7>(prefixes, indices, n, target),
+    }
+}
+
+/// A rectangle of whole blocks on a page, in blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockRect {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+/// Entries `count_modes` compares at once: a 256-bit vector of bytes.
+const COUNT_LANES: usize = 32;
+
+/// Counts of each mode slot in `map`; the first block whose entry is no mode is an error (`first_block` is the
+/// position of `map[0]`).
+#[inline]
+fn count_modes(map: &[u8], first_block: usize) -> Result<[usize; MODE_SLOTS], TransformError> {
+    let mut counts = [0usize; MODE_SLOTS];
+    // Byte counters, one per mode and lane, over groups of `COUNT_LANES` entries: compares and adds the compiler
+    // vectorises. Counting each mode with `filter().count()` took 4.5 ns an entry (1.2 ms a page, half the whole
+    // inverse), and a scalar histogram is a chain of dependent increments.
+    for run in map.chunks(COUNT_LANES * usize::from(u8::MAX)) {
+        let mut lanes = [[0u8; COUNT_LANES]; MODE_SLOTS];
+        let mut groups = run.chunks_exact(COUNT_LANES);
+        for group in &mut groups {
+            for (mode, lanes) in lanes.iter_mut().enumerate() {
+                for (lane, &value) in lanes.iter_mut().zip(group) {
+                    *lane += u8::from(value == mode as u8);
+                }
+            }
+        }
+        for (count, lanes) in counts.iter_mut().zip(&lanes) {
+            *count += lanes.iter().map(|&lane| usize::from(lane)).sum::<usize>();
+        }
+        for &value in groups.remainder() {
+            if let Some(count) = counts.get_mut(usize::from(value)) {
+                *count += 1;
+            }
+        }
+    }
+    if counts.iter().sum::<usize>() != map.len() {
+        let block = map.iter().position(|&value| value as usize >= MODE_SLOTS).expect("an entry outside the modes");
+        return Err(TransformError::ModeMap { block: first_block + block, value: map[block] });
+    }
+    Ok(counts)
+}
+
+/// The blocks of `rects`, each row-major, one rectangle after another, from a `fields` stream of a `raw_len`-byte page
+/// `blocks_wide` blocks wide, joining only those blocks: what a reader handing on the frames of one clip needs, where
+/// [`Transform::inverse`] joins the whole page. Each mode's running count, which gives a block its records, comes
+/// from the counts of the mode map's rows before it and of the row up to it. The whole map is checked (its entries
+/// and the stream length its counts give); padding bits only in the blocks joined.
+pub fn fields_extract(input: &[u8], raw_len: usize, blocks_wide: usize, rects: &[BlockRect], out: &mut Vec<u8>)
+    -> Result<(), TransformError> {
+    out.clear();
+    let blocks = raw_len / BLOCK_BYTES;
+    let tail = raw_len - blocks * BLOCK_BYTES;
+    if input.len() < blocks {
+        return Err(TransformError::Length { expected: blocks, actual: input.len() });
+    }
+    if blocks_wide == 0 || blocks % blocks_wide != 0 {
+        return Err(TransformError::Rect { x: 0, y: 0, width: blocks_wide, height: 0 });
+    }
+    let rows = blocks / blocks_wide;
+    let (map, rest) = input.split_at(blocks);
+    // Each mode's count before each row, and the totals last.
+    let mut before_row = Vec::with_capacity(rows + 1);
+    let mut running = [0usize; MODE_SLOTS];
+    before_row.push(running);
+    for (row, entries) in map.chunks_exact(blocks_wide).enumerate() {
+        let counts = count_modes(entries, row * blocks_wide)?;
+        for (total, count) in running.iter_mut().zip(counts) {
+            *total += count;
+        }
+        before_row.push(running);
+    }
+    let (prefix_lengths, index_lengths, reserved_length) = field_stream_lengths(&running);
+    let expected = prefix_lengths.iter().sum::<usize>() + index_lengths.iter().sum::<usize>() + reserved_length + tail;
+    check_len(blocks + expected, input.len())?;
+    let mut prefix_streams: [&[u8]; 8] = [&[]; 8];
+    let mut index_streams: [&[u8]; 8] = [&[]; 8];
+    let mut at = 0;
+    for (streams, lengths) in [(&mut prefix_streams, &prefix_lengths), (&mut index_streams, &index_lengths)] {
+        for mode in 0..8 {
+            streams[mode] = &rest[at..at + lengths[mode]];
+            at += lengths[mode];
+        }
+    }
+    let reserved = &rest[at..at + reserved_length];
+
+    let wanted: usize = rects.iter().map(|rect| rect.width * rect.height).sum();
+    out.resize(wanted * BLOCK_BYTES, 0);
+    let mut targets = out.chunks_exact_mut(BLOCK_BYTES);
+    for rect in rects {
+        if rect.x + rect.width > blocks_wide || rect.y + rect.height > rows {
+            return Err(TransformError::Rect { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        }
+        for row in rect.y..rect.y + rect.height {
+            let row_start = row * blocks_wide;
+            let mut next = before_row[row];
+            let before = count_modes(&map[row_start..row_start + rect.x], row_start)?;
+            for (count, more) in next.iter_mut().zip(before) {
+                *count += more;
+            }
+            let start = row_start + rect.x;
+            for (block, &mode) in map[start..start + rect.width].iter().enumerate() {
+                let target = targets.next().expect("one target per wanted block");
+                let slot = mode as usize;
+                let n = next[slot];
+                next[slot] += 1;
+                if mode == RESERVED_MODE {
+                    target.copy_from_slice(&reserved[n * BLOCK_BYTES..(n + 1) * BLOCK_BYTES]);
+                } else if !join_mode(mode, prefix_streams[slot], index_streams[slot], n, target) {
+                    out.clear();
+                    return Err(TransformError::PaddingBits { block: start + block });
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -426,9 +684,291 @@ fn join_block<const MODE: usize>(prefixes: &[u8], indices: &[u8], n: usize, targ
     true
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Prediction {
+    predictor: Predictor,
+    layout: ResidualLayout,
+    xor_indices: bool,
+}
+
+const fn value_mask(bits: u32) -> u32 {
+    (1u32 << bits) - 1
+}
+
+/// The fields after the mode bits of a block of `mode`.
+fn block_prefix(block: &[u8], mode: usize) -> u128 {
+    low_bits(block_bits(block) >> (mode as u32 + 1), prefix_bits(mode))
+}
+
+fn block_index(block: &[u8], mode: usize) -> u128 {
+    block_bits(block) >> (mode as u32 + 1 + prefix_bits(mode))
+}
+
+fn endpoint_values(prefix: u128, layout: ModeLayout) -> [u8; MAX_VALUES] {
+    let mut values = [0u8; MAX_VALUES];
+    for (value, slot) in values.iter_mut().enumerate().take(layout.values()) {
+        *slot = ((prefix >> layout.value_offset(value)) as u32 & value_mask(layout.value_bits(value))) as u8;
+    }
+    values
+}
+
+/// `prefix` with its endpoint values replaced by `values`.
+fn with_values(mut prefix: u128, layout: ModeLayout, values: &[u8; MAX_VALUES]) -> u128 {
+    for (value, &field) in values.iter().enumerate().take(layout.values()) {
+        let offset = layout.value_offset(value);
+        let mask = u128::from(value_mask(layout.value_bits(value))) << offset;
+        prefix = (prefix & !mask) | (u128::from(field) << offset);
+    }
+    prefix
+}
+
+/// The header and p-bits of a prefix, the header in the low bits.
+fn side_of(prefix: u128, layout: ModeLayout) -> u128 {
+    low_bits(prefix, layout.header_bits) | (low_bits(prefix >> layout.pbit_offset(), layout.pbits) << layout.header_bits)
+}
+
+fn prefix_from_side(side: u128, layout: ModeLayout, values: &[u8; MAX_VALUES]) -> u128 {
+    let prefix = low_bits(side, layout.header_bits) | ((side >> layout.header_bits) << layout.pbit_offset());
+    with_values(prefix, layout, values)
+}
+
+const fn side_bytes(mode: usize) -> usize {
+    MODE_LAYOUTS[mode].side_bits().div_ceil(BITS_PER_BYTE) as usize
+}
+
+/// Bytes of one residual record of `mode` in `layout`.
+const fn residual_bytes(mode: usize, layout: ResidualLayout) -> usize {
+    match layout {
+        ResidualLayout::Packed => prefix_bytes(mode),
+        ResidualLayout::Bytes | ResidualLayout::Planes => side_bytes(mode) + MODE_LAYOUTS[mode].values(),
+    }
+}
+
+/// A `bits`-wide residual (modulo 2^bits) as a zigzag byte: 0, -1, 1, -2, ... become 0, 1, 2, 3, ...
+const fn zigzag(residual: u32, bits: u32) -> u8 {
+    let half = 1u32 << (bits - 1);
+    let byte = if residual < half { residual * 2 } else { ((1u32 << bits) - residual) * 2 - 1 };
+    byte as u8
+}
+
+const fn unzigzag(byte: u8, bits: u32) -> u32 {
+    let byte = byte as u32;
+    if byte % 2 == 0 { byte / 2 } else { ((1u32 << bits) - (byte + 1) / 2) & value_mask(bits) }
+}
+
+/// The values that predict block `block` of `mode` and the block whose index record predicts its indices, from the
+/// earlier blocks of `blocks` (raster order, `blocks_wide` wide); `previous` is the previous block of the mode.
+fn prediction_of(
+    predictor: Predictor,
+    map: &[u8],
+    blocks: &[u8],
+    block: usize,
+    blocks_wide: usize,
+    mode: usize,
+    previous: Option<usize>,
+) -> ([u8; MAX_VALUES], Option<usize>) {
+    let layout = MODE_LAYOUTS[mode];
+    let same = |at: usize| map[at] as usize == mode;
+    let left = (block % blocks_wide != 0 && same(block - 1)).then(|| block - 1);
+    let up = (block >= blocks_wide && same(block - blocks_wide)).then(|| block - blocks_wide);
+    let up_left = (left.is_some() && up.is_some() && same(block - blocks_wide - 1)).then(|| block - blocks_wide - 1);
+    let values_at = |at: usize| endpoint_values(block_prefix(&blocks[at * BLOCK_BYTES..(at + 1) * BLOCK_BYTES], mode),
+        layout);
+    let from = |source: Option<usize>| (source.map_or([0; MAX_VALUES], values_at), source);
+    match predictor {
+        Predictor::None => ([0; MAX_VALUES], previous),
+        Predictor::Previous => from(previous),
+        Predictor::Up => from(up.or(previous)),
+        Predictor::Median => match (left, up, up_left) {
+            (Some(left), Some(up), Some(up_left)) => {
+                let (a, b, c) = (values_at(left), values_at(up), values_at(up_left));
+                let mut predicted = [0u8; MAX_VALUES];
+                for value in 0..layout.values() {
+                    let (a, b, c) = (a[value], b[value], c[value]);
+                    predicted[value] = if c >= a.max(b) {
+                        a.min(b)
+                    } else if c <= a.min(b) {
+                        a.max(b)
+                    } else {
+                        // Between a and b, so in range; the sum may pass 255 (8-bit alpha) on the way.
+                        a.wrapping_add(b).wrapping_sub(c)
+                    };
+                }
+                (predicted, Some(up))
+            }
+            _ => from(up.or(left).or(previous)),
+        },
+    }
+}
+
+fn predict_forward(input: &[u8], blocks_wide: usize, prediction: Prediction, out: &mut Vec<u8>) {
+    let body = input.len() / BLOCK_BYTES * BLOCK_BYTES;
+    let blocks = &input[..body];
+    let map = mode_map(blocks);
+    let mut residuals: [Vec<u8>; 8] = Default::default();
+    let mut indices: [Vec<u8>; 8] = Default::default();
+    let mut reserved = Vec::new();
+    let mut previous: [Option<usize>; 8] = [None; 8];
+    for (block, &mode) in map.iter().enumerate() {
+        let bytes = &blocks[block * BLOCK_BYTES..(block + 1) * BLOCK_BYTES];
+        if mode == RESERVED_MODE {
+            reserved.extend_from_slice(bytes);
+            continue;
+        }
+        let mode = mode as usize;
+        let layout = MODE_LAYOUTS[mode];
+        let (predicted, source) =
+            prediction_of(prediction.predictor, &map, blocks, block, blocks_wide, mode, previous[mode]);
+        previous[mode] = Some(block);
+        let prefix = block_prefix(bytes, mode);
+        let values = endpoint_values(prefix, layout);
+        let mut residual = [0u8; MAX_VALUES];
+        for value in 0..layout.values() {
+            let bits = layout.value_bits(value);
+            let difference = u32::from(values[value]).wrapping_sub(u32::from(predicted[value])) & value_mask(bits);
+            residual[value] = match prediction.layout {
+                ResidualLayout::Packed => difference as u8,
+                ResidualLayout::Bytes | ResidualLayout::Planes => zigzag(difference, bits),
+            };
+        }
+        match prediction.layout {
+            ResidualLayout::Packed => residuals[mode]
+                .extend_from_slice(&with_values(prefix, layout, &residual).to_le_bytes()[..prefix_bytes(mode)]),
+            ResidualLayout::Bytes | ResidualLayout::Planes => {
+                residuals[mode].extend_from_slice(&side_of(prefix, layout).to_le_bytes()[..side_bytes(mode)]);
+                residuals[mode].extend_from_slice(&residual[..layout.values()]);
+            }
+        }
+        let mut index = block_index(bytes, mode);
+        if let (true, Some(source)) = (prediction.xor_indices, source) {
+            index ^= block_index(&blocks[source * BLOCK_BYTES..(source + 1) * BLOCK_BYTES], mode);
+        }
+        indices[mode].extend_from_slice(&index.to_le_bytes()[..index_bytes(mode)]);
+    }
+    out.reserve(map.len() + input.len() + map.len());
+    out.extend_from_slice(&map);
+    for (mode, stream) in residuals.iter().enumerate() {
+        let start = out.len();
+        out.resize(start + stream.len(), 0);
+        if prediction.layout == ResidualLayout::Planes {
+            transpose_into(stream, residual_bytes(mode, prediction.layout), &mut out[start..]);
+        } else {
+            out[start..].copy_from_slice(stream);
+        }
+    }
+    for stream in &indices {
+        out.extend_from_slice(stream);
+    }
+    out.extend_from_slice(&reserved);
+    out.extend_from_slice(&input[body..]);
+}
+
+fn predict_inverse(input: &[u8], raw_len: usize, blocks_wide: usize, prediction: Prediction, out: &mut Vec<u8>)
+    -> Result<(), TransformError> {
+    let blocks = raw_len / BLOCK_BYTES;
+    let tail = raw_len - blocks * BLOCK_BYTES;
+    if input.len() < blocks {
+        return Err(TransformError::Length { expected: blocks, actual: input.len() });
+    }
+    let (map, rest) = input.split_at(blocks);
+    let counts = mode_counts(map)?;
+    let residual_lengths: [usize; 8] = std::array::from_fn(|mode| counts[mode] * residual_bytes(mode, prediction.layout));
+    let index_lengths: [usize; 8] = std::array::from_fn(|mode| counts[mode] * index_bytes(mode));
+    let reserved_length = counts[RESERVED_MODE as usize] * BLOCK_BYTES;
+    let expected = residual_lengths.iter().sum::<usize>() + index_lengths.iter().sum::<usize>() + reserved_length + tail;
+    check_len(blocks + expected, input.len())?;
+    let mut residual_streams: [Cow<[u8]>; 8] = Default::default();
+    let mut index_streams: [&[u8]; 8] = [&[]; 8];
+    let mut at = 0;
+    for mode in 0..8 {
+        let stored = &rest[at..at + residual_lengths[mode]];
+        at += residual_lengths[mode];
+        residual_streams[mode] = if prediction.layout == ResidualLayout::Planes {
+            let mut plain = vec![0u8; stored.len()];
+            untranspose_into(stored, residual_bytes(mode, prediction.layout), &mut plain);
+            Cow::Owned(plain)
+        } else {
+            Cow::Borrowed(stored)
+        };
+    }
+    for mode in 0..8 {
+        index_streams[mode] = &rest[at..at + index_lengths[mode]];
+        at += index_lengths[mode];
+    }
+    let reserved = &rest[at..at + reserved_length];
+    out.resize(raw_len, 0);
+    out[blocks * BLOCK_BYTES..].copy_from_slice(&rest[at + reserved_length..]);
+    let mut next = [0usize; MODE_SLOTS];
+    let mut previous: [Option<usize>; 8] = [None; 8];
+    for block in 0..blocks {
+        let slot = map[block] as usize;
+        let n = next[slot];
+        next[slot] += 1;
+        let (done, target) = out.split_at_mut(block * BLOCK_BYTES);
+        let target = &mut target[..BLOCK_BYTES];
+        if slot == RESERVED_MODE as usize {
+            target.copy_from_slice(&reserved[n * BLOCK_BYTES..(n + 1) * BLOCK_BYTES]);
+            continue;
+        }
+        let mode = slot;
+        let layout = MODE_LAYOUTS[mode];
+        let (predicted, source) =
+            prediction_of(prediction.predictor, map, done, block, blocks_wide, mode, previous[mode]);
+        previous[mode] = Some(block);
+        let record_len = residual_bytes(mode, prediction.layout);
+        let record = &residual_streams[mode][n * record_len..(n + 1) * record_len];
+        let (residual_prefix, residual) = match prediction.layout {
+            ResidualLayout::Packed => {
+                let prefix = read_record(record, 0, record_len);
+                if prefix >> prefix_bits(mode) != 0 {
+                    return Err(TransformError::PaddingBits { block });
+                }
+                (prefix, endpoint_values(prefix, layout))
+            }
+            ResidualLayout::Bytes | ResidualLayout::Planes => {
+                let side = read_record(&record[..side_bytes(mode)], 0, side_bytes(mode));
+                if side >> layout.side_bits() != 0 {
+                    return Err(TransformError::PaddingBits { block });
+                }
+                let mut residual = [0u8; MAX_VALUES];
+                for value in 0..layout.values() {
+                    let bits = layout.value_bits(value);
+                    let byte = record[side_bytes(mode) + value];
+                    if u32::from(byte) > value_mask(bits) {
+                        return Err(TransformError::Residual { block, value: byte });
+                    }
+                    residual[value] = unzigzag(byte, bits) as u8;
+                }
+                (prefix_from_side(side, layout, &[0; MAX_VALUES]), residual)
+            }
+        };
+        let mut values = [0u8; MAX_VALUES];
+        for value in 0..layout.values() {
+            let bits = layout.value_bits(value);
+            values[value] =
+                (u32::from(residual[value]).wrapping_add(u32::from(predicted[value])) & value_mask(bits)) as u8;
+        }
+        let prefix = with_values(residual_prefix, layout, &values);
+        let mut index = read_record(index_streams[mode], n, index_bytes(mode));
+        if index >> INDEX_BITS[mode] != 0 {
+            return Err(TransformError::PaddingBits { block });
+        }
+        if let (true, Some(source)) = (prediction.xor_indices, source) {
+            index ^= block_index(&done[source * BLOCK_BYTES..(source + 1) * BLOCK_BYTES], mode);
+        }
+        let mode_bits = mode as u32 + 1;
+        let bits = (index << (mode_bits + prefix_bits(mode))) | (prefix << mode_bits) | (1u128 << mode);
+        target.copy_from_slice(&bits.to_le_bytes());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The grid width the tests lay their blocks on: not a divisor of most block counts, so rows end mid-run.
+    const TEST_BLOCKS_WIDE: usize = 7;
 
     /// Endpoint and p-bit counts of each mode, from the BC7 format reference: (subsets, colour bits, alpha bits,
     /// p-bits per endpoint or shared, partition bits, rotation bits, index selector bits).
@@ -452,6 +992,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mode_layouts_match_the_format_reference() {
+        for (mode, &(subsets, colour, alpha, pbits, partition, rotation, selector)) in MODE_FIELDS.iter().enumerate() {
+            let layout = MODE_LAYOUTS[mode];
+            assert_eq!((layout.subsets, layout.colour_bits, layout.alpha_bits, layout.pbits, layout.header_bits),
+                (subsets, colour, alpha, pbits, partition + rotation + selector), "mode {mode}");
+            assert_eq!(layout.pbit_offset() + layout.pbits, prefix_bits(mode), "mode {mode}");
+            assert!(layout.values() <= MAX_VALUES, "mode {mode}");
+        }
+    }
+
     /// A deterministic generator, so a failing case can be rerun.
     struct Lcg(u64);
     impl Lcg {
@@ -461,19 +1012,50 @@ mod tests {
         }
     }
 
+    fn random_block(rng: &mut Lcg, mode: usize) -> [u8; BLOCK_BYTES] {
+        let mut bytes = [0u8; BLOCK_BYTES];
+        bytes.iter_mut().for_each(|byte| *byte = rng.next());
+        bytes[0] = if mode == RESERVED_MODE as usize { 0 } else { (bytes[0] | 1) << mode };
+        bytes
+    }
+
     /// Blocks of every mode and of the reserved encoding, with random fields, then `tail` stray bytes.
     fn sample(blocks: usize, tail: usize, seed: u64) -> Vec<u8> {
         let mut rng = Lcg(seed);
         let mut data = Vec::new();
         for block in 0..blocks {
-            let mut bytes = [0u8; BLOCK_BYTES];
-            bytes.iter_mut().for_each(|byte| *byte = rng.next());
-            let mode = block % MODE_SLOTS;
-            bytes[0] = if mode == RESERVED_MODE as usize { 0 } else { (bytes[0] | 1) << mode };
-            data.extend_from_slice(&bytes);
+            data.extend_from_slice(&random_block(&mut rng, block % MODE_SLOTS));
         }
         data.extend((0..tail).map(|_| rng.next()));
         data
+    }
+
+    /// Blocks in runs of one mode, as pages have them, so that the left, upper and upper-left neighbours often share
+    /// a block's mode; every mode and the reserved encoding occur.
+    fn runs(blocks: usize, tail: usize, seed: u64) -> Vec<u8> {
+        let mut rng = Lcg(seed);
+        let mut data = Vec::new();
+        let mut mode = 6;
+        for _ in 0..blocks {
+            if rng.next() < 24 {
+                mode = rng.next() as usize % MODE_SLOTS;
+            }
+            data.extend_from_slice(&random_block(&mut rng, mode));
+        }
+        data.extend((0..tail).map(|_| rng.next()));
+        data
+    }
+
+    fn predictions() -> Vec<Transform> {
+        let mut transforms = Vec::new();
+        for (predictor, _) in PREDICTORS {
+            for (layout, _) in RESIDUAL_LAYOUTS {
+                for xor_indices in [false, true] {
+                    transforms.push(Transform::Predict { predictor, layout, xor_indices });
+                }
+            }
+        }
+        transforms
     }
 
     fn all_transforms() -> Vec<Transform> {
@@ -484,6 +1066,7 @@ mod tests {
                 transforms.push(Transform::Split { element_bytes, tile_blocks });
             }
         }
+        transforms.extend(predictions());
         transforms
     }
 
@@ -491,14 +1074,36 @@ mod tests {
     fn every_transform_round_trips_every_mode_and_tail() {
         for transform in all_transforms() {
             for (blocks, tail) in [(0, 0), (0, 7), (1, 0), (9, 15), (100, 1), (1000, 0)] {
-                let input = sample(blocks, tail, (blocks * 31 + tail) as u64);
-                let (mut forward, mut back) = (Vec::new(), Vec::new());
-                transform.forward(&input, &mut forward).unwrap();
-                if transform.keeps_length() {
-                    assert_eq!(forward.len(), input.len());
+                for input in [sample(blocks, tail, (blocks * 31 + tail) as u64), runs(blocks, tail, blocks as u64)] {
+                    for blocks_wide in [1, 3, TEST_BLOCKS_WIDE, 64] {
+                        let (mut forward, mut back) = (Vec::new(), Vec::new());
+                        transform.forward(&input, blocks_wide, &mut forward).unwrap();
+                        if transform.keeps_length() {
+                            assert_eq!(forward.len(), input.len());
+                        }
+                        transform.inverse(&forward, input.len(), blocks_wide, &mut back).unwrap();
+                        assert_eq!(back, input, "{} with {blocks} blocks, {tail} tail bytes, {blocks_wide} wide",
+                            transform.name());
+                    }
                 }
-                transform.inverse(&forward, input.len(), &mut back).unwrap();
-                assert_eq!(back, input, "{} with {blocks} blocks and {tail} tail bytes", transform.name());
+            }
+        }
+    }
+
+    #[test]
+    fn residuals_zigzag_both_ways_at_every_width() {
+        for bits in 1..=8 {
+            let mut seen = std::collections::HashSet::new();
+            for residual in 0..1u32 << bits {
+                let byte = zigzag(residual, bits);
+                assert!(u32::from(byte) <= value_mask(bits));
+                assert!(seen.insert(byte), "{bits} bits: {byte} twice");
+                assert_eq!(unzigzag(byte, bits), residual, "{bits} bits");
+            }
+            assert_eq!(zigzag(0, bits), 0);
+            if bits > 1 {
+                assert_eq!(zigzag(value_mask(bits), bits), 1, "-1 at {bits} bits");
+                assert_eq!(zigzag(1, bits), 2, "+1 at {bits} bits");
             }
         }
     }
@@ -508,55 +1113,156 @@ mod tests {
         for transform in all_transforms() {
             assert_eq!(Transform::parse(&transform.name()), Some(transform));
         }
-        for bad in ["split3", "split0", "split1t0", "splitx", "shuffle"] {
+        for bad in ["split3", "split0", "split1t0", "splitx", "shuffle", "pred", "pred-up", "pred-up-wide",
+            "pred-left-bytes", "pred-up-bytes-x", "pred-up-bytes-xi-xi"] {
             assert_eq!(Transform::parse(bad), None, "{bad}");
         }
     }
 
     #[test]
     fn truncated_or_padded_streams_are_rejected() {
-        let input = sample(50, 3, 7);
-        for transform in all_transforms() {
-            let (mut forward, mut back) = (Vec::new(), Vec::new());
-            transform.forward(&input, &mut forward).unwrap();
-            let mut short = forward.clone();
-            short.pop();
-            assert!(transform.inverse(&short, input.len(), &mut back).is_err(), "{}", transform.name());
-            let mut long = forward.clone();
-            long.push(0);
-            assert!(transform.inverse(&long, input.len(), &mut back).is_err(), "{}", transform.name());
-            assert!(transform.inverse(&forward, input.len() + 1, &mut back).is_err(), "{}", transform.name());
+        for input in [sample(50, 3, 7), runs(50, 3, 7)] {
+            for transform in all_transforms() {
+                let (mut forward, mut back) = (Vec::new(), Vec::new());
+                transform.forward(&input, TEST_BLOCKS_WIDE, &mut forward).unwrap();
+                let mut short = forward.clone();
+                short.pop();
+                assert!(transform.inverse(&short, input.len(), TEST_BLOCKS_WIDE, &mut back).is_err(), "{}",
+                    transform.name());
+                let mut long = forward.clone();
+                long.push(0);
+                assert!(transform.inverse(&long, input.len(), TEST_BLOCKS_WIDE, &mut back).is_err(), "{}",
+                    transform.name());
+                assert!(transform.inverse(&forward, input.len() + 1, TEST_BLOCKS_WIDE, &mut back).is_err(), "{}",
+                    transform.name());
+            }
         }
     }
 
     #[test]
     fn a_corrupt_mode_map_is_rejected() {
         let input = sample(20, 0, 3);
-        for transform in [Transform::ModeSort, Transform::Fields { shuffle: false }, Transform::Fields { shuffle: true }] {
+        let mut mapped = vec![Transform::ModeSort, Transform::Fields { shuffle: false }, Transform::Fields { shuffle: true }];
+        mapped.extend(predictions());
+        for transform in mapped {
             let (mut forward, mut back) = (Vec::new(), Vec::new());
-            transform.forward(&input, &mut forward).unwrap();
+            transform.forward(&input, TEST_BLOCKS_WIDE, &mut forward).unwrap();
             let mut bad = forward.clone();
             bad[2] = MODE_SLOTS as u8;
-            assert_eq!(transform.inverse(&bad, input.len(), &mut back),
-                Err(TransformError::ModeMap { block: 2, value: MODE_SLOTS as u8 }));
+            assert_eq!(transform.inverse(&bad, input.len(), TEST_BLOCKS_WIDE, &mut back),
+                Err(TransformError::ModeMap { block: 2, value: MODE_SLOTS as u8 }), "{}", transform.name());
             // A map whose counts no longer match the stream: one block moved to another mode.
             let mut recounted = forward.clone();
             recounted[0] = if recounted[0] == 6 { 5 } else { 6 };
-            assert!(transform.inverse(&recounted, input.len(), &mut back).is_err(), "{}", transform.name());
+            assert!(transform.inverse(&recounted, input.len(), TEST_BLOCKS_WIDE, &mut back).is_err(), "{}",
+                transform.name());
         }
+    }
+
+    /// Mode 6 blocks only: its fields take 58 of 64 bits and its indices 63 of 64.
+    fn mode_6_blocks() -> Vec<u8> {
+        sample(MODE_SLOTS * 4, 0, 11).chunks_exact(BLOCK_BYTES).filter(|block| block_mode(block) == 6).flatten()
+            .copied().collect()
     }
 
     #[test]
     fn set_padding_bits_are_rejected() {
-        // Mode 6 only: its fields take 58 of 64 bits and its indices 63 of 64.
-        let input: Vec<u8> = sample(MODE_SLOTS * 4, 0, 11).chunks_exact(BLOCK_BYTES)
-            .filter(|block| block_mode(block) == 6).flatten().copied().collect();
+        let input = mode_6_blocks();
         let blocks = input.len() / BLOCK_BYTES;
-        let (mut forward, mut back) = (Vec::new(), Vec::new());
-        Transform::Fields { shuffle: false }.forward(&input, &mut forward).unwrap();
-        let last_prefix_byte = blocks + prefix_bytes(6) - 1;
-        forward[last_prefix_byte] |= 0x80;
-        assert_eq!(Transform::Fields { shuffle: false }.inverse(&forward, input.len(), &mut back),
-            Err(TransformError::PaddingBits { block: 0 }));
+        for transform in [Transform::Fields { shuffle: false },
+            Transform::Predict { predictor: Predictor::Up, layout: ResidualLayout::Packed, xor_indices: true }] {
+            let (mut forward, mut back) = (Vec::new(), Vec::new());
+            transform.forward(&input, TEST_BLOCKS_WIDE, &mut forward).unwrap();
+            let last_prefix_byte = blocks + prefix_bytes(6) - 1;
+            forward[last_prefix_byte] |= 0x80;
+            assert_eq!(transform.inverse(&forward, input.len(), TEST_BLOCKS_WIDE, &mut back),
+                Err(TransformError::PaddingBits { block: 0 }), "{}", transform.name());
+        }
+        // The byte layouts: mode 6's side byte holds two p-bits, then a residual byte per endpoint value.
+        for layout in [ResidualLayout::Bytes, ResidualLayout::Planes] {
+            let transform = Transform::Predict { predictor: Predictor::Previous, layout, xor_indices: false };
+            let (mut forward, mut back) = (Vec::new(), Vec::new());
+            transform.forward(&input, TEST_BLOCKS_WIDE, &mut forward).unwrap();
+            let mut side = forward.clone();
+            side[blocks] |= 0x80;
+            assert_eq!(transform.inverse(&side, input.len(), TEST_BLOCKS_WIDE, &mut back),
+                Err(TransformError::PaddingBits { block: 0 }), "{}", transform.name());
+            // The first residual of block 0: right after the side byte, or after every block's side byte.
+            let first_residual = if layout == ResidualLayout::Bytes { blocks + side_bytes(6) } else { blocks + blocks };
+            let mut wide = forward.clone();
+            wide[first_residual] = 0x80;
+            assert_eq!(transform.inverse(&wide, input.len(), TEST_BLOCKS_WIDE, &mut back),
+                Err(TransformError::Residual { block: 0, value: 0x80 }), "{}", transform.name());
+        }
+    }
+
+    /// The blocks of `rects` cut from a whole page, as the game's reader does after the full inverse.
+    fn cut(page: &[u8], blocks_wide: usize, rects: &[BlockRect]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for rect in rects {
+            for row in rect.y..rect.y + rect.height {
+                let start = (row * blocks_wide + rect.x) * BLOCK_BYTES;
+                out.extend_from_slice(&page[start..start + rect.width * BLOCK_BYTES]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn extracting_rectangles_matches_cutting_them_from_the_whole_page() {
+        let (blocks_wide, rows) = (13, 11);
+        for input in [sample(blocks_wide * rows, 5, 21), runs(blocks_wide * rows, 0, 22)] {
+            let mut forward = Vec::new();
+            Transform::Fields { shuffle: false }.forward(&input, blocks_wide, &mut forward).unwrap();
+            let rect_sets = [
+                vec![],
+                vec![BlockRect { x: 0, y: 0, width: blocks_wide, height: rows }],
+                vec![BlockRect { x: 3, y: 2, width: 4, height: 5 }, BlockRect { x: 0, y: 9, width: 13, height: 2 }],
+                vec![BlockRect { x: 12, y: 10, width: 1, height: 1 }, BlockRect { x: 5, y: 0, width: 0, height: 3 },
+                    BlockRect { x: 1, y: 1, width: 2, height: 2 }],
+            ];
+            for rects in rect_sets {
+                let mut out = Vec::new();
+                fields_extract(&forward, input.len(), blocks_wide, &rects, &mut out).unwrap();
+                assert_eq!(out, cut(&input, blocks_wide, &rects), "{rects:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn extracting_from_a_malformed_stream_fails() {
+        let (blocks_wide, rows) = (13, 11);
+        let input = runs(blocks_wide * rows, 0, 23);
+        let mut forward = Vec::new();
+        Transform::Fields { shuffle: false }.forward(&input, blocks_wide, &mut forward).unwrap();
+        let rect = [BlockRect { x: 2, y: 3, width: 4, height: 4 }];
+        let mut out = Vec::new();
+        for bad in [BlockRect { x: 10, y: 0, width: 4, height: 1 }, BlockRect { x: 0, y: 10, width: 1, height: 2 }] {
+            assert_eq!(fields_extract(&forward, input.len(), blocks_wide, &[bad], &mut out),
+                Err(TransformError::Rect { x: bad.x, y: bad.y, width: bad.width, height: bad.height }));
+        }
+        // A grid that does not hold the page.
+        assert!(fields_extract(&forward, input.len(), blocks_wide + 1, &rect, &mut out).is_err());
+        assert!(fields_extract(&forward, input.len(), 0, &rect, &mut out).is_err());
+        let mut short = forward.clone();
+        short.pop();
+        assert!(fields_extract(&short, input.len(), blocks_wide, &rect, &mut out).is_err());
+        let mut long = forward.clone();
+        long.push(0);
+        assert!(fields_extract(&long, input.len(), blocks_wide, &rect, &mut out).is_err());
+        // A bad entry far from the rectangle is still found: the whole map is checked.
+        let mut bad_map = forward.clone();
+        let far = blocks_wide * rows - 1;
+        bad_map[far] = MODE_SLOTS as u8;
+        assert_eq!(fields_extract(&bad_map, input.len(), blocks_wide, &rect, &mut out),
+            Err(TransformError::ModeMap { block: far, value: MODE_SLOTS as u8 }));
+        // Padding bits in a block the rectangle joins.
+        let mode_6 = mode_6_blocks();
+        let mut forward_6 = Vec::new();
+        Transform::Fields { shuffle: false }.forward(&mode_6, 1, &mut forward_6).unwrap();
+        let blocks = mode_6.len() / BLOCK_BYTES;
+        forward_6[blocks + prefix_bytes(6) - 1] |= 0x80;
+        assert_eq!(fields_extract(&forward_6, mode_6.len(), 1, &[BlockRect { x: 0, y: 0, width: 1, height: 1 }],
+            &mut out), Err(TransformError::PaddingBits { block: 0 }));
     }
 }

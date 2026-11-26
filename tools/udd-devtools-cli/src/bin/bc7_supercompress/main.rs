@@ -10,12 +10,22 @@
 //! - `timing <package> <cc|ec> --methods ...`: the decode of sampled pages on one thread (per-page percentiles) and on
 //!   the background pool's thread count (pages a second).
 //!
+//! - `classes <package> <cc|ec> --bounds ...`: the bodies by size class (their largest frame side), each class's share
+//!   of the pages; `--check-every N` replays the packer's layout (`repack.rs`) against the package's.
+//! - `bodies <package> <cc|ec> --bodies ... --methods ...`: each body's frames on pages of their own, as the packer
+//!   would lay them out, and its clips read from them on one thread (whole-page inverse, or per clip for `fields`).
+//! - `crowd <package> <cc|ec> --config name=spec ...`: every page through each method on the game's worker count, then
+//!   crowds appearing under the loader the user chose, with and without a cache of decoded pages; `--layout classes`
+//!   puts each size class on pages of its own, and a spec can name a method per class (see `study.rs`).
+//!
 //! A method is `stored` (the page as the package holds it, read through the container) or
 //! `<transform>+<backend>`, e.g. `none+zstd:9`, `split1+lz4hc:12`, `fields-shuf+zstd:19` (see `transforms.rs` and
 //! `backends.rs` for the names).
 
 mod backends;
 mod corpus;
+mod repack;
+mod study;
 mod transforms;
 
 use std::cell::RefCell;
@@ -65,6 +75,9 @@ enum Command {
     Blocks(BlocksArgs),
     Sizes(MethodArgs),
     Timing(TimingArgs),
+    Classes(study::ClassesArgs),
+    Bodies(study::BodiesArgs),
+    Crowd(study::CrowdArgs),
 }
 
 #[derive(Args)]
@@ -165,18 +178,27 @@ struct StoredPage {
     transform: Transform,
     /// The transformed stream's length: what the length field counted in `bytes` holds when the transform changes it.
     transformed_len: usize,
+    /// Blocks per row of the page, which the reader knows from the page record.
+    blocks_wide: usize,
     encoded: Encoded,
     /// Bytes counted for the page: the payload plus any transformed-length field.
     bytes: usize,
 }
 
-fn store(transform: Transform, backend: Backend, raw: &[u8], dictionary: Option<&Dictionary>, scratch: &mut Vec<u8>)
-    -> eyre::Result<StoredPage> {
-    transform.forward(raw, scratch).map_err(|error| eyre::eyre!("{error}"))?;
+fn store(
+    transform: Transform,
+    backend: Backend,
+    raw: &[u8],
+    blocks_wide: usize,
+    dictionary: Option<&Dictionary>,
+    scratch: &mut Vec<u8>,
+) -> eyre::Result<StoredPage> {
+    transform.forward(raw, blocks_wide, scratch).map_err(|error| eyre::eyre!("{error}"))?;
     let encoded = backends::encode(backend, scratch, dictionary).map_err(|error| eyre::eyre!("{error}"))?;
     let extra = if transform.keeps_length() { 0 } else { TRANSFORMED_LENGTH_BYTES };
     Ok(StoredPage {
         raw_len: raw.len(),
+        blocks_wide,
         transform,
         transformed_len: scratch.len(),
         bytes: encoded.bytes.len() + extra,
@@ -206,7 +228,8 @@ fn load(stored: &StoredPage, dictionary: Option<&Dictionary>) -> eyre::Result<(V
         let decompressed = start.elapsed();
         let start = Instant::now();
         let mut page = Vec::with_capacity(stored.raw_len);
-        stored.transform.inverse(&scratch, stored.raw_len, &mut page).map_err(|error| eyre::eyre!("{error}"))?;
+        stored.transform.inverse(&scratch, stored.raw_len, stored.blocks_wide, &mut page)
+            .map_err(|error| eyre::eyre!("{error}"))?;
         Ok((page, decompressed, start.elapsed()))
     })
 }
@@ -230,6 +253,9 @@ fn main() -> eyre::Result<()> {
         Command::Blocks(args) => blocks(&args),
         Command::Sizes(args) => sizes(&args),
         Command::Timing(args) => timing(&args),
+        Command::Classes(args) => study::classes(&args),
+        Command::Bodies(args) => study::bodies(&args),
+        Command::Crowd(args) => study::crowd_study(&args),
     }
 }
 
@@ -393,7 +419,7 @@ fn dictionaries(package: &Package, args: &MethodArgs, methods: &[Method])
         let pages: Vec<Arc<Vec<u8>>> = training.par_iter().map(|page| {
             let raw = package.raw(page)?;
             let mut transformed = Vec::new();
-            transform.forward(&raw, &mut transformed).map_err(|error| eyre::eyre!("{error}"))?;
+            transform.forward(&raw, page.blocks_wide(raw.len()), &mut transformed).map_err(|error| eyre::eyre!("{error}"))?;
             Ok(Arc::new(transformed))
         }).collect::<eyre::Result<_>>()?;
         let start = Instant::now();
@@ -428,8 +454,14 @@ fn sizes(args: &MethodArgs) -> eyre::Result<()> {
     // Per group: per method the bytes, beside the stored pages' bytes and raw bytes.
     let rows: Vec<(Vec<u32>, u64, u64, Vec<u64>)> = groups.par_iter().map(|group_pages| {
         let mut raw = Vec::new();
+        let mut blocks_wide = 0;
         for page in group_pages.iter() {
-            raw.extend_from_slice(&package.raw(page)?);
+            let page_raw = package.raw(page)?;
+            if raw.is_empty() {
+                // Grouped pages are all the atlas's width: the first one's grid serves the group.
+                blocks_wide = page.blocks_wide(page_raw.len());
+            }
+            raw.extend_from_slice(&page_raw);
         }
         let stored_bytes: u64 = group_pages.iter().map(|page| u64::from(page.entry.stored_size)).sum();
         let mut scratch = Vec::new();
@@ -441,7 +473,7 @@ fn sizes(args: &MethodArgs) -> eyre::Result<()> {
             };
             let dictionary = method.dictionary_transform().map(|t| dictionaries[&t.name()].as_ref());
             let begin = Instant::now();
-            let stored = store(transform, backend, &raw, dictionary, &mut scratch)
+            let stored = store(transform, backend, &raw, blocks_wide, dictionary, &mut scratch)
                 .wrap_err_with(|| format!("{} on page {}", method.name(), group_pages[0].index))?;
             encode_nanos[slot].fetch_add(begin.elapsed().as_nanos() as u64, Ordering::Relaxed);
             if matches!(stored.encoded.codec, backends::StoredCodec::Lz4 { .. }) {
@@ -517,10 +549,13 @@ fn timing(args: &TimingArgs) -> eyre::Result<()> {
                     raw_len: raw.len(),
                     transform: Transform::None,
                     transformed_len: raw.len(),
+                    blocks_wide: page.blocks_wide(raw.len()),
                     bytes: page.entry.stored_size as usize,
                     encoded: Encoded { bytes: Vec::new(), codec: backends::StoredCodec::Zstd },
                 }),
-                Method::Coded { transform, backend } => store(transform, backend, &raw, dictionary, &mut Vec::new()),
+                Method::Coded { transform, backend } => {
+                    store(transform, backend, &raw, page.blocks_wide(raw.len()), dictionary, &mut Vec::new())
+                }
             }
         }).collect::<eyre::Result<_>>()?;
         let decode_once = |index: usize| -> eyre::Result<(Duration, Duration)> {

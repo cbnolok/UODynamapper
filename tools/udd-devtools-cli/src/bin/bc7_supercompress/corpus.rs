@@ -9,6 +9,8 @@ use udd_assets::animation::{mobile_anim_cc, mobile_anim_ec};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_container::{Codec, FileKey, ResolvedFile, UddpReader, UddpReaderOptions, xxh64_virtual_path};
 
+use crate::transforms::BLOCK_BYTES;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Kind {
     /// `mobile_anim_cc.uddp`
@@ -28,6 +30,22 @@ pub struct Page {
     pub entry: ResolvedFile,
 }
 
+/// Texels per side of a BC7 block.
+pub const BLOCK_SIDE: u32 = 4;
+
+impl Page {
+    /// Blocks per row of the page's `raw_len` bytes of blocks: its used extent when the page stores that, else the
+    /// atlas (as `udd_assets::common::bc7_payload_extent` reads it).
+    pub fn blocks_wide(&self, raw_len: usize) -> usize {
+        let used = self.used_width.div_ceil(BLOCK_SIDE) as usize * self.used_height.div_ceil(BLOCK_SIDE) as usize;
+        if raw_len / BLOCK_BYTES == used {
+            self.used_width.div_ceil(BLOCK_SIDE) as usize
+        } else {
+            self.atlas_width.div_ceil(BLOCK_SIDE) as usize
+        }
+    }
+}
+
 /// The clips of the package as the renderer loads them: each (body, action, direction) decodes every page its frames
 /// lie on, once per clip.
 #[derive(Debug, Clone, Default)]
@@ -38,12 +56,54 @@ pub struct ClipPages {
     pub clips_per_page: BTreeMap<u32, usize>,
 }
 
+/// A frame record as the package places it: its page and its pixel rectangle there (a block corner), the body whose
+/// animation record owns it, and the packer's order of its placement: the frame index (Classic), or the body and the
+/// source frame (Enhanced, whose records of one source frame share its placement).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameInfo {
+    pub order: u64,
+    pub page: u32,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub owner_body: u32,
+}
+
+impl FrameInfo {
+    /// Whether the frame has pixels on a page (placeholders and empty frames have none).
+    pub fn placed(&self) -> bool {
+        self.page != mobile_anim_cc::MISSING_PAGE_INDEX && self.width > 0 && self.height > 0
+    }
+}
+
+/// An animation record: the clip the renderer loads, its body and its frames in the frame table.
+#[derive(Debug, Clone, Copy)]
+pub struct ClipInfo {
+    pub body: u32,
+    pub frame_start: u32,
+    pub frame_count: u32,
+}
+
+/// The package as the game reads it, for the clips a body plays.
+pub enum Anim {
+    Cc(mobile_anim_cc::MobileAnimCcPackage),
+    Ec(mobile_anim_ec::MobileAnimEcPackage),
+}
+
 pub struct Package {
     pub reader: UddpReader,
+    pub anim: Anim,
     pub pages: Vec<Page>,
     pub clip_pages: ClipPages,
     /// Path hashes of the hue masks (Enhanced pages with `PAGE_FLAG_HUE_MASK`).
     pub mask_hashes: BTreeSet<u64>,
+    /// Every frame record, in the package's order (the packer's global frame order).
+    pub frames: Vec<FrameInfo>,
+    /// Every animation record with frames.
+    pub clips: Vec<ClipInfo>,
+    /// The packer's gutter around each frame, in pixels.
+    pub gutter: u16,
 }
 
 fn clip_pages<'a>(clips: impl Iterator<Item = (u64, &'a [u32])>) -> ClipPages {
@@ -82,7 +142,9 @@ impl Package {
             pages.push(Page { index, used_width, used_height, atlas_width, atlas_height, frames, entry });
             Ok(())
         };
-        let clip_pages = match kind {
+        let mut frame_table = Vec::new();
+        let mut clips = Vec::new();
+        let (clip_pages, gutter, anim) = match kind {
             Kind::Cc => {
                 let package = mobile_anim_cc::MobileAnimCcPackage::load(path).wrap_err("read the Classic package")?;
                 for page in package.pages() {
@@ -90,6 +152,16 @@ impl Package {
                         [page.used_width, page.used_height, page.atlas_width, page.atlas_height], page.frame_count)?;
                 }
                 let frames = package.frames();
+                let animations = package.animations();
+                frame_table.extend(frames.iter().enumerate().map(|(index, frame)| FrameInfo {
+                    order: index as u64,
+                    page: frame.page_index, x: frame.x, y: frame.y, width: frame.width, height: frame.height,
+                    owner_body: animations.get(frame.animation_index as usize)
+                        .map_or(u32::MAX, |animation| u32::from(animation.body_id)),
+                }));
+                clips.extend(animations.iter().filter(|animation| animation.frame_count > 0).map(|animation| ClipInfo {
+                    body: u32::from(animation.body_id), frame_start: animation.frame_start, frame_count: u32::from(animation.frame_count),
+                }));
                 let pages_of: Vec<(u64, Vec<u32>)> = package.animations().iter().map(|animation| {
                     let start = animation.frame_start as usize;
                     let range = start..start + usize::from(animation.frame_count);
@@ -97,7 +169,8 @@ impl Package {
                         | u64::from(animation.direction);
                     (clip, frames[range].iter().map(|frame| frame.page_index).collect())
                 }).collect();
-                clip_pages(pages_of.iter().map(|(clip, pages)| (*clip, pages.as_slice())))
+                let summary = clip_pages(pages_of.iter().map(|(clip, pages)| (*clip, pages.as_slice())));
+                (summary, package.gutter(), Anim::Cc(package))
             }
             Kind::Ec => {
                 let package = mobile_anim_ec::MobileAnimEcPackage::load(path).wrap_err("read the Enhanced package")?;
@@ -109,6 +182,19 @@ impl Package {
                     }
                 }
                 let frames = package.frames();
+                let animations = package.animations();
+                frame_table.extend(frames.iter().map(|frame| {
+                    let owner_body =
+                        animations.get(frame.animation_index as usize).map_or(u32::MAX, |animation| animation.body_id);
+                    FrameInfo {
+                        order: (u64::from(owner_body) << u16::BITS) | u64::from(frame.source_frame_index),
+                        page: frame.page_index, x: frame.x, y: frame.y, width: frame.width, height: frame.height,
+                        owner_body,
+                    }
+                }));
+                clips.extend(animations.iter().filter(|animation| animation.frame_count > 0).map(|animation| ClipInfo {
+                    body: animation.body_id, frame_start: animation.frame_start, frame_count: u32::from(animation.frame_count),
+                }));
                 let pages_of: Vec<(u64, Vec<u32>)> = package.animations().iter().map(|animation| {
                     let start = animation.frame_start as usize;
                     let range = start..start + usize::from(animation.frame_count);
@@ -116,10 +202,18 @@ impl Package {
                         | u64::from(animation.direction);
                     (clip, frames[range].iter().map(|frame| frame.page_index).collect())
                 }).collect();
-                clip_pages(pages_of.iter().map(|(clip, pages)| (*clip, pages.as_slice())))
+                let summary = clip_pages(pages_of.iter().map(|(clip, pages)| (*clip, pages.as_slice())));
+                (summary, package.gutter(), Anim::Ec(package))
             }
         };
-        Ok(Self { reader, pages, clip_pages, mask_hashes })
+        Ok(Self { reader, anim, pages, clip_pages, mask_hashes, frames: frame_table, clips, gutter })
+    }
+
+    /// The page with index `index`.
+    pub fn page(&self, index: u32) -> Option<&Page> {
+        // The packers number the pages in order, so the index is usually the position.
+        self.pages.get(index as usize).filter(|page| page.index == index)
+            .or_else(|| self.pages.iter().find(|page| page.index == index))
     }
 
     /// The page's BC7 blocks, decoded by the container.
