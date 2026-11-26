@@ -9,9 +9,12 @@ container layout.
 - **Package reading**: `UddpReader` and `UddpReaderOptions` for memory-mapped
   package access and entry enumeration.
 - **Package writing**: package image assembly and atomic rewrite.
-- **Compression**: per-entry codec dispatch. Supported codecs: zstd (plain or
-  with a per-type dictionary) and raw (uncompressed). A package that names
-  another codec fails to open.
+- **Compression**: per-entry codec dispatch. Supported codecs: raw
+  (uncompressed), zstd (plain or with a per-type dictionary), LZ4 HC, and the
+  BC7 field split followed by zstd or LZ4 HC (`bc7_fields`, codecs 4 and 5,
+  whose pages a reader can keep split and join per rectangle with
+  `FieldsPage`). A package that names another codec, or sets a reserved
+  locator bit, fails to open.
 - **Hashing**: `xxh64_virtual_path` for path-addressed entry lookup
   (xxHash-64 over the virtual path string).
 - **Metadata helpers**: `unpack_codec`, `unpack_offset40`, `unpack_type`,

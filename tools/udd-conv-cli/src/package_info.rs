@@ -35,6 +35,8 @@ fn codec_name(codec: Codec) -> &'static str {
         Codec::ZstdNoDict => "ZstdNoDict",
         Codec::ZstdTypeDict => "ZstdTypeDict",
         Codec::Lz4Hc => "Lz4Hc",
+        Codec::Bc7FieldsZstd => "Bc7FieldsZstd",
+        Codec::Bc7FieldsLz4Hc => "Bc7FieldsLz4Hc",
     }
 }
 
@@ -560,6 +562,8 @@ pub fn packed_compression_summary(path: &Path) -> eyre::Result<String> {
                 Codec::ZstdNoDict => "Zstd",
                 Codec::ZstdTypeDict => "Zstd (dictionary)",
                 Codec::Lz4Hc => "LZ4 HC",
+                Codec::Bc7FieldsZstd => "BC7 field split + Zstd",
+                Codec::Bc7FieldsLz4Hc => "BC7 field split + LZ4 HC",
             };
             *counts.entry(name).or_insert(0usize) += 1;
         }

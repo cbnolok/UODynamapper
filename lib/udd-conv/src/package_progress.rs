@@ -139,6 +139,12 @@ fn compression_message(summary: CompressionSummary) -> String {
     if summary.zstd_or_lz4_hc > 0 {
         parts.push(format!("Zstd or LZ4 HC payload pass: {} files", summary.zstd_or_lz4_hc));
     }
+    if summary.bc7_fields_zstd > 0 {
+        parts.push(format!("BC7 field split + Zstd payload pass: {} files", summary.bc7_fields_zstd));
+    }
+    if summary.bc7_fields_lz4_hc > 0 {
+        parts.push(format!("BC7 field split + LZ4 HC payload pass: {} files", summary.bc7_fields_lz4_hc));
+    }
     if summary.auto > 0 {
         parts.push(format!("auto compression evaluation: {} files", summary.auto));
     }
@@ -168,6 +174,8 @@ fn active_file_message(file: BuildProgressFile) -> String {
         CompressionFlag::ZstdDict => "Zstd dictionary",
         CompressionFlag::Lz4Hc => "LZ4 HC",
         CompressionFlag::ZstdOrLz4HcLevel { .. } => "Zstd or LZ4 HC",
+        CompressionFlag::Bc7FieldsZstdLevel(_) => "BC7 field split + Zstd",
+        CompressionFlag::Bc7FieldsLz4Hc => "BC7 field split + LZ4 HC",
         CompressionFlag::Auto => "auto",
         CompressionFlag::None => "raw",
     };
@@ -222,6 +230,8 @@ pub fn atlas_payload_progress_message(
             | CompressionFlag::ZstdDict
             | CompressionFlag::Lz4Hc
             | CompressionFlag::ZstdOrLz4HcLevel { .. }
+            | CompressionFlag::Bc7FieldsZstdLevel(_)
+            | CompressionFlag::Bc7FieldsLz4Hc
             | CompressionFlag::Auto => format!("registering {subject} for package compression"),
         }
     }
@@ -249,6 +259,8 @@ pub fn atlas_payload_finish_message(
             | CompressionFlag::ZstdDict
             | CompressionFlag::Lz4Hc
             | CompressionFlag::ZstdOrLz4HcLevel { .. }
+            | CompressionFlag::Bc7FieldsZstdLevel(_)
+            | CompressionFlag::Bc7FieldsLz4Hc
             | CompressionFlag::Auto => format!("{subject} registered for package compression"),
         }
     }

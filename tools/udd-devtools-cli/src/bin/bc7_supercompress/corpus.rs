@@ -249,6 +249,8 @@ impl Package {
                 Codec::ZstdNoDict => "zstd".to_string(),
                 Codec::ZstdTypeDict => "zstd+dict".to_string(),
                 Codec::Lz4Hc => "lz4hc".to_string(),
+                Codec::Bc7FieldsZstd => "fields+zstd".to_string(),
+                Codec::Bc7FieldsLz4Hc => "fields+lz4hc".to_string(),
             };
             let slot = summary.entry((kind, codec)).or_default();
             slot.0 += 1;

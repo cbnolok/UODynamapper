@@ -54,7 +54,7 @@ pub use self::builder::{
     BuildProgress, BuildProgressFile, BuildProgressPhase, CompressedEntry, CompressionSummary, UddpBuilder,
 };
 pub use self::patch::{UddpiApplier, UddpiBuilder};
-pub use self::reader::{UddpReader, UddpReaderOptions};
+pub use self::reader::{Bc7FieldsPayload, UddpReader, UddpReaderOptions};
 pub use self::streaming_builder::UddpStreamingBuilder;
 pub use self::support::{
     BuildError,
@@ -66,7 +66,9 @@ pub use self::support::{
     pack_pos64,
     read_package,
     reconstruct_stored_size,
+    try_unpack_codec,
     unpack_codec,
+    ZSTD_DEFAULT_LEVEL,
     unpack_delta32,
     unpack_delta_hi8,
     unpack_delta_lo24,
@@ -161,6 +163,15 @@ pub enum Codec {
 
     /// One LZ4 block compressed at [`LZ4_HC_LEVEL`]: larger than Zstd, and about four times as fast to decode.
     Lz4Hc = 3,
+
+    /// A BC7 block stream in its field split ([`crate::bc7_fields`]), as one Zstd frame without dictionary. The frame
+    /// holds the split stream, not the blocks: a reader joins the blocks it needs from it
+    /// ([`UddpReader::read_bc7_fields_by_path_hash`]), or the whole payload ([`UddpReader::read_file_by_path_hash`]).
+    Bc7FieldsZstd = 4,
+
+    /// A BC7 block stream in its field split, as one LZ4 block at [`LZ4_HC_LEVEL`] with no size prefix: the split
+    /// stream's length follows from its mode map.
+    Bc7FieldsLz4Hc = 5,
 }
 
 /// The LZ4 HC level the builder compresses at, the library's highest. Decoding doesn't depend on it, but patching
@@ -174,8 +185,15 @@ impl Codec {
             1 => Ok(Self::ZstdNoDict),
             2 => Ok(Self::ZstdTypeDict),
             3 => Ok(Self::Lz4Hc),
+            4 => Ok(Self::Bc7FieldsZstd),
+            5 => Ok(Self::Bc7FieldsLz4Hc),
             _ => Err(FormatError::InvalidCodec(v)),
         }
+    }
+
+    /// Whether the payload holds a BC7 field split stream rather than the file's bytes.
+    pub const fn is_bc7_fields(self) -> bool {
+        matches!(self, Self::Bc7FieldsZstd | Self::Bc7FieldsLz4Hc)
     }
 }
 
@@ -213,6 +231,13 @@ pub enum CompressionFlag {
     /// as [`CompressionFlag::ZstdStripsWhenWorthLevel`] stores it: the builder compresses each way and keeps one.
     /// LZ4 HC payloads are one block, never in strips.
     ZstdOrLz4HcLevel { level: i32, strip_bytes: u32, strips: StripsWorth, lz4_hc_max_growth_percent: u32 },
+
+    /// Force the BC7 field split ([`crate::bc7_fields`]) and one Zstd frame of it at an explicit level
+    /// ([`Codec::Bc7FieldsZstd`]). For BC7 block streams: any bytes round-trip, but other data only grows.
+    Bc7FieldsZstdLevel(i32),
+
+    /// Force the BC7 field split and one LZ4 block of it at [`LZ4_HC_LEVEL`] ([`Codec::Bc7FieldsLz4Hc`]).
+    Bc7FieldsLz4Hc,
 }
 
 /// When a payload is worth storing in strips: when it is large enough to decode slowly as one frame, and the strips
@@ -262,10 +287,12 @@ pub enum DataType {
 ///
 /// Layout:
 /// - bits  0..= 5 : type (6 bits)
-/// - bits  6..= 7 : codec (2 bits, all four values in use: see [`Codec`])
+/// - bits  6..= 7 : low 2 bits of the codec (see [`Codec`])
 /// - bits  8..=15 : high 8 bits of the compression delta
 /// - bit  16      : independent frames: a Zstd payload stored as several frames that decode in parallel
-/// - bits 17..=31 : reserved
+/// - bit  17      : high bit of the codec: codec = bits 6..=7 | bit 17 << 2, so the codecs 0 to 3 keep their bits;
+///   codecs 6 and 7 are invalid
+/// - bits 18..=31 : reserved, zero
 ///
 /// `delta = raw_size - stored_size`
 pub type Meta32 = u32;

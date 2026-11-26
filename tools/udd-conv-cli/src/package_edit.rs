@@ -114,5 +114,7 @@ fn codec_to_compression_flag_local(codec: Codec) -> CompressionFlag {
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict => CompressionFlag::Auto,
         Codec::Lz4Hc => CompressionFlag::Lz4Hc,
+        Codec::Bc7FieldsZstd => CompressionFlag::Bc7FieldsZstdLevel(udd_container::ZSTD_DEFAULT_LEVEL),
+        Codec::Bc7FieldsLz4Hc => CompressionFlag::Bc7FieldsLz4Hc,
     }
 }

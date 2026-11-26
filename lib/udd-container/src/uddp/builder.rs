@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use xxhash_rust::xxh64::Xxh64;
 
 use super::support::{
-    lz4_hc_compress, patch_header_package_hash64, zstd_compress, zstd_compress_level, zstd_compress_level_parallel,
+    bc7_fields_lz4_hc_compress, bc7_fields_zstd_compress, lz4_hc_compress, patch_header_package_hash64, zstd_compress, zstd_compress_level, zstd_compress_level_parallel,
     zstd_compress_parallel, zstd_compress_strips, zstd_default_level, zstd_compress_with_dict, zstd_compress_with_dict_parallel,
 };
 use super::*;
@@ -185,6 +185,8 @@ pub struct CompressionSummary {
     pub zstd_dict: usize,
     pub lz4_hc: usize,
     pub zstd_or_lz4_hc: usize,
+    pub bc7_fields_zstd: usize,
+    pub bc7_fields_lz4_hc: usize,
     pub auto: usize,
 }
 
@@ -200,6 +202,8 @@ impl CompressionSummary {
             CompressionFlag::ZstdDict => self.zstd_dict += 1,
             CompressionFlag::Lz4Hc => self.lz4_hc += 1,
             CompressionFlag::ZstdOrLz4HcLevel { .. } => self.zstd_or_lz4_hc += 1,
+            CompressionFlag::Bc7FieldsZstdLevel(_) => self.bc7_fields_zstd += 1,
+            CompressionFlag::Bc7FieldsLz4Hc => self.bc7_fields_lz4_hc += 1,
             CompressionFlag::Auto => self.auto += 1,
         }
     }
@@ -849,6 +853,9 @@ pub(crate) fn codec_to_compression_flag(codec: Codec) -> CompressionFlag {
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict => CompressionFlag::ZstdDict,
         Codec::Lz4Hc => CompressionFlag::Lz4Hc,
+        // The level isn't recorded, so a payload stored again takes the default level, as plain Zstd payloads do.
+        Codec::Bc7FieldsZstd => CompressionFlag::Bc7FieldsZstdLevel(zstd_default_level()),
+        Codec::Bc7FieldsLz4Hc => CompressionFlag::Bc7FieldsLz4Hc,
     }
 }
 
@@ -1340,6 +1347,14 @@ fn compress_file(
             (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::Lz4Hc => (Codec::Lz4Hc, lz4_hc_compress(data_to_compress).map_err(BuildError::Io)?),
+        CompressionFlag::Bc7FieldsZstdLevel(level) => (
+            Codec::Bc7FieldsZstd,
+            bc7_fields_zstd_compress(data_to_compress, level, data_to_compress.len() >= PARALLEL_ZSTD_MIN_BYTES)
+                .map_err(BuildError::Io)?,
+        ),
+        CompressionFlag::Bc7FieldsLz4Hc => {
+            (Codec::Bc7FieldsLz4Hc, bc7_fields_lz4_hc_compress(data_to_compress).map_err(BuildError::Io)?)
+        }
         CompressionFlag::ZstdOrLz4HcLevel { level, strip_bytes, strips, lz4_hc_max_growth_percent } => {
             let (codec, encoded, striped) =
                 zstd_or_lz4_hc(data_to_compress, level, strip_bytes, strips, lz4_hc_max_growth_percent).map_err(BuildError::Io)?;
@@ -1437,6 +1452,14 @@ fn compress_file_owned(
             (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::Lz4Hc => (Codec::Lz4Hc, lz4_hc_compress(data_to_compress).map_err(BuildError::Io)?),
+        CompressionFlag::Bc7FieldsZstdLevel(level) => (
+            Codec::Bc7FieldsZstd,
+            bc7_fields_zstd_compress(data_to_compress, level, data_to_compress.len() >= PARALLEL_ZSTD_MIN_BYTES)
+                .map_err(BuildError::Io)?,
+        ),
+        CompressionFlag::Bc7FieldsLz4Hc => {
+            (Codec::Bc7FieldsLz4Hc, bc7_fields_lz4_hc_compress(data_to_compress).map_err(BuildError::Io)?)
+        }
         CompressionFlag::ZstdOrLz4HcLevel { level, strip_bytes, strips, lz4_hc_max_growth_percent } => {
             let (codec, encoded, striped) =
                 zstd_or_lz4_hc(data_to_compress, level, strip_bytes, strips, lz4_hc_max_growth_percent).map_err(BuildError::Io)?;

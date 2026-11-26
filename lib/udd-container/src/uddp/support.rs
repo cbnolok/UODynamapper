@@ -21,6 +21,10 @@ use super::*;
 
 const ZSTD_LEVEL: i32 = 7;
 
+/// The Zstd level of payloads written without an explicit one, and of payloads stored again whose level isn't
+/// recorded.
+pub const ZSTD_DEFAULT_LEVEL: i32 = ZSTD_LEVEL;
+
 /// The level of payloads written without an explicit one.
 pub(crate) const fn zstd_default_level() -> i32 {
     ZSTD_LEVEL
@@ -31,10 +35,21 @@ pub(crate) const fn zstd_default_level() -> i32 {
 /// in parallel. Without it a payload decodes as one stream, whatever frames it holds.
 const META32_INDEPENDENT_FRAMES: Meta32 = 1 << 16;
 
+/// Where the low bits of the codec id sit in Meta32, and how many there are.
+const META32_CODEC_LOW_SHIFT: u32 = 6;
+const META32_CODEC_LOW_BITS: u32 = 2;
+const META32_CODEC_LOW_MASK: u32 = (1 << META32_CODEC_LOW_BITS) - 1;
+/// The Meta32 bit of the codec id's high bit, a reserved bit once: the codecs 0 to 3 keep their bits.
+const META32_CODEC_HIGH_SHIFT: u32 = 17;
+/// The Meta32 bits no field uses, zero in a valid locator.
+const META32_RESERVED_MASK: Meta32 = !((1 << (META32_CODEC_HIGH_SHIFT + 1)) - 1);
+
 /// Pack the public metadata word stored in every file locator.
 pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32, independent_frames: bool) -> Meta32 {
     let ty = (data_type as u32) & 0x3F;
-    let co = ((codec as u32) & 0x03) << 6;
+    let codec = codec as u32;
+    let co = ((codec & META32_CODEC_LOW_MASK) << META32_CODEC_LOW_SHIFT)
+        | ((codec >> META32_CODEC_LOW_BITS) << META32_CODEC_HIGH_SHIFT);
     let delta_hi = ((delta32 >> 24) & 0xFF) << 8;
     let frames = if independent_frames { META32_INDEPENDENT_FRAMES } else { 0 };
     ty | co | delta_hi | frames
@@ -52,15 +67,26 @@ pub fn unpack_type(meta32: Meta32) -> u8 {
     (meta32 & 0x3F) as u8
 }
 
-/// Extract the raw 2-bit codec id from a packed metadata word.
+/// Extract the raw 3-bit codec id from a packed metadata word: bits 6..=7 and bit 17.
 #[inline(always)]
 pub(crate) fn unpack_codec_id(meta32: Meta32) -> u8 {
-    ((meta32 >> 6) & 0x03) as u8
+    (((meta32 >> META32_CODEC_LOW_SHIFT) & META32_CODEC_LOW_MASK)
+        | (((meta32 >> META32_CODEC_HIGH_SHIFT) & 1) << META32_CODEC_LOW_BITS)) as u8
 }
 
-/// Extract the 2-bit codec from a packed metadata word. Every value of the field names a codec.
+/// The codec of a packed metadata word, or why the word is invalid: a codec id that names no codec, or a reserved
+/// bit set. The reader checks every locator with this when it opens a package.
+pub fn try_unpack_codec(meta32: Meta32) -> Result<Codec, FormatError> {
+    if meta32 & META32_RESERVED_MASK != 0 {
+        return Err(FormatError::ReservedBits(meta32));
+    }
+    Codec::from_u8(unpack_codec_id(meta32))
+}
+
+/// The codec of a packed metadata word of a package the reader opened, which checked its codec
+/// ([`try_unpack_codec`]).
 pub fn unpack_codec(meta32: Meta32) -> Codec {
-    Codec::from_u8(unpack_codec_id(meta32)).expect("all four 2-bit codec ids are codecs")
+    Codec::from_u8(unpack_codec_id(meta32)).expect("the reader checks every locator's codec when it opens a package")
 }
 
 /// Extract the high 8 bits of the 32-bit compression delta.
@@ -98,7 +124,9 @@ pub fn unpack_delta32(meta32: Meta32, pos64: Pos64) -> u32 {
 pub fn reconstruct_stored_size(raw_size: u32, meta32: Meta32, pos64: Pos64) -> u32 {
     match unpack_codec(meta32) {
         Codec::None => raw_size,
-        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc => raw_size - unpack_delta32(meta32, pos64),
+        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc | Codec::Bc7FieldsZstd | Codec::Bc7FieldsLz4Hc => {
+            raw_size - unpack_delta32(meta32, pos64)
+        }
     }
 }
 
@@ -186,12 +214,61 @@ pub(crate) fn lz4_hc_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
 
 /// The `raw_size` bytes of one LZ4 block; anything else is damage.
 pub(crate) fn lz4_decompress(data: &[u8], raw_size: usize) -> std::io::Result<Vec<u8>> {
-    let declared = i32::try_from(raw_size).map_err(|_| std::io::Error::other("LZ4 payload too large"))?;
-    let mut decoded = vec![0u8; raw_size];
-    let written = lz4::block::decompress_to_buffer(data, Some(declared), &mut decoded)?;
-    if written != raw_size {
+    let decoded = lz4_decompress_bounded(data, raw_size)?;
+    if decoded.len() != raw_size {
         return Err(std::io::Error::other("LZ4 payload decodes to the wrong size"));
     }
+    Ok(decoded)
+}
+
+/// One LZ4 block that decodes to at most `capacity` bytes.
+fn lz4_decompress_bounded(data: &[u8], capacity: usize) -> std::io::Result<Vec<u8>> {
+    let declared = i32::try_from(capacity).map_err(|_| std::io::Error::other("LZ4 payload too large"))?;
+    let mut decoded = vec![0u8; capacity];
+    let written = lz4::block::decompress_to_buffer(data, Some(declared), &mut decoded)?;
+    decoded.truncate(written);
+    Ok(decoded)
+}
+
+/// The BC7 field split of `data` as one Zstd frame at `level` ([`Codec::Bc7FieldsZstd`]).
+pub(crate) fn bc7_fields_zstd_compress(data: &[u8], level: i32, parallel: bool) -> std::io::Result<Vec<u8>> {
+    let mut split = Vec::new();
+    crate::bc7_fields::forward(data, &mut split);
+    if parallel { zstd_compress_level_parallel(&split, level) } else { zstd_compress_level(&split, level) }
+}
+
+/// The BC7 field split of `data` as one LZ4 block at [`LZ4_HC_LEVEL`] ([`Codec::Bc7FieldsLz4Hc`]).
+pub(crate) fn bc7_fields_lz4_hc_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut split = Vec::new();
+    crate::bc7_fields::forward(data, &mut split);
+    lz4_hc_compress(&split)
+}
+
+/// The BC7 field split stream of a payload of codec 4 or 5 whose file holds `raw_size` bytes, decompressed but not
+/// joined. Its length is checked when it is joined.
+pub(crate) fn bc7_fields_decompress(codec: Codec, data: &[u8], raw_size: usize) -> std::io::Result<Vec<u8>> {
+    let capacity = crate::bc7_fields::split_len_bound(raw_size);
+    match codec {
+        Codec::Bc7FieldsZstd => DECOMPRESSION_CONTEXT.with(|context| {
+            let mut decoded = Vec::with_capacity(capacity);
+            context
+                .borrow_mut()
+                .decompress(&mut decoded, data)
+                .map_err(|code| std::io::Error::other(zstd::zstd_safe::get_error_name(code)))?;
+            Ok(decoded)
+        }),
+        Codec::Bc7FieldsLz4Hc => lz4_decompress_bounded(data, capacity),
+        Codec::None | Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc => {
+            Err(std::io::Error::other(format!("{codec:?} payload is no BC7 field split")))
+        }
+    }
+}
+
+/// The `raw_size` bytes of a payload of codec 4 or 5: decompressed, then joined whole.
+pub(crate) fn bc7_fields_decode(codec: Codec, data: &[u8], raw_size: usize) -> std::io::Result<Vec<u8>> {
+    let split = bc7_fields_decompress(codec, data, raw_size)?;
+    let mut decoded = Vec::new();
+    crate::bc7_fields::inverse(&split, raw_size, &mut decoded).map_err(std::io::Error::other)?;
     Ok(decoded)
 }
 
@@ -421,6 +498,8 @@ pub enum FormatError {
     InvalidLookupMode(u8),
     InvalidType(u8),
     InvalidCodec(u8),
+    /// A locator's metadata word with reserved bits set.
+    ReservedBits(Meta32),
     MissingDictionary(u8),
     FileNotFound,
     WrongLookupMode,
@@ -443,6 +522,7 @@ impl fmt::Display for FormatError {
             Self::InvalidLookupMode(v) => write!(f, "invalid lookup mode: {v}"),
             Self::InvalidType(v) => write!(f, "invalid type {v}"),
             Self::InvalidCodec(v) => write!(f, "invalid codec: {v}"),
+            Self::ReservedBits(meta32) => write!(f, "reserved bits set in locator metadata {meta32:#010x}"),
             Self::MissingDictionary(t) => write!(f, "missing dictionary for type {t}"),
             Self::FileNotFound => write!(f, "file not found"),
             Self::WrongLookupMode => write!(f, "wrong lookup mode for requested operation"),

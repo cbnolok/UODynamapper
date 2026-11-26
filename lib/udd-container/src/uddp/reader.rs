@@ -10,10 +10,25 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
 
-use super::support::{checked_region, lz4_decompress, zstd_decompress, Cursor};
+use super::support::{bc7_fields_decode, bc7_fields_decompress, checked_region, lz4_decompress, zstd_decompress, Cursor};
 use zstd::dict::DecoderDictionary;
 use memmap2::Mmap;
 use super::*;
+
+/// The decompressed BC7 field split stream of a file ([`UddpReader::read_bc7_fields_by_path_hash`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bc7FieldsPayload {
+    /// Bytes of the file the stream holds.
+    pub raw_len: usize,
+    /// The split stream, its length not yet checked: [`crate::bc7_fields::FieldsPage::new`] checks it.
+    pub stream: Vec<u8>,
+}
+
+/// `locator` when its metadata word names a codec and sets no reserved bit.
+fn checked_locator(locator: UddpLocator) -> Result<UddpLocator, FormatError> {
+    try_unpack_codec(locator.meta32)?;
+    Ok(locator)
+}
 
 #[derive(Debug, Clone, Copy)]
 struct RuntimeDictRef {
@@ -316,6 +331,25 @@ impl UddpReader {
         self.read_file_by_path_hash_cow(path_hash64).map(Cow::into_owned)
     }
 
+    /// The BC7 field split stream of a file stored as [`Codec::Bc7FieldsZstd`] or [`Codec::Bc7FieldsLz4Hc`],
+    /// decompressed but not joined, so that a reader joins only the blocks it needs ([`crate::bc7_fields::FieldsPage`]);
+    /// `None` for a file of another codec, which [`Self::read_file_by_path_hash_cow`] reads. It bypasses the decoded
+    /// entry cache.
+    pub fn read_bc7_fields_by_path_hash(&self, path_hash64: u64) -> Result<Option<Bc7FieldsPayload>, FormatError> {
+        let path = self.path_index.as_ref().ok_or(FormatError::WrongLookupMode)?;
+        let pos = path
+            .binary_search_by_key(&path_hash64, |e| e.path_hash64)
+            .map_err(|_| FormatError::FileNotFound)?;
+        let locator = &path[pos].locator;
+        let codec = unpack_codec(locator.meta32);
+        if !codec.is_bc7_fields() {
+            return Ok(None);
+        }
+        let stream = bc7_fields_decompress(codec, self.locator_payload(locator)?, locator.raw_size as usize)
+            .map_err(FormatError::Io)?;
+        Ok(Some(Bc7FieldsPayload { raw_len: locator.raw_size as usize, stream }))
+    }
+
     /// Read a file addressed by a normalized path hash.
     ///
     /// Uncompressed entries are borrowed directly from the package image.
@@ -433,7 +467,10 @@ impl UddpReader {
             self.dict_by_type[dict.data_type as usize] = Some(RuntimeDictRef {
                 offset: dict.offset,
                 size: dict.size,
-                codec: Codec::from_u8(dict.codec)?,
+                codec: match Codec::from_u8(dict.codec)? {
+                    codec if codec.is_bc7_fields() => return Err(FormatError::InvalidCodec(dict.codec)),
+                    codec => codec,
+                },
             });
         }
 
@@ -454,7 +491,7 @@ impl UddpReader {
                 let mut cur = Cursor::new(&self.data[range]);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
-                    entries.push(UddpLocator::read_from(&mut cur)?);
+                    entries.push(checked_locator(UddpLocator::read_from(&mut cur)?)?);
                 }
                 self.dense_index = Some(entries);
             }
@@ -463,7 +500,9 @@ impl UddpReader {
                 let mut cur = Cursor::new(&self.data[range]);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
-                    entries.push(UddpPathEntry::read_from(&mut cur)?);
+                    let entry = UddpPathEntry::read_from(&mut cur)?;
+                    checked_locator(entry.locator)?;
+                    entries.push(entry);
                 }
                 self.path_index = Some(entries);
             }
@@ -472,7 +511,9 @@ impl UddpReader {
                 let mut cur = Cursor::new(&self.data[range]);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
-                    entries.push(UddpSparseIdEntry::read_from(&mut cur)?);
+                    let entry = UddpSparseIdEntry::read_from(&mut cur)?;
+                    checked_locator(entry.locator)?;
+                    entries.push(entry);
                 }
                 self.sparse_index = Some(entries);
             }
@@ -491,7 +532,9 @@ impl UddpReader {
     fn decode_locator_cow(&self, locator: &UddpLocator) -> Result<Cow<'_, [u8]>, FormatError> {
         match unpack_codec(locator.meta32) {
             Codec::None => Ok(Cow::Borrowed(self.locator_payload(locator)?)),
-            Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc => self.decode_locator(locator).map(Cow::Owned),
+            Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc | Codec::Bc7FieldsZstd | Codec::Bc7FieldsLz4Hc => {
+                self.decode_locator(locator).map(Cow::Owned)
+            }
         }
     }
 
@@ -513,6 +556,9 @@ impl UddpReader {
                     zstd_decompress(data, locator.raw_size as usize, Some(dict), false).map_err(FormatError::Io)?
                 }
                 Codec::Lz4Hc => lz4_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
+                codec @ (Codec::Bc7FieldsZstd | Codec::Bc7FieldsLz4Hc) => {
+                    bc7_fields_decode(codec, data, locator.raw_size as usize).map_err(FormatError::Io)?
+                }
             };
 
             Ok(decoded)

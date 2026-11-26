@@ -1,3 +1,4 @@
+pub mod bc7_fields;
 pub mod codec;
 pub mod executor;
 pub mod uddf;
@@ -7,6 +8,7 @@ pub mod uddp;
 pub use uddp::{
     AddFileRequest,
     AddOwnedFileRequest,
+    Bc7FieldsPayload,
     BuildProgress,
     BuildProgressFile,
     BuildProgressPhase,
@@ -42,12 +44,14 @@ pub use uddp::{
     pack_meta32,
     pack_pos64,
     reconstruct_stored_size,
+    try_unpack_codec,
     unpack_codec,
     unpack_delta_hi8,
     unpack_independent_frames,
     unpack_offset40,
     unpack_type,
     xxh64_virtual_path,
+    ZSTD_DEFAULT_LEVEL,
 };
 pub use codec::{
     CodecBits,

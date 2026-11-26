@@ -1163,6 +1163,8 @@ fn codec_name(codec: Codec) -> &'static str {
         Codec::ZstdNoDict => "zstd",
         Codec::ZstdTypeDict => "zstd type dict",
         Codec::Lz4Hc => "lz4 hc",
+        Codec::Bc7FieldsZstd => "bc7 fields zstd",
+        Codec::Bc7FieldsLz4Hc => "bc7 fields lz4 hc",
     }
 }
 

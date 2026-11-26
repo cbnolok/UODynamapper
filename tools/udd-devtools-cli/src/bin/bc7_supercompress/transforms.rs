@@ -8,6 +8,9 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use udd_container::bc7_fields::{self, FieldsError};
+pub use udd_container::bc7_fields::BlockRect;
+
 pub const BLOCK_BYTES: usize = 16;
 const BLOCK_BITS: u32 = 128;
 /// Modes 0 to 7, and the reserved encoding (no mode bit set in the first byte), kept as raw blocks.
@@ -410,248 +413,69 @@ fn field_stream_lengths(counts: &[usize; MODE_SLOTS]) -> ([usize; 8], [usize; 8]
     (prefix, index, counts[RESERVED_MODE as usize] * BLOCK_BYTES)
 }
 
+impl From<FieldsError> for TransformError {
+    fn from(error: FieldsError) -> Self {
+        match error {
+            FieldsError::Length { expected, actual } => Self::Length { expected, actual },
+            FieldsError::ModeMap { block, value } => Self::ModeMap { block, value },
+            FieldsError::PaddingBits { block } => Self::PaddingBits { block },
+            FieldsError::Rect { x, y, width, height } => Self::Rect { x, y, width, height },
+        }
+    }
+}
+
+/// The field split of the container's codecs 4 and 5 ([`bc7_fields::forward`]); `fields-shuf` then transposes each
+/// mode's records into byte planes.
 fn fields_forward(input: &[u8], shuffle: bool, out: &mut Vec<u8>) {
-    let body = input.len() / BLOCK_BYTES * BLOCK_BYTES;
-    let map = mode_map(&input[..body]);
-    let counts = mode_counts(&map).expect("modes come from block_mode");
-    let mut prefixes: [Vec<u8>; 8] = Default::default();
-    let mut indices: [Vec<u8>; 8] = Default::default();
-    let mut reserved = Vec::new();
-    for mode in 0..8 {
-        prefixes[mode].reserve(counts[mode] * prefix_bytes(mode));
-        indices[mode].reserve(counts[mode] * index_bytes(mode));
+    bc7_fields::forward(input, out);
+    if shuffle {
+        let blocks = input.len() / BLOCK_BYTES;
+        let counts = mode_counts(&out[..blocks]).expect("modes come from block_mode");
+        let plain = out[blocks..].to_vec();
+        shuffle_records(&plain, &counts, &mut out[blocks..], transpose_into);
     }
-    for (block, &mode) in input[..body].chunks_exact(BLOCK_BYTES).zip(&map) {
-        if mode == RESERVED_MODE {
-            reserved.extend_from_slice(block);
-            continue;
-        }
-        let mode = mode as usize;
-        let bits = block_bits(block);
-        let mode_bits = mode as u32 + 1;
-        let prefix = low_bits(bits >> mode_bits, prefix_bits(mode));
-        let index = bits >> (mode_bits + prefix_bits(mode));
-        prefixes[mode].extend_from_slice(&prefix.to_le_bytes()[..prefix_bytes(mode)]);
-        indices[mode].extend_from_slice(&index.to_le_bytes()[..index_bytes(mode)]);
-    }
-    out.reserve(map.len() + body + 2 * map.len());
-    out.extend_from_slice(&map);
-    for (streams, record_len) in [(&prefixes, prefix_bytes as fn(usize) -> usize), (&indices, index_bytes)] {
-        for (mode, stream) in streams.iter().enumerate() {
-            let start = out.len();
-            out.resize(start + stream.len(), 0);
-            if shuffle {
-                transpose_into(stream, record_len(mode), &mut out[start..]);
-            } else {
-                out[start..].copy_from_slice(stream);
-            }
-        }
-    }
-    out.extend_from_slice(&reserved);
-    out.extend_from_slice(&input[body..]);
 }
 
 fn fields_inverse(input: &[u8], raw_len: usize, shuffle: bool, out: &mut Vec<u8>) -> Result<(), TransformError> {
+    if !shuffle {
+        return Ok(bc7_fields::inverse(input, raw_len, out)?);
+    }
     let blocks = raw_len / BLOCK_BYTES;
     let tail = raw_len - blocks * BLOCK_BYTES;
     if input.len() < blocks {
         return Err(TransformError::Length { expected: blocks, actual: input.len() });
     }
-    let (map, rest) = input.split_at(blocks);
-    let counts = mode_counts(map)?;
+    let counts = mode_counts(&input[..blocks])?;
     let (prefix_lengths, index_lengths, reserved_length) = field_stream_lengths(&counts);
     let expected = prefix_lengths.iter().sum::<usize>() + index_lengths.iter().sum::<usize>() + reserved_length + tail;
     check_len(blocks + expected, input.len())?;
+    let mut plain = input.to_vec();
+    shuffle_records(&input[blocks..], &counts, &mut plain[blocks..], untranspose_into);
+    Ok(bc7_fields::inverse(&plain, raw_len, out)?)
+}
 
-    // Each mode's two streams, unshuffled into scratch when they were shuffled.
-    let mut prefix_streams: [Cow<[u8]>; 8] = Default::default();
-    let mut index_streams: [Cow<[u8]>; 8] = Default::default();
+/// Each mode's field and index records of the stream after the map, from `input` into `out` by `pass` (transposed or
+/// back); the reserved blocks and the tail are copied.
+fn shuffle_records(input: &[u8], counts: &[usize; MODE_SLOTS], out: &mut [u8], pass: fn(&[u8], usize, &mut [u8])) {
+    let (prefix_lengths, index_lengths, _) = field_stream_lengths(counts);
     let mut at = 0;
-    for (streams, lengths, record_len) in [
-        (&mut prefix_streams, &prefix_lengths, prefix_bytes as fn(usize) -> usize),
-        (&mut index_streams, &index_lengths, index_bytes),
-    ] {
+    for (lengths, record_len) in [(&prefix_lengths, prefix_bytes as fn(usize) -> usize), (&index_lengths, index_bytes)] {
         for mode in 0..8 {
-            let stored = &rest[at..at + lengths[mode]];
+            pass(&input[at..at + lengths[mode]], record_len(mode), &mut out[at..at + lengths[mode]]);
             at += lengths[mode];
-            streams[mode] = if shuffle {
-                let mut plain = vec![0u8; stored.len()];
-                untranspose_into(stored, record_len(mode), &mut plain);
-                Cow::Owned(plain)
-            } else {
-                Cow::Borrowed(stored)
-            };
         }
     }
-    let reserved = &rest[at..at + reserved_length];
-    let tail_bytes = &rest[at + reserved_length..];
-
-    let start = out.len();
-    out.resize(start + raw_len, 0);
-    let (body_out, tail_out) = out[start..].split_at_mut(blocks * BLOCK_BYTES);
-    tail_out.copy_from_slice(tail_bytes);
-    let mut next = [0usize; MODE_SLOTS];
-    let mut unpadded = None;
-    for (block, (target, &mode)) in body_out.chunks_exact_mut(BLOCK_BYTES).zip(map).enumerate() {
-        let slot = mode as usize;
-        let n = next[slot];
-        next[slot] += 1;
-        let (prefixes, indices) = match index_streams.get(slot) {
-            Some(index_stream) => (&prefix_streams[slot][..], &index_stream[..]),
-            None => {
-                target.copy_from_slice(&reserved[n * BLOCK_BYTES..(n + 1) * BLOCK_BYTES]);
-                continue;
-            }
-        };
-        if !join_mode(mode, prefixes, indices, n, target) {
-            unpadded = Some(block);
-            break;
-        }
-    }
-    if let Some(block) = unpadded {
-        out.truncate(start);
-        return Err(TransformError::PaddingBits { block });
-    }
-    Ok(())
-}
-
-/// Writes block `n` of `mode` (0 to 7) from its records; false when a record's padding bits are set.
-#[inline(always)]
-fn join_mode(mode: u8, prefixes: &[u8], indices: &[u8], n: usize, target: &mut [u8]) -> bool {
-    // One instance per mode, so the record lengths and shifts are constants. A page's modes come in runs (most
-    // blocks are the one transparent block), so this branch predicts better than a table-driven join, which
-    // measured 50 % slower.
-    match mode {
-        0 => join_block::<0>(prefixes, indices, n, target),
-        1 => join_block::<1>(prefixes, indices, n, target),
-        2 => join_block::<2>(prefixes, indices, n, target),
-        3 => join_block::<3>(prefixes, indices, n, target),
-        4 => join_block::<4>(prefixes, indices, n, target),
-        5 => join_block::<5>(prefixes, indices, n, target),
-        6 => join_block::<6>(prefixes, indices, n, target),
-        _ => join_block::<7>(prefixes, indices, n, target),
-    }
-}
-
-/// A rectangle of whole blocks on a page, in blocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockRect {
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
-}
-
-/// Entries `count_modes` compares at once: a 256-bit vector of bytes.
-const COUNT_LANES: usize = 32;
-
-/// Counts of each mode slot in `map`; the first block whose entry is no mode is an error (`first_block` is the
-/// position of `map[0]`).
-#[inline]
-fn count_modes(map: &[u8], first_block: usize) -> Result<[usize; MODE_SLOTS], TransformError> {
-    let mut counts = [0usize; MODE_SLOTS];
-    // Byte counters, one per mode and lane, over groups of `COUNT_LANES` entries: compares and adds the compiler
-    // vectorises. Counting each mode with `filter().count()` took 4.5 ns an entry (1.2 ms a page, half the whole
-    // inverse), and a scalar histogram is a chain of dependent increments.
-    for run in map.chunks(COUNT_LANES * usize::from(u8::MAX)) {
-        let mut lanes = [[0u8; COUNT_LANES]; MODE_SLOTS];
-        let mut groups = run.chunks_exact(COUNT_LANES);
-        for group in &mut groups {
-            for (mode, lanes) in lanes.iter_mut().enumerate() {
-                for (lane, &value) in lanes.iter_mut().zip(group) {
-                    *lane += u8::from(value == mode as u8);
-                }
-            }
-        }
-        for (count, lanes) in counts.iter_mut().zip(&lanes) {
-            *count += lanes.iter().map(|&lane| usize::from(lane)).sum::<usize>();
-        }
-        for &value in groups.remainder() {
-            if let Some(count) = counts.get_mut(usize::from(value)) {
-                *count += 1;
-            }
-        }
-    }
-    if counts.iter().sum::<usize>() != map.len() {
-        let block = map.iter().position(|&value| value as usize >= MODE_SLOTS).expect("an entry outside the modes");
-        return Err(TransformError::ModeMap { block: first_block + block, value: map[block] });
-    }
-    Ok(counts)
+    out[at..].copy_from_slice(&input[at..]);
 }
 
 /// The blocks of `rects`, each row-major, one rectangle after another, from a `fields` stream of a `raw_len`-byte page
 /// `blocks_wide` blocks wide, joining only those blocks: what a reader handing on the frames of one clip needs, where
-/// [`Transform::inverse`] joins the whole page. Each mode's running count, which gives a block its records, comes
-/// from the counts of the mode map's rows before it and of the row up to it. The whole map is checked (its entries
-/// and the stream length its counts give); padding bits only in the blocks joined.
+/// [`Transform::inverse`] joins the whole page. The production join ([`bc7_fields::FieldsPage`]): the whole map is
+/// checked (its entries and the stream length its counts give); padding bits only in the blocks joined.
 pub fn fields_extract(input: &[u8], raw_len: usize, blocks_wide: usize, rects: &[BlockRect], out: &mut Vec<u8>)
     -> Result<(), TransformError> {
     out.clear();
-    let blocks = raw_len / BLOCK_BYTES;
-    let tail = raw_len - blocks * BLOCK_BYTES;
-    if input.len() < blocks {
-        return Err(TransformError::Length { expected: blocks, actual: input.len() });
-    }
-    if blocks_wide == 0 || blocks % blocks_wide != 0 {
-        return Err(TransformError::Rect { x: 0, y: 0, width: blocks_wide, height: 0 });
-    }
-    let rows = blocks / blocks_wide;
-    let (map, rest) = input.split_at(blocks);
-    // Each mode's count before each row, and the totals last.
-    let mut before_row = Vec::with_capacity(rows + 1);
-    let mut running = [0usize; MODE_SLOTS];
-    before_row.push(running);
-    for (row, entries) in map.chunks_exact(blocks_wide).enumerate() {
-        let counts = count_modes(entries, row * blocks_wide)?;
-        for (total, count) in running.iter_mut().zip(counts) {
-            *total += count;
-        }
-        before_row.push(running);
-    }
-    let (prefix_lengths, index_lengths, reserved_length) = field_stream_lengths(&running);
-    let expected = prefix_lengths.iter().sum::<usize>() + index_lengths.iter().sum::<usize>() + reserved_length + tail;
-    check_len(blocks + expected, input.len())?;
-    let mut prefix_streams: [&[u8]; 8] = [&[]; 8];
-    let mut index_streams: [&[u8]; 8] = [&[]; 8];
-    let mut at = 0;
-    for (streams, lengths) in [(&mut prefix_streams, &prefix_lengths), (&mut index_streams, &index_lengths)] {
-        for mode in 0..8 {
-            streams[mode] = &rest[at..at + lengths[mode]];
-            at += lengths[mode];
-        }
-    }
-    let reserved = &rest[at..at + reserved_length];
-
-    let wanted: usize = rects.iter().map(|rect| rect.width * rect.height).sum();
-    out.resize(wanted * BLOCK_BYTES, 0);
-    let mut targets = out.chunks_exact_mut(BLOCK_BYTES);
-    for rect in rects {
-        if rect.x + rect.width > blocks_wide || rect.y + rect.height > rows {
-            return Err(TransformError::Rect { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
-        }
-        for row in rect.y..rect.y + rect.height {
-            let row_start = row * blocks_wide;
-            let mut next = before_row[row];
-            let before = count_modes(&map[row_start..row_start + rect.x], row_start)?;
-            for (count, more) in next.iter_mut().zip(before) {
-                *count += more;
-            }
-            let start = row_start + rect.x;
-            for (block, &mode) in map[start..start + rect.width].iter().enumerate() {
-                let target = targets.next().expect("one target per wanted block");
-                let slot = mode as usize;
-                let n = next[slot];
-                next[slot] += 1;
-                if mode == RESERVED_MODE {
-                    target.copy_from_slice(&reserved[n * BLOCK_BYTES..(n + 1) * BLOCK_BYTES]);
-                } else if !join_mode(mode, prefix_streams[slot], index_streams[slot], n, target) {
-                    out.clear();
-                    return Err(TransformError::PaddingBits { block: start + block });
-                }
-            }
-        }
-    }
-    Ok(())
+    Ok(bc7_fields::FieldsPage::new(input, raw_len, blocks_wide)?.extract(rects, out)?)
 }
 
 /// Record `n` of `len` bytes of a stream, as a little-endian number: one 16-byte load masked to the record where the
@@ -667,21 +491,6 @@ fn read_record(stream: &[u8], n: usize, len: usize) -> u128 {
             u128::from_le_bytes(buffer)
         }
     }
-}
-
-/// Writes block `n` of mode `MODE` from its field and index records into `target`; false when a record's padding bits
-/// are set.
-#[inline(always)]
-fn join_block<const MODE: usize>(prefixes: &[u8], indices: &[u8], n: usize, target: &mut [u8]) -> bool {
-    let prefix = read_record(prefixes, n, prefix_bytes(MODE));
-    let index = read_record(indices, n, index_bytes(MODE));
-    let mode_bits = MODE as u32 + 1;
-    if prefix >> prefix_bits(MODE) != 0 || index >> INDEX_BITS[MODE] != 0 {
-        return false;
-    }
-    let bits = (index << (mode_bits + prefix_bits(MODE))) | (prefix << mode_bits) | (1u128 << MODE);
-    target.copy_from_slice(&bits.to_le_bytes());
-    true
 }
 
 #[derive(Debug, Clone, Copy)]
