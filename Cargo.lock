@@ -7253,6 +7253,7 @@ dependencies = [
  "ssimulacra2",
  "udd-assets",
  "udd-container",
+ "uot-texture-codecs",
  "wesl",
  "wgpu",
  "workspace-hack",

@@ -42,13 +42,13 @@ pub struct Classes {
 }
 
 impl Classes {
-    fn new(mut bounds: Vec<u32>) -> Self {
+    pub(crate) fn new(mut bounds: Vec<u32>) -> Self {
         bounds.sort_unstable();
         bounds.dedup();
         Self { bounds }
     }
 
-    fn of(&self, side: u32) -> usize {
+    pub(crate) fn of(&self, side: u32) -> usize {
         self.bounds.iter().position(|&bound| side <= bound).unwrap_or(self.bounds.len())
     }
 
@@ -56,7 +56,7 @@ impl Classes {
         self.bounds.len() + 1
     }
 
-    fn name(&self, class: usize) -> String {
+    pub(crate) fn name(&self, class: usize) -> String {
         match (class.checked_sub(1).map(|previous| self.bounds[previous]), self.bounds.get(class)) {
             (None, Some(bound)) => format!("≤ {bound} px"),
             (Some(low), Some(bound)) => format!("{}–{bound} px", low + 1),
@@ -67,7 +67,7 @@ impl Classes {
 }
 
 /// Each body's largest stored frame side: the most of its placed frames' widths and heights.
-fn body_sides(package: &Package) -> BTreeMap<u32, u32> {
+pub(crate) fn body_sides(package: &Package) -> BTreeMap<u32, u32> {
     let mut sides = BTreeMap::new();
     for frame in package.frames.iter().filter(|frame| frame.placed()) {
         let side = sides.entry(frame.owner_body).or_insert(0);
@@ -591,6 +591,10 @@ pub struct CrowdArgs {
     /// Decodes of each page per method; the fastest counts.
     #[arg(long, default_value_t = 3)]
     reps: usize,
+    /// With the stored layout: each page's blocks from `<dir>/<page position>.zst` instead of the package (a variant
+    /// `lossy --store` wrote), the package giving the records.
+    #[arg(long)]
+    pages: Option<std::path::PathBuf>,
 }
 
 /// A configuration: for each size class, the method its pages are stored with and whether a clip joins only its own
@@ -790,7 +794,15 @@ pub fn crowd_study(args: &CrowdArgs) -> eyre::Result<()> {
             for frame in package.frames.iter().filter(|frame| frame.placed()) {
                 blocks[position[&frame.page]][class_of_body(frame.owner_body)] += slot_blocks(frame, package.gutter);
             }
-            Layout::stored(&package, |at| (0..classes.count()).max_by_key(|&class| blocks[at][class]).unwrap_or(0))?
+            let mut layout =
+                Layout::stored(&package, |at| (0..classes.count()).max_by_key(|&class| blocks[at][class]).unwrap_or(0))?;
+            if let Some(dir) = &args.pages {
+                for (at, page) in layout.pages.iter_mut().enumerate() {
+                    let path = dir.join(format!("{at}.zst"));
+                    page.held = Held::Built(std::fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?);
+                }
+            }
+            layout
         }
         LayoutKind::Classes => {
             let mut groups = vec![Vec::new(); classes.count()];

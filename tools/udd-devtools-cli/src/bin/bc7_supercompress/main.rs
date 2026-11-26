@@ -17,13 +17,18 @@
 //! - `crowd <package> <cc|ec> --config name=spec ...`: every page through each method on the game's worker count, then
 //!   crowds appearing under the loader the user chose, with and without a cache of decoded pages; `--layout classes`
 //!   puts each size class on pages of its own, and a spec can name a method per class (see `study.rs`).
+//! - `lossy <rgba package> <bc7 package> <cc|ec> --variants ...`: lossy conditioning of the pages against the source
+//!   frames (the library RDO, coder-aware block and field reuse, temporal block reuse on an anchor-aligned layout,
+//!   endpoint coarsening, flat blocks), its size under each method and its quality (see `lossy.rs`).
 //!
 //! A method is `stored` (the page as the package holds it, read through the container) or
 //! `<transform>+<backend>`, e.g. `none+zstd:9`, `split1+lz4hc:12`, `fields-shuf+zstd:19` (see `transforms.rs` and
 //! `backends.rs` for the names).
 
 mod backends;
+mod bc7block;
 mod corpus;
+mod lossy;
 mod repack;
 mod study;
 mod transforms;
@@ -78,6 +83,7 @@ enum Command {
     Classes(study::ClassesArgs),
     Bodies(study::BodiesArgs),
     Crowd(study::CrowdArgs),
+    Lossy(lossy::LossyArgs),
 }
 
 #[derive(Args)]
@@ -256,6 +262,7 @@ fn main() -> eyre::Result<()> {
         Command::Classes(args) => study::classes(&args),
         Command::Bodies(args) => study::bodies(&args),
         Command::Crowd(args) => study::crowd_study(&args),
+        Command::Lossy(args) => lossy::lossy(&args),
     }
 }
 
