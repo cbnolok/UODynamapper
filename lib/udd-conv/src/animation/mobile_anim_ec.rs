@@ -37,6 +37,7 @@ use crate::bc7::{
     Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::page_compression::mobile_anim_page_compression;
 use crate::package_progress::{
     finish_streaming_package_with_progress, AssetProgressReporter, AssetTaskProgress,
     AssetTaskProgressStage,
@@ -661,7 +662,7 @@ fn encode_and_add_mobile_anim_page_chunk(
             .drain(..)
             .map(|page| AddOwnedFileRequest {
                 data_type: DataType::Texture as u8,
-                compression: options.compression,
+                compression: mobile_anim_page_compression(options.compression, PagePixelFormat::Rgba8888),
                 width: page.record.used_width,
                 height: page.record.used_height,
                 virtual_path: Some(page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888)),
@@ -725,7 +726,7 @@ fn encode_and_add_mobile_anim_page_chunk(
         .into_iter()
         .map(|(page_path, stored_page, width, height)| AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression: options.compression,
+            compression: mobile_anim_page_compression(options.compression, options.pixel_format),
             width,
             height,
             virtual_path: Some(page_path),

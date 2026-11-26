@@ -5,7 +5,7 @@ use crate::logic::tasks::{
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, ComputeDevice, GumpsEcSharing, HueRamp,
-    MobilePrescale, StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
+    MobilePageCoding, MobilePrescale, StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
 use crate::ui::layout::{card_title, draw_card_grid, page_heading, section_heading, CardGrid};
@@ -186,6 +186,7 @@ impl UddConvApp {
             vec![],
         );
         ui.add_enabled_ui(!is_busy, |ui| {
+            draw_page_coding(ui, &mut self.settings.page_coding_mobile_anim_cc);
             draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_cc);
             draw_prescale(ui, &mut self.settings.prescale_mobile_anim_cc);
         });
@@ -310,6 +311,7 @@ impl UddConvApp {
             vec![],
         );
         ui.add_enabled_ui(!is_busy, |ui| {
+            draw_page_coding(ui, &mut self.settings.page_coding_mobile_anim_ec);
             draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_ec);
             draw_prescale(ui, &mut self.settings.prescale_mobile_anim_ec);
         });
@@ -751,6 +753,34 @@ fn draw_prescale(ui: &mut egui::Ui, prescale: &mut MobilePrescale) {
             ui.label(egui::RichText::new("Grows the package; the run-time upscale makes the same frames.")
                 .size(11.0).color(NOTICE_COLOUR));
         }
+    });
+}
+
+const PAGE_CODING_CELL_WIDTH: f32 = 280.0;
+const PAGE_CODING_TOOLTIP: &str = "How the pages' compression pass codes them (--page-coding). Field split + Zstd, the \
+default: each BC7 page split into its blocks' fields, then Zstd at the card's level, about 8 % smaller than plain \
+Zstd 9, and Dynamapper joins only a clip's blocks. Field split + LZ4 HC: about 5 % larger than plain Zstd 9 and 2.4 \
+times as fast to decode, the Zstd level unused. Zstd: the blocks as they are. Raw RGBA8 pages aren't split: they take plain \
+Zstd, or plain LZ4 HC.";
+
+/// The page coding of a mobile animation card.
+fn draw_page_coding(ui: &mut egui::Ui, coding: &mut MobilePageCoding) {
+    draw_control_cell(ui, "Page Coding", PAGE_CODING_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            for (choice, label) in [
+                (MobilePageCoding::FieldsZstd, "Split + Zstd"),
+                (MobilePageCoding::FieldsLz4Hc, "Split + LZ4 HC"),
+                (MobilePageCoding::Zstd, "Zstd"),
+            ] {
+                if ui
+                    .add(egui::Button::selectable(*coding == choice, label))
+                    .on_hover_text(PAGE_CODING_TOOLTIP)
+                    .clicked()
+                {
+                    *coding = choice;
+                }
+            }
+        });
     });
 }
 

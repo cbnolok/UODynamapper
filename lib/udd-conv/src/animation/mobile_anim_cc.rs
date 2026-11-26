@@ -42,6 +42,7 @@ use crate::bc7::{
     Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::page_compression::mobile_anim_page_compression;
 use crate::package_progress::{
     build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress,
     AssetTaskProgressStage,
@@ -761,7 +762,7 @@ fn encode_and_add_mobile_anim_page_chunk(
         for page in pages.drain(..) {
             package.add_owned_file(AddOwnedFileRequest {
                 data_type: DataType::Texture as u8,
-                compression: options.compression,
+                compression: mobile_anim_page_compression(options.compression, PagePixelFormat::Rgba8888),
                 width: page.record.used_width,
                 height: page.record.used_height,
                 virtual_path: Some(page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888)),
@@ -823,7 +824,7 @@ fn encode_and_add_mobile_anim_page_chunk(
     for (page_path, stored_page, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression: options.compression,
+            compression: mobile_anim_page_compression(options.compression, options.pixel_format),
             width,
             height,
             virtual_path: Some(page_path),
@@ -3678,6 +3679,107 @@ mod tests {
         assert_eq!(package.body_type_record(7).unwrap().flags, 0x8000_0001);
         assert_eq!(package.body_type_record(7).unwrap().move_actions, body_type_records[0].move_actions);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
+    }
+
+    /// The clips of a BC7 package hand on the same stored frames from pages in the field split (codecs 4 and 5),
+    /// whose clips join only their blocks, as from plain Zstd pages.
+    #[test]
+    fn split_pages_hand_on_the_frames_of_plain_pages() {
+        use udd_assets::animation::mobile_strides::MobileAnimClips;
+        const ATLAS_SIDE: u32 = 64;
+        const DIRECTIONS: u8 = 5;
+        const FRAMES_PER_CLIP: u16 = 3;
+        const DISTINCT_BLOCKS: usize = 32;
+        const TEST_ZSTD_LEVEL: i32 = 3;
+        const SIZES: [(u16, u16); 5] = [(5, 7), (12, 9), (4, 4), (16, 13), (3, 10)];
+        let options = MobileAnimCcAtlasOptions {
+            atlas_width: ATLAS_SIDE,
+            atlas_height: ATLAS_SIDE,
+            gutter: 0,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Bc7,
+            ..Default::default()
+        };
+        let mut frames = Vec::new();
+        let mut frame_records = Vec::new();
+        let mut animations = Vec::new();
+        for direction in 0..DIRECTIONS {
+            animations.push(MobileAnimCcAnimationRecord {
+                body_id: 1, action_id: 2, direction, file_index: 0, source_index: u32::from(direction),
+                frame_start: frame_records.len() as u32, frame_count: FRAMES_PER_CLIP, flags: 0, fps: 0.0,
+            });
+            for frame_index in 0..FRAMES_PER_CLIP {
+                let global = frame_records.len();
+                let (width, height) = SIZES[global % SIZES.len()];
+                frames.push(frame(global as u32, width, height));
+                frame_records.push(MobileAnimCcFrameRecord {
+                    animation_index: u32::from(direction), frame_index, page_index: MISSING_PAGE_INDEX,
+                    page_frame_index: MISSING_PAGE_FRAME_INDEX, x: 0, y: 0, width, height, center_x: 1,
+                    center_y: 2,
+                });
+            }
+        }
+        let pages = pack_frames_into_pages(frames, &mut frame_records, &options).unwrap();
+        // Blocks of every BC7 mode (and the reserved one) in place of an encode: the clips hand on blocks as stored.
+        let mut state = 0x2545_F491u32;
+        let distinct: Vec<u8> = (0..DISTINCT_BLOCKS * 16).map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        }).collect();
+        let atlas_blocks = (ATLAS_SIDE / 4 * (ATLAS_SIDE / 4)) as usize;
+        let page_blocks = |page: u32| -> Vec<u8> {
+            (0..atlas_blocks).flat_map(|block| {
+                let at = (block * 7 + page as usize) % DISTINCT_BLOCKS * 16;
+                distinct[at..at + 16].to_vec()
+            }).collect()
+        };
+        let manifests = [
+            (PAGE_MANIFEST_ENTRY_PATH, serialize_page_manifest(&pages, &options).unwrap()),
+            (ANIMATION_MANIFEST_ENTRY_PATH, serialize_animation_manifest(&animations).unwrap()),
+            (FRAME_MANIFEST_ENTRY_PATH, serialize_frame_manifest(&frame_records).unwrap()),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, serialize_body_resolve_manifest(&[]).unwrap()),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, serialize_body_type_manifest(&[]).unwrap()),
+        ];
+        let package = |compression: CompressionFlag, codec: udd_container::Codec| {
+            let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+            for (path, data) in &manifests {
+                builder.add_file(AddFileRequest { data_type: DataType::Metadata as u8,
+                    compression: CompressionFlag::ZstdNoDict, width: 0, height: 0, virtual_path: Some(path),
+                    path_hash64: None, id: None, data }).unwrap();
+            }
+            for page in &pages {
+                let index = page.record.page_index;
+                builder.add_owned_file(AddOwnedFileRequest { data_type: DataType::Texture as u8, compression,
+                    width: 0, height: 0, virtual_path: Some(page_entry_path(index, PagePixelFormat::Bc7)),
+                    path_hash64: None, id: None, data: page_blocks(index) }).unwrap();
+            }
+            let reader = UddpReader::open(builder.build().unwrap()).unwrap();
+            let page_path = udd_container::xxh64_virtual_path(&page_entry_path(0, PagePixelFormat::Bc7));
+            let record = reader.records().into_iter()
+                .find(|record| record.key == udd_container::FileKey::PathHash(page_path)).unwrap();
+            assert_eq!(udd_container::unpack_codec(record.locator.meta32), codec, "the page must shrink");
+            MobileAnimCcPackage::from_uddp_package(reader).unwrap()
+        };
+        let plain = package(CompressionFlag::ZstdNoDictLevel(TEST_ZSTD_LEVEL), udd_container::Codec::ZstdNoDict);
+        let clips = |package: &MobileAnimCcPackage| -> Vec<_> {
+            (0..u8::MAX).map(|direction| package.stored_clip(1, 2, direction).unwrap()).collect()
+        };
+        let expected = clips(&plain);
+        let frames = expected.iter().flatten().map(|clip| clip.frames.len()).sum::<usize>();
+        assert!(frames >= (usize::from(DIRECTIONS) * FRAMES_PER_CLIP as usize), "{frames} frames");
+        for (compression, codec) in [
+            (CompressionFlag::Bc7FieldsZstdLevel(TEST_ZSTD_LEVEL), udd_container::Codec::Bc7FieldsZstd),
+            (CompressionFlag::Bc7FieldsLz4Hc, udd_container::Codec::Bc7FieldsLz4Hc),
+        ] {
+            let split = package(compression, codec);
+            assert_eq!(clips(&split), expected, "{codec:?}");
+            // A frame read alone, outside a clip, too.
+            for frame in plain.frames() {
+                assert_eq!(split.read_frame_stored(frame).unwrap(), plain.read_frame_stored(frame).unwrap());
+            }
+        }
     }
 
     /// A package of one UOP body's one frame ([`sparse_frame`], stored cropped to its opaque texels), written to `path`.

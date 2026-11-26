@@ -34,7 +34,10 @@ use udd_conv::{
     },
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
-    page_compression::{BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_ZSTD_LEVEL},
+    page_compression::{
+        BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_CODING, MOBILE_ANIM_PAGE_ZSTD_LEVEL,
+        MobileAnimPageCoding,
+    },
     single_gumps::{default_single_gump_compression, GumpPixelFormat},
     cc_statics::{
         convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches,
@@ -106,7 +109,7 @@ use udd_conv::bc7::NO_BC7_RDO_LAMBDA;
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
 /// A bare mobile animation `--zstd`: [`MOBILE_ANIM_PAGE_ZSTD_LEVEL`], the level of the pages without the flag.
-const MOBILE_ANIM_ZSTD_LEVEL_VALUE: &str = "9";
+const MOBILE_ANIM_ZSTD_LEVEL_VALUE: &str = "19";
 const CHUNK_ZSTD_HELP: &str = "Zstd level of the chunks (--zstd=LEVEL). Chunks are compressed with plain Zstd unless --stored; without a level (or without the flag) map chunks use level 19 and statics chunks level 7.";
 const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runtime read, for a package about 6.6x (map) or 2.8x (statics) larger.";
 const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which are lossless RGBA8888 with Zstd 19 (Classic land stays lossless); with --raw, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
@@ -114,8 +117,9 @@ const CLASSIC_LAND_BC7_HELP: &str = "Refused, with the reason: Classic land stay
 const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and of the atlas pages (--zstd=LEVEL). Without it single gumps use level 19 (7 with --raw) and atlas pages, lossless RGBA8888, level 19. A bare --zstd keeps these levels.";
 const ART_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding (none without --zstd). A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one. Lossless pages: --raw --zstd=19.";
 const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding (none without --zstd). A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one. Lossless textures: --raw --zstd=19.";
-const MOBILE_ANIM_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) with Zstd 9; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding (none without --zstd). A bare --zstd is level 9.";
-const MOBILE_ANIM_BC7_HELP: &str = "Write BC7 atlas pages without BC7 RDO and, without --zstd, without Zstd. The default is BC7 without RDO with Zstd 9.";
+const MOBILE_ANIM_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) in the BC7 field split with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level pass after that encoding (none without --zstd), coded as --page-coding says. A bare --zstd is level 19.";
+const MOBILE_ANIM_BC7_HELP: &str = "Write BC7 atlas pages without BC7 RDO and, without --zstd, uncompressed. The default is BC7 without RDO in the BC7 field split with Zstd 19.";
+const MOBILE_ANIM_PAGE_CODING_HELP: &str = "How the pages' compression pass codes them (the 2x pages of --prescale too): fields-zstd (the default) splits each BC7 page into its blocks' fields, then Zstd, about 8 % smaller than plain Zstd 9, and Dynamapper joins only a clip's blocks; fields-lz4hc splits them, then LZ4 HC, which takes no --zstd level: about 5 % larger than plain Zstd 9 and 2.4 times as fast to decode; zstd compresses the blocks as they are. RGBA8888 pages (--raw) aren't split: fields-zstd writes them with plain Zstd, fields-lz4hc with plain LZ4 HC. --bc7 or --raw without --zstd take no pass to code.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888 instead of the lossy default, with Zstd 7 unless --zstd=LEVEL.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1, the default: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
 const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, the default, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
@@ -473,22 +477,26 @@ fn single_gump_compression(zstd: Option<Option<i32>>, format: GumpPixelFormat) -
     zstd.flatten().map(zstd_compression).unwrap_or(default_single_gump_compression(format))
 }
 
+/// The mobile animation pages: without a format flag BC7 without RDO, the pass at `--zstd=LEVEL` or
+/// [`MOBILE_ANIM_PAGE_ZSTD_LEVEL`]; after `--raw`, `--bc7` or `--bc7-rdo`, a pass only with `--zstd`. The pass is coded
+/// as `page_coding` says, [`MOBILE_ANIM_PAGE_CODING`] without it.
 fn resolve_mobile_anim_output_format(
     raw: bool,
     zstd: Option<i32>,
     bc7: bool,
     bc7_rdo: bool,
+    page_coding: Option<CliMobilePageCoding>,
     bc7_rdo_lambda: f32,
     bc7_rdo_lookback_blocks: usize,
 ) -> eyre::Result<TextureOutputFormat> {
-    match (raw, bc7, bc7_rdo) {
-        (false, false, false) => Ok(TextureOutputFormat {
+    let mut format = match (raw, bc7, bc7_rdo) {
+        (false, false, false) => TextureOutputFormat {
             compression: zstd_compression(zstd.unwrap_or(MOBILE_ANIM_PAGE_ZSTD_LEVEL)),
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks,
             label: "BC7 + Zstd",
-        }),
+        },
         _ => resolve_texture_output_format(
             raw,
             zstd,
@@ -496,8 +504,29 @@ fn resolve_mobile_anim_output_format(
             bc7_rdo,
             bc7_rdo_lambda,
             bc7_rdo_lookback_blocks,
-        ),
+        )?,
+    };
+    let coding = page_coding.map_or(MOBILE_ANIM_PAGE_CODING, MobileAnimPageCoding::from);
+    if format.compression == CompressionFlag::None {
+        eyre::ensure!(page_coding.is_none(), "--page-coding codes a compression pass, which --raw, --bc7 and \
+            --bc7-rdo take only with --zstd");
+        return Ok(format);
     }
+    eyre::ensure!(coding != MobileAnimPageCoding::FieldsLz4Hc || zstd.is_none(),
+        "--page-coding fields-lz4hc takes no --zstd level");
+    format.compression = coding.apply(format.compression);
+    if format.pixel_format == PagePixelFormat::Bc7 {
+        format.label = match (coding, format.bc7_rdo_lambda > NO_BC7_RDO_LAMBDA) {
+            (MobileAnimPageCoding::Zstd, _) => format.label,
+            (MobileAnimPageCoding::FieldsZstd, false) => "BC7 + field split + Zstd",
+            (MobileAnimPageCoding::FieldsZstd, true) => "BC7 RDO + field split + Zstd",
+            (MobileAnimPageCoding::FieldsLz4Hc, false) => "BC7 + field split + LZ4 HC",
+            (MobileAnimPageCoding::FieldsLz4Hc, true) => "BC7 RDO + field split + LZ4 HC",
+        };
+    } else if coding == MobileAnimPageCoding::FieldsLz4Hc {
+        format.label = "RGBA8888 LZ4 HC";
+    }
+    Ok(format)
 }
 
 fn percent_string(part: u64, total: u64) -> String {
@@ -712,6 +741,26 @@ impl From<CliHueRamp> for HueRampMode {
         match ramp {
             CliHueRamp::Linear => HueRampMode::Linear,
             CliHueRamp::Flat => HueRampMode::Flat,
+        }
+    }
+}
+
+/// `--page-coding` of the mobile animation packers ([`MobileAnimPageCoding`]).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CliMobilePageCoding {
+    Zstd,
+    #[value(name = "fields-zstd")]
+    FieldsZstd,
+    #[value(name = "fields-lz4hc")]
+    FieldsLz4Hc,
+}
+
+impl From<CliMobilePageCoding> for MobileAnimPageCoding {
+    fn from(coding: CliMobilePageCoding) -> Self {
+        match coding {
+            CliMobilePageCoding::Zstd => Self::Zstd,
+            CliMobilePageCoding::FieldsZstd => Self::FieldsZstd,
+            CliMobilePageCoding::FieldsLz4Hc => Self::FieldsLz4Hc,
         }
     }
 }
@@ -1051,6 +1100,8 @@ enum Commands {
         zstd: Option<i32>,
         #[arg(long, help = MOBILE_ANIM_BC7_HELP)]
         bc7: bool,
+        #[arg(long = "page-coding", value_enum, help = MOBILE_ANIM_PAGE_CODING_HELP)]
+        page_coding: Option<CliMobilePageCoding>,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
@@ -1089,6 +1140,8 @@ enum Commands {
         zstd: Option<i32>,
         #[arg(long, help = MOBILE_ANIM_BC7_HELP)]
         bc7: bool,
+        #[arg(long = "page-coding", value_enum, help = MOBILE_ANIM_PAGE_CODING_HELP)]
+        page_coding: Option<CliMobilePageCoding>,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
@@ -1745,6 +1798,7 @@ where
             raw,
             zstd,
             bc7,
+            page_coding,
             bc7_rdo,
             bc7_rdo_lambda,
             bc7_rdo_lookback_blocks,
@@ -1764,6 +1818,7 @@ where
                     zstd,
                     bc7,
                     bc7_rdo,
+                    page_coding,
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )?;
@@ -1824,6 +1879,7 @@ where
             raw,
             zstd,
             bc7,
+            page_coding,
             bc7_rdo,
             bc7_rdo_lambda,
             bc7_rdo_lookback_blocks,
@@ -1844,6 +1900,7 @@ where
                     zstd,
                     bc7,
                     bc7_rdo,
+                    page_coding,
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )?;
@@ -3165,12 +3222,13 @@ mod tests {
                     zstd,
                     bc7,
                     bc7_rdo,
+                    None,
                     1.0,
                     udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
                 )
                 .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
-                assert_eq!(output_format.compression, CompressionFlag::ZstdNoDictLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL));
+                assert_eq!(output_format.compression, CompressionFlag::Bc7FieldsZstdLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL));
                 assert_eq!(output_format.bc7_rdo_lambda, NO_BC7_RDO_LAMBDA);
             }
             _ => panic!("unexpected command parsed"),
@@ -3183,6 +3241,33 @@ mod tests {
             };
             assert_eq!(zstd, Some(MOBILE_ANIM_PAGE_ZSTD_LEVEL), "{command:?}");
         }
+    }
+
+    /// `--page-coding` codes the pages' pass: the field split only on BC7 pages, LZ4 HC without a level, and never
+    /// where there is no pass.
+    #[test]
+    fn cli_mobile_anim_page_coding_codes_the_pass() {
+        const LEVEL: i32 = 12;
+        let format = |args: &[&str]| -> eyre::Result<TextureOutputFormat> {
+            let cli = Cli::try_parse_from(["uddpack", "pack-ec-mobile-anims", "--ecdir", "/ec"].iter().chain(args))?;
+            let Commands::PackEcMobileAnims { raw, zstd, bc7, bc7_rdo, page_coding, .. } = cli.command else {
+                panic!("unexpected command parsed");
+            };
+            resolve_mobile_anim_output_format(raw, zstd, bc7, bc7_rdo, page_coding, 0.0,
+                udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS)
+        };
+        let compression = |args: &[&str]| format(args).unwrap().compression;
+        assert_eq!(compression(&["--zstd=12"]), CompressionFlag::Bc7FieldsZstdLevel(LEVEL));
+        assert_eq!(compression(&["--page-coding", "zstd"]), CompressionFlag::ZstdNoDictLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL));
+        assert_eq!(compression(&["--page-coding", "fields-lz4hc"]), CompressionFlag::Bc7FieldsLz4Hc);
+        assert_eq!(compression(&["--bc7", "--zstd=12", "--page-coding", "fields-zstd"]),
+            CompressionFlag::Bc7FieldsZstdLevel(LEVEL));
+        // The packer writes RGBA8888 pages with plain Zstd, `mobile_anim_page_compression`.
+        assert_eq!(compression(&["--raw", "--zstd=12"]), CompressionFlag::Bc7FieldsZstdLevel(LEVEL));
+        assert_eq!(compression(&["--bc7"]), CompressionFlag::None);
+        assert!(format(&["--bc7", "--page-coding", "fields-zstd"]).is_err());
+        assert!(format(&["--zstd=12", "--page-coding", "fields-lz4hc"]).is_err());
+        assert_eq!(format(&[]).unwrap().label, "BC7 + field split + Zstd");
     }
 
     /// Classic land stays lossless RGBA8888 with Zstd 19; the Enhanced land defaults to BC7 without RDO with Zstd 19.

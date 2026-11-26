@@ -33,11 +33,63 @@ pub const BC7_PAGE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDictLev
 /// The Zstd level of the BC7 mobile animation pages unless the packer is asked for another. Measured on every 16th page
 /// of the BC7 packages (2026-11-22): level 19 is 2.9 % (EC) to 3.6 % (CC) smaller than 9 for 15–18 times its
 /// compression time (about 5 minutes more for EC), level 7 0.6–0.8 % larger; decoding takes 2.3–4.5 ms a page at
-/// every level.
-pub const MOBILE_ANIM_PAGE_ZSTD_LEVEL: i32 = 9;
+/// every level. With the field split the whole packages are 8.0 % (EC) to 8.8 % (CC) smaller at 19 than plain Zstd 9
+/// (`docs/agent_notes/bc7_anim_supercompression.md`; the user, 2026-11-26: "okay for zstd 19 where its compression
+/// ratio/decompression time makes sense").
+pub const MOBILE_ANIM_PAGE_ZSTD_LEVEL: i32 = 19;
 
-/// The builder codec of a mobile animation page unless the packer is asked for another.
-pub const MOBILE_ANIM_PAGE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDictLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL);
+/// How a mobile animation page is coded unless the packer is asked for another way.
+pub const MOBILE_ANIM_PAGE_CODING: MobileAnimPageCoding = MobileAnimPageCoding::FieldsZstd;
+
+/// The builder codec of a mobile animation page unless the packer is asked for another: the BC7 field split with Zstd
+/// at [`MOBILE_ANIM_PAGE_ZSTD_LEVEL`] (container codec 4), which a reader joins per clip.
+pub const MOBILE_ANIM_PAGE_COMPRESSION: CompressionFlag = MOBILE_ANIM_PAGE_CODING.compression(MOBILE_ANIM_PAGE_ZSTD_LEVEL);
+
+/// How the BC7 pages of the mobile animation packages (and their 2x pages) are coded after BC7: the user's choice of
+/// 2026-11-26 is the field split with Zstd, LZ4 HC kept as an option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MobileAnimPageCoding {
+    /// Plain Zstd of the blocks (container codec 1).
+    Zstd,
+    /// The BC7 field split, then Zstd (container codec 4): about 8 % smaller at level 19, and a clip joins only its
+    /// blocks.
+    FieldsZstd,
+    /// The BC7 field split, then LZ4 HC (container codec 5): 5 % larger than plain Zstd 9, decoding a crowd's clips
+    /// about 2.4 times as fast. It takes no level.
+    FieldsLz4Hc,
+}
+
+impl MobileAnimPageCoding {
+    /// The builder codec of a page coded this way, Zstd at `level`.
+    pub const fn compression(self, level: i32) -> CompressionFlag {
+        match self {
+            Self::Zstd => CompressionFlag::ZstdNoDictLevel(level),
+            Self::FieldsZstd => CompressionFlag::Bc7FieldsZstdLevel(level),
+            Self::FieldsLz4Hc => CompressionFlag::Bc7FieldsLz4Hc,
+        }
+    }
+
+    /// `compression` coded this way when it is a page's Zstd pass ([`CompressionFlag::ZstdNoDictLevel`]); anything
+    /// else is kept.
+    pub const fn apply(self, compression: CompressionFlag) -> CompressionFlag {
+        match compression {
+            CompressionFlag::ZstdNoDictLevel(level) => self.compression(level),
+            other => other,
+        }
+    }
+}
+
+/// The builder codec of a mobile animation page (1x or 2x) stored in `pixel_format`: the field split codes only BC7
+/// blocks, so an RGBA8 page takes plain Zstd at the same level instead of [`CompressionFlag::Bc7FieldsZstdLevel`],
+/// and plain LZ4 HC instead of [`CompressionFlag::Bc7FieldsLz4Hc`].
+pub const fn mobile_anim_page_compression(compression: CompressionFlag, pixel_format: PagePixelFormat)
+    -> CompressionFlag {
+    match (compression, pixel_format) {
+        (CompressionFlag::Bc7FieldsZstdLevel(level), PagePixelFormat::Rgba8888) => CompressionFlag::ZstdNoDictLevel(level),
+        (CompressionFlag::Bc7FieldsLz4Hc, PagePixelFormat::Rgba8888) => CompressionFlag::Lz4Hc,
+        (compression, _) => compression,
+    }
+}
 
 /// Rows of pixels in each independently compressed strip of an atlas page: 16 strips on a 2048-row page. A multiple of
 /// 8, so a strip holds whole block rows of BC7 and of 4x4 and 8x8 ASTC, and a decoded strip can be uploaded to its own
@@ -103,6 +155,25 @@ mod tests {
         assert_eq!(strip(PagePixelFormat::Bc7, 4096), 1024 * 16 * (PAGE_STRIP_ROWS / 4));
         assert_eq!(strip(PagePixelFormat::Bc7, 4094), strip(PagePixelFormat::Bc7, 4096));
         assert_eq!(atlas_page_compression(CompressionFlag::None, PagePixelFormat::Rgba8888, 64), CompressionFlag::None);
+    }
+
+    #[test]
+    fn mobile_pages_split_only_bc7_blocks() {
+        const LEVEL: i32 = 12;
+        assert_eq!(MOBILE_ANIM_PAGE_COMPRESSION, CompressionFlag::Bc7FieldsZstdLevel(MOBILE_ANIM_PAGE_ZSTD_LEVEL));
+        for (coding, bc7, rgba) in [
+            (MobileAnimPageCoding::Zstd, CompressionFlag::ZstdNoDictLevel(LEVEL), CompressionFlag::ZstdNoDictLevel(LEVEL)),
+            (MobileAnimPageCoding::FieldsZstd, CompressionFlag::Bc7FieldsZstdLevel(LEVEL),
+                CompressionFlag::ZstdNoDictLevel(LEVEL)),
+            (MobileAnimPageCoding::FieldsLz4Hc, CompressionFlag::Bc7FieldsLz4Hc, CompressionFlag::Lz4Hc),
+        ] {
+            let compression = coding.apply(CompressionFlag::ZstdNoDictLevel(LEVEL));
+            assert_eq!(compression, bc7, "{coding:?}");
+            assert_eq!(mobile_anim_page_compression(compression, PagePixelFormat::Bc7), bc7, "{coding:?}");
+            assert_eq!(mobile_anim_page_compression(compression, PagePixelFormat::Rgba8888), rgba, "{coding:?}");
+            // A page without a Zstd pass stays without one.
+            assert_eq!(coding.apply(CompressionFlag::None), CompressionFlag::None, "{coding:?}");
+        }
     }
 
     /// Every packer defaults to block-compressed textures with Zstd and no RDO where its package takes them; Classic

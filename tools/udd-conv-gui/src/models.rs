@@ -6,7 +6,10 @@ use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
 use udd_conv::hues::HueRampMode;
-use udd_conv::page_compression::{BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_ZSTD_LEVEL};
+use udd_conv::page_compression::{
+    BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_CODING, MOBILE_ANIM_PAGE_ZSTD_LEVEL,
+    MobileAnimPageCoding,
+};
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
 
@@ -26,6 +29,37 @@ pub enum TextureOptimization {
     None,
     Bc7,
     Bc7Zstd,
+}
+
+/// How a mobile animation job codes its pages' compression pass (`--page-coding`, [`MobileAnimPageCoding`]).
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MobilePageCoding {
+    /// Plain Zstd of the BC7 blocks.
+    Zstd,
+    /// The BC7 field split, then Zstd: the default.
+    FieldsZstd,
+    /// The BC7 field split, then LZ4 HC, which takes no Zstd level.
+    FieldsLz4Hc,
+}
+
+impl MobilePageCoding {
+    pub const fn coding(self) -> MobileAnimPageCoding {
+        match self {
+            Self::Zstd => MobileAnimPageCoding::Zstd,
+            Self::FieldsZstd => MobileAnimPageCoding::FieldsZstd,
+            Self::FieldsLz4Hc => MobileAnimPageCoding::FieldsLz4Hc,
+        }
+    }
+}
+
+impl Default for MobilePageCoding {
+    fn default() -> Self {
+        match MOBILE_ANIM_PAGE_CODING {
+            MobileAnimPageCoding::Zstd => Self::Zstd,
+            MobileAnimPageCoding::FieldsZstd => Self::FieldsZstd,
+            MobileAnimPageCoding::FieldsLz4Hc => Self::FieldsLz4Hc,
+        }
+    }
 }
 
 /// Whether a mobile animation job measures the walk and run strides of the package it wrote (`udd-cli tool strides
@@ -159,6 +193,9 @@ pub struct AppSettings {
     pub zstd_tilemeta: i32,
     pub zstd_mobile_anim_cc: i32,
     pub zstd_mobile_anim_ec: i32,
+    /// How each mobile animation package codes its pages' compression pass.
+    pub page_coding_mobile_anim_cc: MobilePageCoding,
+    pub page_coding_mobile_anim_ec: MobilePageCoding,
     pub zstd_tex_aux_ec: i32,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
@@ -274,6 +311,8 @@ impl Default for AppSettings {
             zstd_tilemeta: default_zstd_level(),
             zstd_mobile_anim_cc: MOBILE_ANIM_PAGE_ZSTD_LEVEL,
             zstd_mobile_anim_ec: MOBILE_ANIM_PAGE_ZSTD_LEVEL,
+            page_coding_mobile_anim_cc: MobilePageCoding::default(),
+            page_coding_mobile_anim_ec: MobilePageCoding::default(),
             zstd_tex_aux_ec: BC7_PAGE_ZSTD_LEVEL,
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
@@ -494,6 +533,8 @@ mod tests {
         assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7Zstd);
         assert_eq!(settings.zstd_mobile_anim_cc, MOBILE_ANIM_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.zstd_mobile_anim_ec, MOBILE_ANIM_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.page_coding_mobile_anim_cc, MobilePageCoding::FieldsZstd);
+        assert_eq!(settings.page_coding_mobile_anim_ec, MobilePageCoding::FieldsZstd);
     }
 
     #[test]

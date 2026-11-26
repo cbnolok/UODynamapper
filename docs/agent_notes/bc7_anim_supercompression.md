@@ -5,7 +5,8 @@ it cost the game to decode them (2026-11-25)? The brief proposed regrouping, dic
 field splits and block reuse in front of LZ4; the container's codec for these pages is Zstd, so everything here is
 measured against Zstd 9 as the packages store it, and against LZ4 HC. Nothing in the production packers or the format
 changed: `udd-bc7-supercompress` (`tools/udd-devtools-cli/src/bin/bc7_supercompress/`) only reads packages. What
-changing the blocks would buy is the third study, [Lossy conditioning](#lossy-conditioning).
+changing the blocks would buy is the third study, [Lossy conditioning](#lossy-conditioning). Since 2026-11-26 the
+field split is the packers' default, joined per clip behind a 6-page cache: see [Adopted](#adopted-2026-11-26).
 
 ## LZ4 HC on the animation pages
 
@@ -715,6 +716,62 @@ people), `--seed` and `--reps` (3). A configuration is `name=method[@clip]`, or 
 `/` with `--layout classes`; `@clip` joins a `fields` method per clip.
 
 ## Recommendation
+
+### Adopted (2026-11-26)
+
+The user took the field split with Zstd and the cache ("okay for the codec 4", "okay for zstd 19 where its
+compression ratio/decompression time makes sense. I'd keep lz4 hc support for now", "okay for the decoded-page cache,
+the smallest it makes sense"):
+- **Format.** Container codec 4 (`Bc7FieldsZstd`) is the split of this study's layout and checks
+  (`udd_container::bc7_fields`), then one Zstd frame; codec 5 (`Bc7FieldsLz4Hc`) is the split, then one LZ4 HC block.
+  The codec's high bit is Meta32 bit 17, and a reader refuses reserved bits (`docs/dev_wiki/UDDP_FORMATS.md`).
+- **Packers.** The mobile animation packers (and the 2x pages of `--prescale`) default to codec 4 at Zstd 19
+  (`MOBILE_ANIM_PAGE_COMPRESSION`); `--page-coding fields-lz4hc` writes codec 5 and `--page-coding zstd` plain Zstd.
+  The GUI's mobile cards have the same choice; Quick Convert packs codec 4 at 19.
+- **Reader.** `udd_assets::animation::mobile_pages` keeps a split page split and joins only a clip's blocks
+  (`FieldsPage`), in an LRU of `MOBILE_PAGE_CACHE_PAGES` = 6 decoded pages shared by the loader's workers, which wait
+  for a page another worker is decoding. Every frame and every clip of both repacked packages comes out byte for
+  byte as from the plain Zstd 9 packages (`lib/udd-assets/tests/mobile_pages_split.rs`).
+
+Measured on 2026-11-26 with the machine loaded by other agents (load 19 to 36 on 20 threads), so the decode figures
+are slower than the study's above, the split's more than Zstd 9's:
+
+| Package, repacked from the client | Plain Zstd 9 | Split + Zstd 19 | | Pack, Zstd 9 | Pack, split + Zstd 19 |
+|---|---:|---:|---:|---:|---:|
+| Classic (`_Ultima Online Classic`) | 826.3 MiB | 754.2 MiB | −8.72 % | 56 s | 128 s |
+| Enhanced (`_Ultima Online Enhanced fp`) | 2033.7 MiB | 1875.3 MiB | −7.79 % | 147 s | 342 s |
+
+- **Pack time and Quick Convert.** Zstd 19 makes the two mobile packs 72 and 194 s longer, 4.5 minutes in all. The
+  user's Create everything of 2026-11-23 (Zstd 9) wrote its packages over about 9 minutes, so it now takes about 13
+  to 14, inside the 10 to 15 minutes asked for. Level 17 would save about half of that time for 0.5 to 0.6 points:
+
+  | Level, split (every 8th page) | Classic | Encode thread-s | Enhanced | Encode thread-s |
+  |---|---:|---:|---:|---:|
+  | plain Zstd 9 | 0 | 12.0 | 0 | 23.7 |
+  | 9 | −4.36 % | 11.2 | −3.95 % | 24.0 |
+  | 15 | −5.36 % | 48.3 | −4.41 % | 96.9 |
+  | 17 | −8.30 % | 84.6 | −7.40 % | 165.7 |
+  | 18 | −8.45 % | 109.8 | −7.68 % | 222.2 |
+  | 19 | −8.83 % | 179.0 | −8.04 % | 366.0 |
+
+- **Cache size.** `crowd --lru 0,2,4,6,8,16`, 20 crowds of 34 mobiles in the loader's order. A random crowd's page
+  decodes reach their floor at 2 pages (Classic 766, 340, 335, 332, 332, 332; Enhanced 804, 457, 455, 455, 455,
+  447), but an Enhanced crowd of humans needs 6 (49, 30, 6, 5, 5, 5), so the cache holds 6, at most 27 MiB split.
+- **Crowd timings,** first drawable and all preloaded, warm / cold, in ms (medians of 20 crowds):
+
+  | Crowd | Zstd 9, no cache (before) | Zstd 9, 6 pages | Split + Zstd 19 per clip, 6 pages (now) |
+  |---|---:|---:|---:|
+  | Classic random, first drawable | 74.9 / 81.6 | 56.5 / 68.4 | 75.1 / 86.2 |
+  | Classic random, all preloaded | 585 / 594 | 439 / 452 | 587 / 599 |
+  | Enhanced random, first drawable | 85.8 / 96.7 | 70.3 / 86.1 | 90.7 / 105.6 |
+  | Enhanced random, all preloaded | 664 / 674 | 547 / 564 | 704 / 720 |
+  | Classic people, first drawable | 42.9 / 43.1 | 3.7 / 4.6 | 5.8 / 6.6 |
+  | Enhanced people, first drawable | 44.3 / 44.9 | 8.1 / 9.7 | 13.3 / 14.6 |
+
+  With the cache, the split at Zstd 19 is as fast as Zstd 9 was without it in Classic and 6 % slower in Enhanced
+  (5 ms to the last of 34 mobiles), and a crowd of people is 3 to 7 times faster.
+
+### The study's recommendation (2026-11-25)
 
 **Not worth it as a default; nothing in the packers or the format changes.** Against the brief's gates (at least 3 %
 smaller on the full package, at most 5 % slower to decode):

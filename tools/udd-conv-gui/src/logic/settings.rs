@@ -114,6 +114,12 @@ mod tests {
 
         assert_eq!(settings.input_uddp_dir, PathBuf::from("packages"));
         assert_eq!(settings.output_uddp_dir, PathBuf::from("packages"));
+        // The mobile animation pages as the packers write them by default.
+        let defaults = crate::models::AppSettings::default();
+        assert_eq!(settings.zstd_mobile_anim_cc, defaults.zstd_mobile_anim_cc);
+        assert_eq!(settings.zstd_mobile_anim_ec, defaults.zstd_mobile_anim_ec);
+        assert_eq!(settings.page_coding_mobile_anim_cc, defaults.page_coding_mobile_anim_cc);
+        assert_eq!(settings.page_coding_mobile_anim_ec, defaults.page_coding_mobile_anim_ec);
     }
 
     #[test]

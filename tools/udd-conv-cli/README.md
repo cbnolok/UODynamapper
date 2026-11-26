@@ -47,12 +47,29 @@ the client of every Kingdom Reborn terrain definition, texture and route. Packag
 not read: repack the Enhanced packages and remove them.
 
 Without a format flag the packers write block-compressed textures with Zstd, RDO off: the art,
-Enhanced land and auxiliary texture pages BC7 with Zstd 19, the mobile animation pages BC7 with
-Zstd 9, the single gumps BC1 (Classic) or BC7 (Enhanced) with Zstd 19, and the effects textures
+Enhanced land and auxiliary texture pages BC7 with Zstd 19, the mobile animation pages BC7 in
+the BC7 field split with Zstd 19 (below), the single gumps BC1 (Classic) or BC7 (Enhanced) with Zstd 19, and the effects textures
 BC7; `--zstd=LEVEL` picks another level. `--raw --zstd=19` (`--art-raw`, `--land-raw` in
 `pack-ec-textures`) writes the lossless RGBA8888 pages, and `--raw` the lossless single gumps
 and effects textures. Classic land (`pack-texmaps`), the gump paperdoll atlas pages and
 `pack-ec-paperdoll` stay lossless.
+
+### Mobile animation page coding
+
+`pack-mobile-anims` and `pack-ec-mobile-anims` code their pages' compression pass as
+`--page-coding` says (the 2x pages of `--prescale` too):
+
+- `fields-zstd`, the default: each BC7 page split into its blocks' fields (container codec 4,
+  `docs/dev_wiki/UDDP_FORMATS.md`), then Zstd at `--zstd=LEVEL` or 19. The packages are 8 to 9 %
+  smaller than with plain Zstd 9 (Classic 8.7 %, Enhanced 7.8 %), and Dynamapper joins only the blocks of the clips it draws.
+- `fields-lz4hc`: the split, then LZ4 HC (codec 5), which takes no `--zstd` level: about 5 %
+  larger than plain Zstd 9, and 2.4 times as fast to decode as plain Zstd 9.
+- `zstd`: plain Zstd of the blocks, as before 2026-11-26.
+
+RGBA8888 pages (`--raw --zstd`) are not split: `fields-zstd` writes them with plain Zstd and
+`fields-lz4hc` with plain LZ4 HC. `--bc7` and `--raw` without `--zstd` have no pass to code, so
+they refuse `--page-coding`. A repack keeps the measured strides either way; the measurements
+are in `docs/agent_notes/bc7_anim_supercompression.md`.
 
 ### Enhanced paperdoll: what a robe takes off
 

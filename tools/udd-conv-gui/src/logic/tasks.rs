@@ -1111,10 +1111,10 @@ fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetPr
     ensure_output_parent(output)?;
     format_log::asset_settings(settings, AssetPackTask::MobileAnimCc);
 
-    let compression = texture_compression(
+    let compression = settings.page_coding_mobile_anim_cc.coding().apply(texture_compression(
         settings.opt_mobile_anim_cc,
         settings.zstd_mobile_anim_cc,
-    );
+    ));
     let upscale_profile = load_upscale_profile(settings)?;
     let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc)
         || upscale_profile_active(settings)
@@ -1169,10 +1169,10 @@ fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetPr
         Err(error) => return Err(error),
     };
 
-    let compression = texture_compression(
+    let compression = settings.page_coding_mobile_anim_ec.coding().apply(texture_compression(
         settings.opt_mobile_anim_ec,
         settings.zstd_mobile_anim_ec,
-    );
+    ));
     let upscale_profile = load_upscale_profile(settings)?;
     let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec)
         || upscale_profile_active(settings)

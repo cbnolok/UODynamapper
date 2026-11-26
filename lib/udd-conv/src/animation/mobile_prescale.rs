@@ -37,6 +37,7 @@ use uot_gpu_compute::strides::StrideFrame;
 use super::frame_filter_table::FramePackage;
 use super::prescale_table::{load_mobile_prescale, BodyPrescale, ResolvedPrescale};
 use crate::atlas::bc_encode_device::on_bc7_devices;
+use crate::page_compression::mobile_anim_page_compression;
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, preferred_bc7_encoder_backend, Bc7RdoOptions,
     ImageExtent, RawImageFormat, VramTextureEncoding,
@@ -355,7 +356,8 @@ fn encode_pages(pages: Vec<FinishedPage>, format: PagePixelFormat, encoding: &Pr
             }
         };
         let entry = CompressedEntry::new(AddOwnedFileRequest { data_type: DataType::Texture as u8,
-            compression: encoding.compression, width: page.record.used_width, height: page.record.used_height,
+            compression: mobile_anim_page_compression(encoding.compression, format), width: page.record.used_width,
+            height: page.record.used_height,
             virtual_path: Some(upscaled_page_entry_path(page.index, format)), path_hash64: None, id: None,
             data: bytes })
             .map_err(|error| eyre::eyre!("compress upscaled page {}: {error}", page.index))?;
