@@ -8,8 +8,8 @@ main ECS thread in `MovementActions`.
 
 Commands include `teleport`, `status`, `capture` and app-only keyboard/pointer
 input (`key`, `text`, `pointer`, `click`, `scroll`, `reset_input`), and the typed
-runtime switches `preset`, `sources` and `set` and the `reload_land` check (see
-below). There is no shell/code
+runtime switches `preset`, `sources` and `set`, the `reload_land` check and the
+test mobiles `spawn_mobile` and `clear_mobiles` (see below). There is no shell/code
 execution or generic settings setter. The owner-only socket refuses occupied
 paths; normal resource cleanup only removes the bound inode. Forced termination
 may leave a socket, so isolate each run in its own temporary directory.
@@ -196,3 +196,23 @@ ones (art only while statics are drawn). The stable fingerprint also covers the
 static-light and light-sprite counts, the z-view and the switch serial. This is
 still not a GPU fence: discard the first capture after a switch and require two
 identical frames, as after a launch.
+
+## Test mobiles
+
+The player is the one mobile the app draws, and the regression harness hides it.
+For draw-order checks of other bodies at chosen cells (`input/dev_control.rs`,
+2026-11-26):
+
+- `{"command":"spawn_mobile","x":1409,"y":1596,"z":30,"body":12,"mount":0,"facing":3}`:
+  a standing mobile of `body` on the mount body `mount` (0 for none), facing 0
+  (north, UO y - 1) clockwise to 7 (north-west), drawn with the player's art
+  source, sharpening and upscale settings. The reply gives its entity bits. It
+  carries no map: it shows on whatever map the player is on, so spawn it after
+  the teleport. A body of 0 or a facing past 7 is refused.
+- `{"command":"clear_mobiles"}`: removes every spawned mobile.
+
+At most `MAX_MOBILE_INSTANCES` frames (64; a mount and its rider are two, an
+upscaled frame wider than a page one per part) are drawn at once, the player's
+first when it is drawn; frames past the cap are left out. A spawned mobile has no
+status entry: `wait-ready` does not wait for its clips, so let a frame or two pass
+and discard the first capture, as after a switch.

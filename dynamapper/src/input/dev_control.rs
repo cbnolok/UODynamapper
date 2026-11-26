@@ -14,6 +14,8 @@ use crate::app::{app_states::AppState, system_sets::MovementSystems};
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::world::player::Player;
 use crate::world::maps::WorldGeoData;
+use crate::world::mobile_motion::{MobileMotion, DIRECTION_COUNT};
+use crate::render::mobiles::{MobileClipChoice, draw::{MobileAppearance, MobileShownLayers}, pace::MobileCycleClock};
 use crate::prelude::*;
 use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
 use bevy_egui::EguiPreUpdateSet;
@@ -47,6 +49,29 @@ enum ControlCommand {
     /// Drops the cached map blocks, as 60 seconds of idling does, and the cached statics chunks, so the statics are
     /// collected again from the land loaded now: a correct cache reports the same `status.art.digest` after it.
     ReloadLand {},
+    /// A mobile standing at a cell, facing 0 (north) to 7 (north-west), for tests of the mobiles' drawing: `body`, on
+    /// the mount body `mount` (0 for none). It shows on the map the player is on; `clear_mobiles` removes them all.
+    SpawnMobile { x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8 },
+    ClearMobiles {},
+}
+
+/// A mobile spawned through the control channel (`ControlCommand::SpawnMobile`).
+#[derive(Component)]
+struct DevMobile;
+
+/// The components of a mobile `spawn_mobile` places: drawn as the player's mobile is, standing.
+fn dev_mobile(x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8) -> Result<impl Bundle, String> {
+    if body == 0 {
+        return Err("spawn_mobile needs a body".into());
+    }
+    if facing >= DIRECTION_COUNT {
+        return Err(format!("spawn_mobile facing must be below {DIRECTION_COUNT}"));
+    }
+    let mut motion = MobileMotion::default();
+    motion.facing = facing;
+    let appearance = MobileAppearance { body: u32::from(body), mount_body: (mount != 0).then_some(u32::from(mount)) };
+    Ok((DevMobile, Transform::from_translation(UOVec4::new(x, y, z, 0).to_bevy_vec3_ignore_map()), motion, appearance,
+        MobileClipChoice::default(), MobileCycleClock::default(), MobileShownLayers::default()))
 }
 
 /// The last accepted runtime switch (preset, sources or setting): readiness after a switch counts frames from it.
@@ -309,6 +334,19 @@ fn poll_control(
                     });
                     Ok(switched(&mut switch, true, frame_rate.total_frames(), json!({"reload_land": true})))
                 }
+                ControlCommand::SpawnMobile { x, y, z, body, mount, facing } => {
+                    let entity = commands.spawn(dev_mobile(x, y, z, body, mount, facing)?).id();
+                    Ok(json!({"ok": true, "spawned": entity.to_bits(), "position": [x, y, z]}))
+                }
+                ControlCommand::ClearMobiles {} => {
+                    commands.queue(|world: &mut World| {
+                        let spawned: Vec<Entity> = world.query_filtered::<Entity, With<DevMobile>>().iter(world).collect();
+                        for entity in spawned {
+                            world.despawn(entity);
+                        }
+                    });
+                    Ok(json!({"ok": true}))
+                }
                 command => {
                     let (entity, window) = windows.single().map_err(|error| error.to_string())?;
                     input.enqueue(command, entity, Vec2::new(window.width(), window.height()))?;
@@ -348,6 +386,22 @@ mod tests {
             assert!(serde_json::from_str::<ControlCommand>(value).is_err(), "{value}");
         }
         assert!(matches!(serde_json::from_str::<ControlCommand>(r#"{"command":"teleport","x":2518,"y":561,"z":0,"map":0}"#).unwrap(), ControlCommand::Teleport { x: 2518, y: 561, .. }));
+    }
+
+    #[test]
+    fn spawn_mobile_is_typed_and_refuses_no_body_and_a_facing_past_north_west() {
+        for value in [r#"{"command":"spawn_mobile","x":1,"y":2,"z":0,"body":9,"mount":0}"#,
+            r#"{"command":"spawn_mobile","x":1,"y":2,"z":200,"body":9,"mount":0,"facing":0}"#,
+            r#"{"command":"clear_mobiles","all":true}"#] {
+            assert!(serde_json::from_str::<ControlCommand>(value).is_err(), "{value}");
+        }
+        let ControlCommand::SpawnMobile { x, y, z, body, mount, facing } = serde_json::from_str::<ControlCommand>(
+            r#"{"command":"spawn_mobile","x":1409,"y":1596,"z":30,"body":12,"mount":0,"facing":3}"#).unwrap()
+        else { panic!("spawn_mobile") };
+        assert_eq!((x, y, z, body, mount, facing), (1409, 1596, 30, 12, 0, 3));
+        assert!(dev_mobile(x, y, z, body, mount, facing).is_ok());
+        assert!(dev_mobile(x, y, z, 0, mount, facing).is_err());
+        assert!(dev_mobile(x, y, z, body, mount, DIRECTION_COUNT).is_err());
     }
 
     #[test]

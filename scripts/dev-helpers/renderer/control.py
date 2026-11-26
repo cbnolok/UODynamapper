@@ -177,6 +177,14 @@ def main():
     sources.add_argument('land', help='cc, ec or kr')
     actions.add_parser('reload-land', help='Drop the cached map blocks and statics chunks; the statics digest must '
                        'not change after wait-ready')
+    spawn = actions.add_parser('spawn-mobile', help='Place a standing test mobile on the player\'s map')
+    spawn.add_argument('x', type=int)
+    spawn.add_argument('y', type=int)
+    spawn.add_argument('body', type=int)
+    spawn.add_argument('--z', type=int, default=0)
+    spawn.add_argument('--mount', type=int, default=0, help='the mount body, 0 for none')
+    spawn.add_argument('--facing', type=int, default=0, help='0 north, clockwise to 7 north-west')
+    actions.add_parser('clear-mobiles', help='Remove every mobile spawn-mobile placed')
     setting = actions.add_parser('set', help='Set one whitelisted setting, for example set show_only_player_floor true')
     setting.add_argument('key')
     setting.add_argument('value', help='a JSON value such as true or 1.5; a bare word such as black is a string')
@@ -200,6 +208,11 @@ def main():
         command['command'] = 'reset_input'
     if args.command == 'reload-land':
         command['command'] = 'reload_land'
+    if args.command == 'spawn-mobile':
+        command.update(command='spawn_mobile', x=args.x, y=args.y, z=args.z, body=args.body, mount=args.mount,
+                       facing=args.facing)
+    if args.command == 'clear-mobiles':
+        command['command'] = 'clear_mobiles'
     if args.command == 'preset':
         command.update(style=args.style, time=args.time)
     if args.command == 'sources':

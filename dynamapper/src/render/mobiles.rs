@@ -1,5 +1,6 @@
 //! The mobiles: animated bodies drawn as the clients draw them, with the statics' art sprite shader. The player is
-//! the one mobile so far: the body and mount the settings name, standing, walking or running as it moves.
+//! the one mobile so far: the body and mount the settings name, standing, walking or running as it moves (and, for
+//! tests, the standing mobiles the control channel spawns).
 
 pub mod bc7_encoding;
 pub mod clips;

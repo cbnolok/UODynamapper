@@ -34,8 +34,9 @@ use super::upscales::{atlas_pages_wanted, upscale_key, MobileUpscale, MobileUpsc
 use super::MobileClipChoice;
 use super::pace::MobileCycleClock;
 
-/// The most frames drawn at once: a mount and its rider for each mobile, here the player alone.
-pub const MAX_MOBILE_INSTANCES: u32 = 2;
+/// The most frames drawn at once: a mount and its rider for each mobile, and the parts of an upscaled frame wider than
+/// a page. The player is the one mobile but for those the control channel spawns for tests (`spawn_mobile`).
+pub const MAX_MOBILE_INSTANCES: u32 = 64;
 /// A mobile's priority over its cell's z: ClassicUO's mobile `PriorityZ` is its z plus one.
 const MOBILE_PRIORITY_Z_OFFSET: f32 = 1.0;
 /// The tie levels of a mount and of its rider, over the statics of the same cell and priority (1..8 there; the

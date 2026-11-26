@@ -124,6 +124,10 @@ python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control
 statics chunks; after `wait-ready`, `status.art.digest` must be unchanged, or the
 statics cache depended on land it no longer has.
 
+`spawn-mobile X Y BODY [--z Z] [--mount BODY] [--facing 0..7]` places a standing
+test mobile on the player's map, `clear-mobiles` removes them (see
+[the control channel note](../../../docs/agent_notes/renderer_control_channel.md#test-mobiles)).
+
 `set` takes a JSON value; a bare word is a string. Its keys are an allowlist:
 `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
 `enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames`, `mobile_upscale`, `mobile_stop`, `mobile_walk_pace`, `cc_terrain_transitions`,
