@@ -19,8 +19,11 @@ older flat-versus-sloped explanation as a complete client contract.
 
 Dynamapper renders land and static ground art through separate paths. Its
 optional Classic and Enhanced texture-transition controls follow the texture
-source, not the lighting preset. The controls and their current limitations are
-recorded in [terrain transition controls](../../agent_notes/terrain_transition_controls.md);
+source, not the lighting preset. The Classic control blends two texmaps only
+where their facing edges differ in colour, so the hand-drawn transition texmaps,
+whose edges were painted to match, keep their art, and floors and paving stay
+hard. The controls and their current limitations are recorded in
+[terrain transition controls](../../agent_notes/terrain_transition_controls.md);
 static ground patches and their engine-side boundary fade are described in
 [static ground transitions](../../agent_notes/ec_static_ground_transitions.md).
 Those engine improvements are not by themselves proof of original-client parity.

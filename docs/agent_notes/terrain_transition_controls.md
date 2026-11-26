@@ -17,23 +17,55 @@ update propagates it to terrain and static-art materials.
 
 ## Classic terrain
 
-`land/cc_transitions.wesl` blends packaged CC texmaps between cell centers.
-Smooth separable weights give equal contributions at shared edges and corners
-while retaining the owner's color at its center. The four participating cells
-are the owner and the horizontal, vertical and diagonal cells toward the nearest
-corner. Invalid, missing, wet and foreign-source neighbors are excluded and the
-remaining weights are normalized. Wet owners retain their existing sampling,
-including flat-water art diamonds. This is an optional rendering improvement,
-not a reconstruction of original Classic Client blending.
+`land/cc_transitions.wesl` blends packaged CC texmaps (source 4) across a
+cell's edges and corners. This is an optional improvement, not a
+reconstruction of Classic Client blending: the Classic client draws hard tile
+edges and relies on authored transition texmaps and placed art.
 
-CC texmaps can contain authored transition details. A neighboring image must
-be sampled at its adjacent clamped edge (`uv - neighbor_offset`), rather than
-repeated over the owner's whole cell. Repetition duplicated thin road-edge
-details in the native town pilot. A UV-coded GPU fixture detects this mistake;
-constant-color interpolation tests alone cannot. Atlas-slot identity, not raw
-land ID, identifies aliases; homogeneous regions retain the exact base color.
-Gradients are captured before material branches, and the CC opt-in path uses
-explicit-gradient sampling to avoid divergent derivative footprints.
+- **Which edges blend.** At load, `cc_texmap_edge_colors` (`assets/land.rs`)
+  stores each texmap's mean colour along its four sides, as lookup role 7
+  (`LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS`). Each side's strip is an eighth of
+  the texmap deep. A neighbour blends only where its facing side and the
+  owner's differ by more than `CC_TRANSITION_SEAM_MIN`, reaching full strength
+  at `CC_TRANSITION_SEAM_FULL`. Diagonal neighbours compare corner colours, the
+  mean of the two sides that meet there.
+  - Tiledata names and flags do not identify the hand-drawn transition texmaps
+    (grass/dirt gradients 0x79-0x8C, path edges 0x8E-0xA7, sand/grass edges
+    0x1D-0x4B). Their sides are painted to match the neighbours they were
+    placed against, so the seam test leaves them alone; so are a material's
+    variants, whose sides match each other.
+  - Before 2026-11-26 every different atlas slot blended. Cobblestone variants
+    and authored transitions were smeared into streaks: the "dirtying".
+- **The boundary.** Each axis' boundary lies on the shared edge, moved up to
+  `CC_TRANSITION_NOISE_AMPLITUDE` of a cell either way by world-space value
+  noise and softened over `CC_TRANSITION_SOFTNESS`. Weights depend on the
+  world position alone, so both cells of an edge agree. The inner tenth of a
+  cell around its centre is always its own texture.
+- **Sampling the neighbour.** The neighbour's texmap is mirrored across the
+  shared edge (`1 - uv` on the offset axes) and sampled from its own atlas
+  slot. Its texels next to the seam therefore face the owner, as in the map.
+  - Clamping to the edge, the earlier approach, smeared the edge texel row
+    across the band.
+  - Repeating the texmap brings its far side to the seam, the wrong material
+    for a non-tiling transition texmap.
+  - A UV-coded GPU fixture checks the mirror inside the ramp.
+- **What takes part.** Wet and reviewed-liquid cells, black land, Classic land
+  art (source 5) and missing texmaps keep hard edges.
+  - So do built surfaces: texmaps drawn for a land id whose tiledata name is in
+    `BUILT_LAND_NAMES` (`land/cache.rs`: brick, flagstone, marble, planks, sand
+    stone, stone, stone_paver, tile, wooden floor, worn "decimated_" variants
+    too). Their patterns end exactly at the cell's edge. Blending them smeared
+    Britain's brick borders into the flagstones, and the Enhanced Client keeps
+    its floors hard too. The flag rides in the alpha byte of the first edge
+    colour (`CC_TEXMAP_BLENDS`), so zeroed lookup data never blends.
+  - Cobblestone roads are not on the list: they have no pattern to break, and
+    they fade into the grass and dirt beside them.
+- **Exactness.** The blend is added as deltas from the base colour. A cell with
+  no seam returns the exact base and evaluates no noise. A single sampling call
+  site in a loop keeps the shader's compile size down.
+- **Gradients.** Gradients are captured before material branches. The CC
+  opt-in path uses explicit-gradient sampling to avoid divergent derivative
+  footprints.
 
 ## Enhanced terrain and ground patches
 
@@ -54,6 +86,11 @@ test also checks that source controls survive applying another style/time slot.
 The explicitly run Vulkan regression executes 100 production-shader cases,
 including CC shared edges/corners, aliases, wet/missing/source exclusions and
 UV-coded adjacent-edge sampling, alongside existing liquid/bank/static coverage.
+Its CC cases fix the boundary noise at a half (a mocked `noise.wesl`) and cover
+the seam test (matching edges, a built surface) and the mirrored neighbour
+inside the ramp. Unit tests cover the edge colours and the built-surface names;
+the regression fixtures `britain-cc-terrain-transitions-*` capture the feature
+on in all four styles.
 
 Twenty native current-shader frames plus two pre-feature shader controls cover
 Enhanced CC, Classic CC, KR CC perspective, KR EC on/off and a final rebuilt
