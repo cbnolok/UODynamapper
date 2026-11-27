@@ -530,10 +530,10 @@ mod tests {
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
         // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), a MobileCeiling (16) and a
-        // MobileFrameFilter (32), on a 16-byte stride.
+        // MobileFrameFilter (48), on a 16-byte stride.
         const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
         const WGSL_MOBILE_CEILING_SIZE: usize = 16;
-        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 240;
+        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 256;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
         assert_eq!(std::mem::size_of::<MobileCeiling>(), WGSL_MOBILE_CEILING_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);

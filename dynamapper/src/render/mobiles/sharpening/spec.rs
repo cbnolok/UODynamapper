@@ -31,11 +31,16 @@ const ALPHA_MIDPOINT_PROPERTY: &str = "alpha_midpoint";
 const CONTOUR_PROPERTY: &str = "contour";
 const CONTOUR_COLOR_PROPERTY: &str = "contour_color";
 const OUTLINE_PROPERTY: &str = "outline";
+const INNER_LINES_PROPERTY: &str = "inner_lines";
+const INNER_CONTRAST_PROPERTY: &str = "inner_contrast";
+const INNER_THRESHOLD_PROPERTY: &str = "inner_threshold";
 /// The filter's properties, which every entry takes.
 const FILTER_PROPERTIES: &[&str] = &[SHARPENING_PROPERTY, FRINGE_SHARPENING_PROPERTY, ALPHA_CONTRAST_PROPERTY,
-    ALPHA_MIDPOINT_PROPERTY, CONTOUR_PROPERTY, CONTOUR_COLOR_PROPERTY, OUTLINE_PROPERTY];
+    ALPHA_MIDPOINT_PROPERTY, CONTOUR_PROPERTY, CONTOUR_COLOR_PROPERTY, OUTLINE_PROPERTY, INNER_LINES_PROPERTY,
+    INNER_CONTRAST_PROPERTY, INNER_THRESHOLD_PROPERTY];
 const SIZE_PROPERTIES: &[&str] = &[MAX_PROPERTY, SHARPENING_PROPERTY, FRINGE_SHARPENING_PROPERTY,
-    ALPHA_CONTRAST_PROPERTY, ALPHA_MIDPOINT_PROPERTY, CONTOUR_PROPERTY, CONTOUR_COLOR_PROPERTY, OUTLINE_PROPERTY];
+    ALPHA_CONTRAST_PROPERTY, ALPHA_MIDPOINT_PROPERTY, CONTOUR_PROPERTY, CONTOUR_COLOR_PROPERTY, OUTLINE_PROPERTY,
+    INNER_LINES_PROPERTY, INNER_CONTRAST_PROPERTY, INNER_THRESHOLD_PROPERTY];
 const ENTRY_SCHEMA: &[NodeSchema] = &[
     NodeSchema::leaf(DEFAULT_NODE, FILTER_PROPERTIES),
     NodeSchema::leaf(SIZE_NODE, SIZE_PROPERTIES),
@@ -47,8 +52,11 @@ pub const SHARPENING_SCHEMA: &[NodeSchema] = &[
 ];
 
 /// The strengths the file takes: `sharpening` (1 is AMD CAS's strongest lobe), `fringe_sharpening`, `alpha_contrast`,
-/// `contour` and `outline`.
+/// `contour`, `outline`, `inner_lines` and `inner_contrast`.
 pub const FILTER_STRENGTH_RANGE: RangeInclusive<f32> = 0.0..=1.0;
+/// The colour steps the interior edges may start at (art/mobile_inner_edges.wesl): above 0, where every texel of
+/// a gradient would be an edge, up to the step from black to white.
+pub const INNER_THRESHOLD_RANGE: RangeInclusive<f32> = 0.01..=1.0;
 /// The alpha midpoints the contrast may turn about: away from 0 and 1, which would leave nothing or everything.
 pub const ALPHA_MIDPOINT_RANGE: RangeInclusive<f32> = 0.05..=0.95;
 /// The size classes' largest sides, in pixels: up to the largest frame a package stores (640).
@@ -73,6 +81,13 @@ pub struct FrameFilter {
     pub contour_color: [u8; 3],
     /// The opacity of a one-texel line of `contour_color` outside the silhouette.
     pub outline: f32,
+    /// The strength of the interior lines: a texel wide on the darker side of a strong colour edge inside the body,
+    /// a darker shade of the colour under them.
+    pub inner_lines: f32,
+    /// The strength of the contrast across the same edges: their dark side darkened, their light side lightened.
+    pub inner_contrast: f32,
+    /// The colour step (0..1, over the 3x3 texels about the texel) at which an interior edge starts.
+    pub inner_threshold: f32,
 }
 
 impl FrameFilter {
@@ -85,11 +100,16 @@ impl FrameFilter {
         contour: 0.0,
         contour_color: DEFAULT_CONTOUR_COLOR,
         outline: 0.0,
+        inner_lines: 0.0,
+        inner_contrast: 0.0,
+        inner_threshold: DEFAULT_INNER_THRESHOLD,
     };
 }
 
 /// The contour's colour when an entry names none: the near black of the Classic frames' outlines.
 pub const DEFAULT_CONTOUR_COLOR: [u8; 3] = [0x20, 0x20, 0x20];
+/// The interior edges' threshold when an entry names none.
+pub const DEFAULT_INNER_THRESHOLD: f32 = 0.12;
 
 /// The properties an entry gives; those it leaves out come from the entry below it.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -101,6 +121,9 @@ struct FilterEntry {
     contour: Option<f32>,
     contour_color: Option<[u8; 3]>,
     outline: Option<f32>,
+    inner_lines: Option<f32>,
+    inner_contrast: Option<f32>,
+    inner_threshold: Option<f32>,
 }
 
 impl FilterEntry {
@@ -114,6 +137,9 @@ impl FilterEntry {
             contour: self.contour.unwrap_or(filter.contour),
             contour_color: self.contour_color.unwrap_or(filter.contour_color),
             outline: self.outline.unwrap_or(filter.outline),
+            inner_lines: self.inner_lines.unwrap_or(filter.inner_lines),
+            inner_contrast: self.inner_contrast.unwrap_or(filter.inner_contrast),
+            inner_threshold: self.inner_threshold.unwrap_or(filter.inner_threshold),
         }
     }
 }
@@ -284,6 +310,9 @@ fn decode_entry(node: &Node<LineSpan>) -> eyre::Result<FilterEntry> {
         contour: strength(CONTOUR_PROPERTY)?,
         contour_color,
         outline: strength(OUTLINE_PROPERTY)?,
+        inner_lines: strength(INNER_LINES_PROPERTY)?,
+        inner_contrast: strength(INNER_CONTRAST_PROPERTY)?,
+        inner_threshold: bounded(node, INNER_THRESHOLD_PROPERTY, &INNER_THRESHOLD_RANGE)?,
     })
 }
 
@@ -376,6 +405,26 @@ mod tests {
     }
 
     #[test]
+    fn the_inner_edges_resolve_as_every_property() {
+        let spec = decode("enhanced {\n  default inner_lines=0.6 inner_threshold=0.2\n\
+            size max=96 inner_contrast=0.5\n  body 9 inner_lines=0.0 inner_contrast=1.0 inner_threshold=0.08\n}\n");
+        let inner = |body, side| {
+            let filter = spec.resolve(AnimSource::Enhanced, body, side);
+            (filter.inner_lines, filter.inner_contrast, filter.inner_threshold)
+        };
+        assert_eq!(inner(1, Some(200)), (0.6, 0.0, 0.2), "the default");
+        assert_eq!(inner(1, Some(80)), (0.6, 0.5, 0.2), "the size class adds the contrast");
+        assert_eq!(inner(9, Some(80)), (0.0, 1.0, 0.08), "the body's entry wins");
+        let classic = spec.resolve(AnimSource::Classic, 1, Some(80));
+        assert_eq!((classic.inner_lines, classic.inner_contrast, classic.inner_threshold),
+            (0.0, 0.0, DEFAULT_INNER_THRESHOLD), "off, at the default threshold, without a section");
+        assert_error("enhanced {\n  default inner_lines=1.2\n}\n", 2, "inner_lines: 1.2 is outside 0..=1");
+        assert_error("enhanced {\n  default inner_contrast=-0.1\n}\n", 2, "inner_contrast: -0.1 is outside 0..=1");
+        assert_error("enhanced {\n  body 9 inner_threshold=0\n}\n", 2, "inner_threshold: 0 is outside 0.01..=1");
+        assert_error("enhanced {\n  size max=96 inner_line=1\n}\n", 2, "unknown property `inner_line` of `size`");
+    }
+
+    #[test]
     fn the_bundled_file_reads() {
         let text = include_str!("../../../../assets/runtime_specs/mobiles/Sharpening.kdl");
         let spec = decode(text);
@@ -389,6 +438,12 @@ mod tests {
         assert_eq!(spec.resolve(AnimSource::Enhanced, 17, Some(80)).outline, 1.0, "a small Enhanced monster's");
         assert_eq!(spec.resolve(AnimSource::Enhanced, 17, Some(80)).contour, 0.0, "no Enhanced contour");
         assert_eq!(spec.resolve(AnimSource::Classic, 400, Some(77)).outline, 0.0, "no Classic outline");
+        // The interior lines and contrast are off everywhere until chosen.
+        for (source, body, side) in [(AnimSource::Enhanced, 9, Some(388)), (AnimSource::Enhanced, 17, Some(80)),
+            (AnimSource::Enhanced, 401, Some(150)), (AnimSource::Classic, 9, Some(388))] {
+            let filter = spec.resolve(source, body, side);
+            assert_eq!((filter.inner_lines, filter.inner_contrast), (0.0, 0.0), "{source:?} body {body}");
+        }
     }
 
     #[test]

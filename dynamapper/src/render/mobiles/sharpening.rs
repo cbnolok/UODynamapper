@@ -85,6 +85,14 @@ pub struct MobileFrameFilter {
     /// 0): its taps outside the frame read transparent. The outline reaches as far past the silhouette
     /// (`for_frame`: two texels on an upscaled frame with `MobileOutlineWidth::FollowsUpscale`).
     pub padding_texels: u32,
+    /// The strength of the interior lines (art/mobile_inner_edges.wesl), 0 off.
+    pub inner_lines: f32,
+    /// The strength of the contrast across the interior edges, 0 off.
+    pub inner_contrast: f32,
+    /// The colour step at which an interior edge starts.
+    pub inner_threshold: f32,
+    /// Keeps the struct a multiple of 16 bytes, as the instance array's stride.
+    pub _padding: u32,
 }
 
 impl MobileFrameFilter {
@@ -99,6 +107,10 @@ impl MobileFrameFilter {
             contour_color: u32::from_le_bytes([red, green, blue, u8::MAX]),
             outline: filter.outline,
             padding_texels: if filter.outline > 0.0 { OUTLINE_PADDING_TEXELS } else { 0 },
+            inner_lines: filter.inner_lines,
+            inner_contrast: filter.inner_contrast,
+            inner_threshold: filter.inner_threshold,
+            _padding: 0,
         }
     }
 
@@ -213,7 +225,7 @@ mod tests {
 
     #[test]
     fn the_shader_reads_a_filter_as_wgsl_lays_it_out() {
-        const WGSL_MOBILE_FRAME_FILTER_SIZE: usize = 32;
+        const WGSL_MOBILE_FRAME_FILTER_SIZE: usize = 48;
         assert_eq!(std::mem::size_of::<MobileFrameFilter>(), WGSL_MOBILE_FRAME_FILTER_SIZE);
     }
 

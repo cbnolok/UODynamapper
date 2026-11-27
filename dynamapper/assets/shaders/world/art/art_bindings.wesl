@@ -70,7 +70,8 @@ struct MobileCeiling {
 
 // A mobile frame's filter (`MobileFrameFilter`, render/mobiles/sharpening.rs; runtime_specs/mobiles/Sharpening.kdl):
 // its body's CAS strength before the style's `effects.mobile_sharpening` (art/mobile_sharpen.wesl), the share of it
-// the rim takes, and the edge treatments (art/mobile_edges.wesl), each off at 0. With an outline the card is
+// the rim takes, the edge treatments (art/mobile_edges.wesl) and the interior lines and contrast at the strong colour
+// edges inside the body (art/mobile_inner_edges.wesl), each off at 0. With an outline the card is
 // `padding_texels` larger than the frame on each side, and the taps outside the frame read transparent; the outline
 // reaches as far past the silhouette (1, or 2 on an upscaled frame by the outline width setting).
 struct MobileFrameFilter {
@@ -83,6 +84,10 @@ struct MobileFrameFilter {
     contour_color: u32,
     outline: f32,
     padding_texels: u32,
+    inner_lines: f32,
+    inner_contrast: f32,
+    inner_threshold: f32,
+    _padding: u32,
 }
 
 // A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite, its crossfade, its ground

@@ -48,6 +48,8 @@ import package::shaders::world::art::mobile_sharpen::{mobile_sharpening_on, mobi
     MOBILE_SHARPEN_WEST_TAP, MOBILE_SHARPEN_EAST_TAP, MOBILE_SHARPEN_SOUTH_TAP};
 import package::shaders::world::art::mobile_edges::{mobile_alpha_contrast_on, mobile_alpha_contrast, mobile_contour_on,
     mobile_contour, mobile_outline_on, mobile_outline, mobile_outline_wide, MOBILE_OUTLINE_WIDE_REACH};
+import package::shaders::world::art::mobile_inner_edges::{MobileInnerEdge, mobile_inner_edges_on, mobile_inner_edge,
+    mobile_inner_edges, mobile_inner_far_offset, MOBILE_INNER_FAR_TAPS};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
@@ -368,7 +370,14 @@ fn projected_shadow_coverage(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv
 // inside the card's span `uv_min`..`uv_max` and, while two frames blend, each frame's own rectangle.
 fn mobile_window_tap(tap: u32, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, uv_dx: vec2<f32>,
     uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
-    let tap_uv = uv + mobile_sharpen_tap_offset(tap) / atlas_size;
+    return mobile_offset_tap(mobile_sharpen_tap_offset(tap), page, uv, uv_min, uv_max, uv_dx, uv_dy, atlas_size,
+        instance_index);
+}
+
+// A mobile's tap `offset` texels of the page from the fragment's at `uv`, as mobile_window_tap takes the window's.
+fn mobile_offset_tap(offset: vec2<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
+    uv_dx: vec2<f32>, uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    let tap_uv = uv + offset / atlas_size;
     if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
         return sprite_page_client_filtered(page, tap_uv, uv_min, uv_max, false, uv_dx, uv_dy,
             scene.client_view_scale, instance_index);
@@ -389,6 +398,19 @@ fn mobile_window(centre: vec4<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f
         }
     }
     return window;
+}
+
+// The taps beyond the window across the interior edge `edge` through `uv` (art/mobile_inner_edges.wesl), as
+// mobile_window_tap takes the window's.
+fn mobile_inner_far_taps(edge: MobileInnerEdge, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
+    uv_dx: vec2<f32>, uv_dy: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32)
+    -> array<vec4<f32>, MOBILE_INNER_FAR_TAPS> {
+    var far: array<vec4<f32>, MOBILE_INNER_FAR_TAPS>;
+    for (var side = 0u; side < MOBILE_INNER_FAR_TAPS; side++) {
+        far[side] = mobile_offset_tap(mobile_inner_far_offset(edge, side), page, uv, uv_min, uv_max, uv_dx, uv_dy,
+            atlas_size, instance_index);
+    }
+    return far;
 }
 
 // Alpha `alpha` of the window's tap `tap` around `uv`, or 0 when the tap lies outside the card `uv_min`..`uv_max`
@@ -782,16 +804,25 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         return out;
     }
 
-    // A mobile's colour sharpened by its body's strength times its style's, then its contour, its alpha kept, after
-    // the alpha test so that only the fragments drawn pay for them; with both off the fragment skips the taps.
+    // A mobile's colour sharpened by its body's strength times its style's, then its interior lines and contrast,
+    // then its contour, its alpha kept, after the alpha test so that only the fragments drawn pay for them; with all
+    // off the fragment skips the taps.
     @if(MOBILE_FRAMES) {
         let frame_filter = mobile_instances[in.instance_index].frame_filter;
         let strength = mobile_sharpening_strength(effects.mobile_sharpening, frame_filter.sharpening);
-        if (mobile_sharpening_on(strength) || mobile_contour_on(frame_filter)) {
+        if (mobile_sharpening_on(strength) || mobile_contour_on(frame_filter) || mobile_inner_edges_on(frame_filter)) {
             let window = mobile_window(color, page, uv, inst.uv_min, inst.uv_max, sprite_uv_dx, sprite_uv_dy,
                 atlas_size, in.instance_index);
             if (mobile_sharpening_on(strength)) {
                 color = mobile_sharpen(window, strength, frame_filter.fringe_sharpening);
+            }
+            if (mobile_inner_edges_on(frame_filter)) {
+                // The taps beyond the window only on an edge, where they are read.
+                let edge = mobile_inner_edge(window, frame_filter);
+                if (edge.weight > 0.0) {
+                    color = mobile_inner_edges(color, window, mobile_inner_far_taps(edge, page, uv, inst.uv_min,
+                        inst.uv_max, sprite_uv_dx, sprite_uv_dy, atlas_size, in.instance_index), edge, frame_filter);
+                }
             }
             if (mobile_contour_on(frame_filter)) {
                 color = mobile_contour(color, mobile_cross_alpha(window, uv, inst.uv_min, inst.uv_max, atlas_size),
