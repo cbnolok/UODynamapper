@@ -16,7 +16,9 @@ struct TileUniform {
   texture_extent: vec2<u32>,
   // 1 when the tile has the IsWet tiledata flag set (animated water effect).
   is_wet: u32,
-  // Reviewed EC terrain hints packed by the CPU: bits 0-1 unused, bit 2=liquid.
+  // The cell's terrain flags packed by the CPU (tile_atlas.rs TERRAIN_SHADER_FLAG_*): bit 0=the player's cave's
+  // mouth, bit 1=never blends, bit 2=liquid; and bit 3, TERRAIN_FLAG_BUMP_ENVIRONMENT, the material's own, from
+  // its base lookup slot (LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT).
   terrain_flags: u32,
   // Original land-page lookup payload. EC material sampling uses this to load
   // optional detail/mask slots from land_page_lookup.
@@ -95,6 +97,13 @@ struct LandTextureVariationUniform {
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 32768u;
 // The role whose row holds a Classic texmap's edge colours (LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS in land.rs).
 const LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS: u32 = 7u;
+// A slot's x: its page index in the low 16 bits but the top one, and its stretch (q8) in the high 16. The top bit of
+// a material's base slot (role 0) says it has the bump layer's environment map, items 3 and 4 (land.rs
+// `write_enhanced_land_lookup`); atlas_read_meta and coverage::ec_layer_tile move it into the tile's terrain_flags
+// as TERRAIN_FLAG_BUMP_ENVIRONMENT, so only those materials read roles 3 and 4 (sampling::sample_ec_bump_environment).
+const LAND_PAGE_LOOKUP_PAGE_INDEX_MASK: u32 = 0x7FFFu;
+const LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT: u32 = 0x8000u;
+const TERRAIN_FLAG_BUMP_ENVIRONMENT: u32 = 0x8u;
 @group(3) @binding(104) var<uniform> ATLAS:        AtlasParams;
 @group(3) @binding(105) var<uniform> scene:        SceneUniform;
 @group(3) @binding(106) var<uniform> effects:      LandEffectsUniform;

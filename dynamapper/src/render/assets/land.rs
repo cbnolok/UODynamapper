@@ -126,6 +126,13 @@ const CC_TEXMAP_EDGE_STRIP_DIVISOR: usize = 8;
 const CC_TEXMAP_BLENDS: u32 = 0xFF00_0000;
 /// `w` of a liquid-params entry: the scroll comes from the source water tweaks.
 const LIQUID_PARAMS_FROM_SOURCE: u32 = 1;
+/// A slot's page index bits in the low half of its `x` (`packed_page_and_stretch`). Mirrored as
+/// `LAND_PAGE_LOOKUP_PAGE_INDEX_MASK` in land/land_bindings.wesl and `LIQUID_LOOKUP_PAGE_INDEX_MASK` in ec_liquid.wesl.
+const LAND_PAGE_LOOKUP_PAGE_INDEX_MASK: u32 = 0x7FFF;
+/// Set in the `x` of a material's base slot (role 0) when the material has the bump layer's environment map, items 3
+/// and 4 (`write_enhanced_land_lookup`): the land shader moves it into the tile's terrain flags and reads those two
+/// roles for these materials alone. Mirrored as `LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT` in land/land_bindings.wesl.
+const LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT: u32 = 0x8000;
 
 fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAtlasImages {
     use bevy::render::render_resource::{
@@ -609,7 +616,14 @@ fn packed_page_and_stretch(page_index: u32, texture_repetition: f32) -> u32 {
     } else {
         0
     };
-    (page_index & 0xFFFF) | (stretch_q8 << 16)
+    (page_index & LAND_PAGE_LOOKUP_PAGE_INDEX_MASK) | (stretch_q8 << 16)
+}
+
+/// Whether lookup values written by `land_lookup_values_from_ec_slot` address a slot of some width and height, as the
+/// land shader's `ec_liquid_slot` tells a present one.
+fn lookup_slot_has_extent(values: [u32; 4]) -> bool {
+    let [.., extent] = values;
+    extent & u32::from(u16::MAX) != 0 && extent >> u16::BITS != 0
 }
 
 /// `atlas_layer` maps the package's page index to its land page atlas layer.
@@ -720,6 +734,14 @@ fn write_enhanced_land_lookup(
         .is_some();
 
     if has_base_layer {
+        // The bump class binds item 3 as the normal role and item 4, its environment map, as the animated role
+        // (`resolve_material_render_layers`); with both slots present its base slot carries the flag.
+        let bump_class = package.resolve_material_decision(tile_id).material_id
+            .and_then(|id| package.source_material(id))
+            .and_then(|entry| entry.texture.as_ref())
+            .is_some_and(|texture| texture.layer_class() == TerrainLayerClass::Bump);
+        let mut base_values = None;
+        let mut bump_environment_roles = 0;
         for (role, layer) in [
             (LAND_PAGE_LOOKUP_ROLE_BASE, layer0),
             (LAND_PAGE_LOOKUP_ROLE_DETAIL, layer1),
@@ -736,8 +758,18 @@ fn write_enhanced_land_lookup(
                         atlas_layer,
                     );
                     write_land_lookup_entry(lookup_bytes, row, role, values);
+                    let present = lookup_slot_has_extent(values);
+                    match role {
+                        LAND_PAGE_LOOKUP_ROLE_BASE if present => base_values = Some(values),
+                        LAND_PAGE_LOOKUP_ROLE_NORMAL | LAND_PAGE_LOOKUP_ROLE_ANIMATED if present => bump_environment_roles += 1,
+                        _ => {}
+                    }
                 }
             }
+        }
+        if let Some([x, y, z, w]) = base_values.filter(|_| bump_class && bump_environment_roles == 2) {
+            write_land_lookup_entry(lookup_bytes, row, LAND_PAGE_LOOKUP_ROLE_BASE,
+                [x | LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT, y, z, w]);
         }
     } else if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
         // A tile without a base layer draws its runtime slot alone. In the shipped data these are the
@@ -1940,6 +1972,29 @@ mod tests {
         let call = LAND_MAIN_WESL.split("apply_kr_material_micro_contrast(").nth(2).expect("one call");
         let arguments = call.split(')').next().unwrap().split(',').map(str::trim).collect::<Vec<_>>();
         assert_eq!(arguments[2], "in.world_position.xz", "{arguments:?}");
+    }
+
+    #[test]
+    fn the_bump_environment_flag_lies_above_every_page_index_as_the_shaders_read_it() {
+        const LAND_BINDINGS_WESL: &str = include_str!("../../../assets/shaders/world/land/land_bindings.wesl");
+        const EC_LIQUID_WESL: &str = include_str!("../../../assets/shaders/world/ec_liquid.wesl");
+        const STRETCH: f32 = 12.0;
+        let packed = packed_page_and_stretch(u32::MAX, STRETCH);
+        assert_eq!(packed & LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT, 0, "no page index reaches the flag");
+        assert_eq!(packed & LAND_PAGE_LOOKUP_PAGE_INDEX_MASK, LAND_PAGE_LOOKUP_PAGE_INDEX_MASK);
+        assert_eq!((packed | LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT) >> u16::BITS, packed >> u16::BITS, "the stretch keeps");
+        for constant in [
+            format!("const LAND_PAGE_LOOKUP_PAGE_INDEX_MASK: u32 = 0x{LAND_PAGE_LOOKUP_PAGE_INDEX_MASK:X}u;"),
+            format!("const LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT: u32 = 0x{LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT:X}u;"),
+        ] {
+            assert!(LAND_BINDINGS_WESL.contains(&constant), "{constant}");
+        }
+        let liquid_mask = format!("const LIQUID_LOOKUP_PAGE_INDEX_MASK: u32 = 0x{LAND_PAGE_LOOKUP_PAGE_INDEX_MASK:x}u;");
+        assert!(EC_LIQUID_WESL.contains(&liquid_mask), "{liquid_mask}");
+        // A slot is present with a width and a height, as `ec_liquid_slot` reads it.
+        assert!(lookup_slot_has_extent([0, 0, 0, 64 | (64 << u16::BITS)]));
+        assert!(!lookup_slot_has_extent([0, 0, 0, 64]));
+        assert!(!lookup_slot_has_extent([0, 0, 0, 64 << u16::BITS]));
     }
 
     /// The land blur's per-tile kernel rotation is seeded by the world tile alone (STYLE_RULES §5, 84b61085), not by

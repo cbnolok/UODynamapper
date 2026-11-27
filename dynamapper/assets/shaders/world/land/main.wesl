@@ -26,7 +26,7 @@ import package::shaders::world::land::land_bindings::{
   land_page_atlas, land_page_lookup,
   visual_grunge_texture,
   ATLAS, scene, effects, global_light, land_light,
-  TERRAIN_SHADING_CLIENT_PER_VERTEX
+  TERRAIN_SHADING_CLIENT_PER_VERTEX, TERRAIN_FLAG_BUMP_ENVIRONMENT
 };
 import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, atlas_read_z, atlas_read_terrain_flags,
   chunk_edge_blend_factor};
@@ -808,9 +808,10 @@ fn shade_land(in: LandVertexOutput, tile: TileUniform, ordered_coverage: bool, w
     hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
   }
   // The bump layer's stage 5, ADD(item 4, CURRENT), over the lit material: the client adds the encoded colours and
-  // saturates at 1, so the sum is taken encoded, and a colour already above 1 (lights, HDR) keeps its value. Every
-  // other material adds black and skips the encoding.
-  if (tile.texture_size == 2u && !use_ec_liquid) {
+  // saturates at 1, so the sum is taken encoded, and a colour already above 1 (lights, HDR) keeps its value. Only the
+  // materials with that layer (snow) take it: their tile carries TERRAIN_FLAG_BUMP_ENVIRONMENT, set on the CPU from
+  // the material's layers (land_bindings.wesl), so every other material reads no lookup slot for it.
+  if (tile.texture_size == 2u && !use_ec_liquid && (tile.terrain_flags & TERRAIN_FLAG_BUMP_ENVIRONMENT) != 0u) {
     let environment = sample_ec_bump_environment(tile.texture_payload, in.world_position.xz, in.uv);
     if (any(environment > vec3<f32>(0.0))) {
       hdr_rgb = max(hdr_rgb, decode_srgb(min(encode_srgb(hdr_rgb) + environment, vec3<f32>(1.0))));

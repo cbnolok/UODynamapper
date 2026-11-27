@@ -29,7 +29,7 @@
 
 
 import package::shaders::world::common_bindings::{LandEffectsUniform};
-import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup, texture_variation, LAND_TEXTURE_VARIATION_MATERIAL_CAPACITY};
+import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, LAND_PAGE_LOOKUP_PAGE_INDEX_MASK, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup, texture_variation, LAND_TEXTURE_VARIATION_MATERIAL_CAPACITY};
 import package::shaders::world::pixel_art_filters::{pixel_art_uv_iq, pixel_art_uv_iq_grad};
 import package::shaders::world::client_filter::{client_filtered_rect_sampled, TEXTURE_FILTER_CLIENT_BILINEAR};
 import package::shaders::world::texture_data::texture_color_rgb;
@@ -106,7 +106,7 @@ fn read_ec_lookup_slot(payload: u32, role: u32) -> LandLookupSlot {
   let packed_wh = slot.w;
   let w = packed_wh & 0xFFFFu;
   let h = packed_wh >> 16u;
-  let page_index = slot.x & 0xFFFFu;
+  let page_index = slot.x & LAND_PAGE_LOOKUP_PAGE_INDEX_MASK;
   let stretch_q8 = slot.x >> 16u;
   return LandLookupSlot(
     w != 0u || h != 0u,
@@ -507,7 +507,8 @@ fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
 // the liquids, which take `ec_liquid::sample_ec_liquid`). Item 3 is unsigned DXT1, read unexpanded as the water's
 // du/dv is (ec_liquid.wesl); it stays still (the bump layer sets no texture translation) and keeps the plain tiling
 // under the land texture variation, which only the colour layers take. The luminance is item 3's blue, the L of
-// Direct3D's bump-luminance formats; the shipped item 3 is blue 255 in every texel, so it is 1.
+// Direct3D's bump-luminance formats; the shipped item 3 is blue 255 in every texel, so it is 1. shade_land calls it only
+// for a tile with TERRAIN_FLAG_BUMP_ENVIRONMENT (land_bindings.wesl), the materials that bind both items.
 fn sample_ec_bump_environment(payload: u32, world_xz: vec2<f32>, reflection_uv: vec2<f32>) -> vec3<f32> {
   let environment = ec_liquid_slot(land_page_lookup, payload, LAND_PAGE_LOOKUP_ROLE_ENVIRONMENT);
   if (!environment.present) {

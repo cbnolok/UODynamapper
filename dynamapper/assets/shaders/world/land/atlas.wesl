@@ -12,7 +12,8 @@
 // ============================================================================
 
 import package::shaders::world::land::land_bindings::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM,
-  LAND_PAGE_LOOKUP_TILE_CAPACITY, LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS};
+  LAND_PAGE_LOOKUP_TILE_CAPACITY, LAND_PAGE_LOOKUP_ROLE_CC_EDGE_COLORS, LAND_PAGE_LOOKUP_PAGE_INDEX_MASK,
+  LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT, TERRAIN_FLAG_BUMP_ENVIRONMENT};
 import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
 // A layer index no atlas has: the tile falls outside the paged region.
@@ -94,7 +95,7 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
       i32(texture_payload / lookup_dims.x),
     );
     let slot = textureLoad(land_page_lookup, lookup_uv, 0);
-    let page_index = slot.x & 0xFFFFu;
+    let page_index = slot.x & LAND_PAGE_LOOKUP_PAGE_INDEX_MASK;
     let stretch_q8 = slot.x >> 16u;
     let texture_stretch = f32(stretch_q8) / 256.0;
     let packed_wh = slot.w;
@@ -113,7 +114,8 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
       vec2<u32>(slot.y, slot.z),
       vec2<u32>(w, h),
       is_wet,
-      terrain_flags,
+      // The material's bump layer flag rides on its base slot (land_bindings.wesl).
+      terrain_flags | select(0u, TERRAIN_FLAG_BUMP_ENVIRONMENT, (slot.x & LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT) != 0u),
       texture_payload,
       texture_stretch,
     );

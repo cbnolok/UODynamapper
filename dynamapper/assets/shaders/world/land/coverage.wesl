@@ -4,6 +4,7 @@
 // this bound does not truncate the chunk's (up to 49) original material passes.
 import package::shaders::world::land::land_bindings::{
     TileUniform, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, ec_terrain_bases, ec_terrain_stacks,
+    LAND_PAGE_LOOKUP_PAGE_INDEX_MASK, LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT, TERRAIN_FLAG_BUMP_ENVIRONMENT,
 };
 import package::shaders::world::land::atlas::atlas_read_meta;
 import package::shaders::world::land::transitions::terrain_never_blends;
@@ -42,8 +43,10 @@ fn ec_layer_tile(layer: vec4<u32>, height: f32) -> TileUniform {
     let extent = vec2<u32>(slot.w & 65535u, slot.w >> 16u);
     let flags = layer.w >> 16u;
     let wet = u32((flags & 7u) == 2u);
+    // The material's bump layer flag rides on its base slot (land_bindings.wesl).
+    let bump_environment = select(0u, TERRAIN_FLAG_BUMP_ENVIRONMENT, (slot.x & LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT) != 0u);
     return TileUniform(height, select(3u, 2u, all(extent > vec2<u32>(0u))),
-        slot.x & 65535u, 0u, slot.yz, extent, wet, (flags >> 4u) & 7u,
+        slot.x & LAND_PAGE_LOOKUP_PAGE_INDEX_MASK, 0u, slot.yz, extent, wet, ((flags >> 4u) & 7u) | bump_environment,
         layer.z, f32(slot.x >> 16u) / 256.0);
 }
 

@@ -101,6 +101,11 @@ environment map, added over the lit colour; the land shader now does that
 (`sample_ec_bump_environment`, `land/sampling.wesl`) and the snow takes the derived
 bump like every other land texture. The measurements above are of the removed
 normal-map path.
+Only the materials that bind both items take that add: their base lookup slot
+carries `LAND_PAGE_LOOKUP_FLAG_BUMP_ENVIRONMENT` (render/assets/land.rs
+`write_enhanced_land_lookup`), which the tile's `terrain_flags` takes as
+`TERRAIN_FLAG_BUMP_ENVIRONMENT` (land/land_bindings.wesl), so the other EC land
+materials no longer read lookup roles 3 and 4 per pixel to learn they have none.
 
 Temporary evidence uses `effects-audit-*`, `effects-snow-before-*` and
 `effects-role-after-*` under `/tmp/uodynamapper-ec-followup`. The source-role

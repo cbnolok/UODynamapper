@@ -7,6 +7,9 @@ import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 // The land page lookup's rows per role (LAND_PAGE_LOOKUP_TILE_CAPACITY in
 // land/land_bindings.wesl and render/assets/land.rs).
 const LIQUID_LOOKUP_CAPACITY: u32 = 32768u;
+// A lookup slot's page index bits (LAND_PAGE_LOOKUP_PAGE_INDEX_MASK in land/land_bindings.wesl and land.rs); the
+// top bit of the low half is a material's flag.
+const LIQUID_LOOKUP_PAGE_INDEX_MASK: u32 = 0x7fffu;
 // UOWaterTerrainLayer::Draw (0x005988a0) sets item 0's texture translation
 // (0x005101c0, NiTextureTransform translate + dirty flag) to t * tweaks[0..2].
 // t is UOApplication +0x58, advanced each frame by the frame time in seconds
@@ -26,7 +29,7 @@ fn ec_liquid_slot(lookup: texture_2d<u32>, payload: u32, role: u32) -> EcLiquidS
     let index = role * LIQUID_LOOKUP_CAPACITY + payload;
     let value = textureLoad(lookup, vec2<i32>(i32(index % dims.x), i32(index / dims.x)), 0);
     let extent = vec2<u32>(value.w & 0xffffu, value.w >> 16u);
-    return EcLiquidSlot(all(extent > vec2<u32>(0u)), i32(value.x & 0xffffu), value.yz,
+    return EcLiquidSlot(all(extent > vec2<u32>(0u)), i32(value.x & LIQUID_LOOKUP_PAGE_INDEX_MASK), value.yz,
         extent, max(f32(value.x >> 16u) / 256.0, 0.01));
 }
 
