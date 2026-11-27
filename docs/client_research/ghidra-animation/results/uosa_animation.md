@@ -485,10 +485,11 @@ from memory); the shape is built by 0x00435140. The shadow shape's slot +0x88 (v
   Gamebryo's default applies: depth test and write on. The shadow tests depth but does not write it.
 
 So the land in front of a mobile, which lies behind the mobile's lower pixels, never covers them: each strip is as
-near as the land of the rows it lies over. The renderer follows this for the Enhanced frames
-(`render/mobiles/draw.rs` `MobileGroundStrips`, art/depth.wesl `mobile_ground_strip`). ClassicUO does the same for
-the Classic frames (`MobileView.DrawInternal`): the frame above its anchor one row nearer, then each slice below it,
-as tall as that part, two rows nearer than the one above.
+near as the land of the rows it lies over. ClassicUO does the same for the Classic frames
+(`MobileView.DrawInternal`): the frame above its anchor one row nearer, then each slice below it, as tall as that
+part, two rows nearer than the one above. The renderer orders each pixel below the anchor on the cell where its line
+of sight meets the mobile's base plane instead, for both frame sources (art/depth.wesl `mobile_fragment_view_z`,
+2026-11-26).
 
 ### Frame-set loading per layer
 
