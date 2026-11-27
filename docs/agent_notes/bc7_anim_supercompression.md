@@ -6,7 +6,9 @@ field splits and block reuse in front of LZ4; the container's codec for these pa
 measured against Zstd 9 as the packages store it, and against LZ4 HC. Nothing in the production packers or the format
 changed: `udd-bc7-supercompress` (`tools/udd-devtools-cli/src/bin/bc7_supercompress/`) only reads packages. What
 changing the blocks would buy is the third study, [Lossy conditioning](#lossy-conditioning). Since 2026-11-26 the
-field split is the packers' default, joined per clip behind a 6-page cache: see [Adopted](#adopted-2026-11-26).
+field split is the packers' default, joined per clip behind a 6-page cache: see [Adopted](#adopted-2026-11-26); since
+2026-11-27 the packers also condition the blocks at a lossy level, `minimal` by default: see
+[Adopted: lossy levels](#adopted-lossy-levels-2026-11-27).
 
 ## LZ4 HC on the animation pages
 
@@ -776,6 +778,54 @@ are slower than the study's above, the split's more than Zstd 9's:
   With the cache, the split at Zstd 19 is as fast as Zstd 9 was without it in Classic and 6 % slower in Enhanced
   (5 ms to the last of 34 mobiles), and a crowd of people is 3 to 7 times faster.
 
+### Adopted: lossy levels (2026-11-27)
+
+The user took three chains of the [lossy conditioning](#lossy-conditioning) as levels of the mobile animation
+packers, `minimal` the default: "decent compression and best quality with minimal loss (default, suggested)",
+"slight quality loss", "moderate quality loss", with lossless kept as an option and not the default.
+
+| Level (`--bc7-lossy`) | Chain | Classic | Enhanced | Pack Classic | Pack Enhanced |
+|---|---|---:|---:|---:|---:|
+| `lossless` | none | 768.83 MiB | 1890.17 MiB | 117 s | 320 s |
+| `minimal` (default) | `fields:30:3` | 694.93 MiB (−9.61 %) | 1763.78 MiB (−6.69 %) | 233 s (+117) | 559 s (+239) |
+| `slight` | `coarse:2:2+zrdo:30:3` | 661.69 MiB (−13.94 %) | 1667.17 MiB (−11.80 %) | 229 s (+112) | 573 s (+253) |
+| `moderate` | `coarse:2:4+zrdo:100:6` | 604.08 MiB (−21.43 %) | 1552.55 MiB (−17.86 %) | 236 s (+119) | 576 s (+255) |
+
+Full packs from `_Ultima Online Classic` and `_Ultima Online Enhanced fp` with the default page coding (codec 4,
+Zstd 17), `--bc-encode-device cpu`, on 12 of the 20 threads at idle priority (`lowprio.sh`). The savings match the
+[visual comparison](#visual-comparison)'s (−9.6 / −6.6, −13.9 / −11.7, −21.4 / −17.7 %). The Enhanced package is now
+1890 MiB lossless against the study's 1720, but loses the same share. The conditioning costs 0.60 to 0.64
+thread-seconds a page (Classic 730 to 777 over 1210 pages, Enhanced 1556 to 1568 over 2473), about the same at every
+level. On all 20 threads that would be about a minute (Classic) and two (Enhanced) added to a pack.
+
+- **Library.** The steps are `uot_texture_codecs::bc7::condition` (`PageConditioner`, `Step`, `Placement`), with the
+  BC7 block fields beside them (`bc7::block_fields`). `udd-bc7-supercompress lossy` calls them, and its stored pages
+  are byte for byte those of the harness before the move (every 20th Classic and 25th Enhanced page, three chains).
+- **Packers.** `udd_conv::bc7_lossy` holds the levels (`Bc7LossyLevel`, `MOBILE_ANIM_BC7_LOSSY_LEVEL`). The two
+  mobile packers build each page's placements and clip neighbours in the harness's order, and condition the blocks
+  after the encode (and RDO) on the page's own encode task, before the page coding. The result does not depend on the
+  thread count.
+- **Scope.** Only BC7 pages are conditioned. `--raw` takes only `lossless` (its default there), and the CLI refuses a
+  lossy level with it; the GUI's cards ignore the choice on RGBA8 pages. The 2x pages of `--prescale` are not
+  conditioned.
+- **Choice.** `--bc7-lossy lossless|minimal|slight|moderate` on `pack-mobile-anims` and `pack-ec-mobile-anims`. In
+  the GUI it is the cards' **BC7 Lossy**, saved as `bc7_lossy_mobile_anim_cc` and `bc7_lossy_mobile_anim_ec`. Quick
+  Convert packs `minimal`.
+- **Unchanged.** The format and the readers: the pages decode as any BC7 page.
+
+The packer was checked against the harness on every page. `udd-bc7-supercompress lossy --store` conditioned every
+page of the lossless packages with the three chains, and `condition` wrote each into a copy of the package. Each copy
+is the same size as the packer's package at its level, and `udd-cli tool diff` finds every page payload the same,
+in both clients. Two payloads differ in each pair: `metadata/strides.bin` and `metadata/stride_sources.bin`, named
+on the Classic minimal pair (the Enhanced pairs also differ in two). They hold the clip hashes of the stored frames,
+which the packer takes over its conditioned frames and `condition` copies from the lossless package. Every stride
+clip still takes its stride from the cache (Classic 1914, Enhanced 4398). A lossless pack with this build is byte for
+byte the Classic package of a 2026-11-26 build. The Enhanced one has the same payloads as that build's, in another
+order in the file (a lossless pack never runs the conditioning).
+
+Both conditioned `minimal` packages render in Dynamapper (map 1 at 2111,790, Classic and Enhanced art, a human, a
+daemon, a dragon, an ogre, an earth elemental and a rider) with nothing out of place at 1x.
+
 ### The study's recommendation (2026-11-25)
 
 **Not worth it as a default; nothing in the packers or the format changes.** Against the brief's gates (at least 3 %
@@ -829,7 +879,9 @@ smaller on the full package, at most 5 % slower to decode):
 ## Lossy conditioning
 
 Third study (2026-11-26): how much smaller can the pages get if the BC7 blocks may change, for how much quality, and
-is there a better trade than the library RDO? Measurements only: no packer, format or renderer change.
+is there a better trade than the library RDO? Measurements only: no packer, format or renderer change. Three of its
+chains became the packers' `--bc7-lossy` levels on 2026-11-27: see
+[Adopted: lossy levels](#adopted-lossy-levels-2026-11-27).
 
 ### Method
 
