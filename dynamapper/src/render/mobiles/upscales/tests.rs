@@ -343,14 +343,16 @@ fn a_body_upscales_whole_or_not_at_all() {
 }
 
 #[test]
-fn off_upscales_none_always_all_and_balanced_what_the_file_picks() {
+fn off_upscales_none_always_all_but_never_and_balanced_what_the_file_picks() {
     use spec::{BodyUpscale, MobileUpscaleSpec};
     use MobileUpscale::{Always, Balanced, Off};
     let never_asked = || -> bool { panic!("the size rule is asked only in Balanced, for a body not listed") };
     for listed in [None, Some(BodyUpscale::Always), Some(BodyUpscale::Never)] {
         assert!(!body_choice(Off, listed, never_asked));
-        assert!(body_choice(Always, listed, never_asked));
     }
+    assert!(body_choice(Always, None, never_asked));
+    assert!(body_choice(Always, Some(BodyUpscale::Always), never_asked));
+    assert!(!body_choice(Always, Some(BodyUpscale::Never), never_asked));
     assert!(body_choice(Balanced, Some(BodyUpscale::Always), never_asked));
     assert!(!body_choice(Balanced, Some(BodyUpscale::Never), never_asked));
     assert!(body_choice(Balanced, None, || true) && !body_choice(Balanced, None, || false));
@@ -362,8 +364,9 @@ fn off_upscales_none_always_all_and_balanced_what_the_file_picks() {
     let classic = clip_key(0);
     let enhanced = ClipKey { source: AnimSource::Enhanced, ..classic };
     assert!(!upscales.body_upscales(classic, &packages, false, Balanced));
-    assert!(upscales.body_upscales(classic, &packages, false, Always));
+    assert!(!upscales.body_upscales(classic, &packages, false, Always));
     assert!(upscales.body_upscales(enhanced, &packages, false, Balanced));
+    assert!(upscales.body_upscales(enhanced, &packages, false, Always));
     assert!(!upscales.body_upscales(enhanced, &packages, false, Off));
 }
 

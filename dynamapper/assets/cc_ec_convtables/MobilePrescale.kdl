@@ -6,8 +6,8 @@
 // lot (the Classic bodies of at most 48 pixels a side already add 41 % to a BC7 Classic package, 127 % to one of
 // RGBA pages), and a prescale suits only the smallest bodies, whose run-time upscale would show for a moment on
 // screen. The renderer draws a body's packed 2x frames at once in place of its run-time upscale, under the same
-// mode and magnification rules (Off shows 1x; Balanced's `upscale="never"` in Upscale.kdl still keeps the body at
-// 1x); RIFE in-betweens are still made from the 1x frames and upscaled at run time. A change here needs a repack, or
+// mode and magnification rules (Off shows 1x; an `upscale="never"` in Upscale.kdl still keeps the body at 1x, in
+// Balanced and Always); RIFE in-betweens are still made from the 1x frames and upscaled at run time. A change here needs a repack, or
 // a run of the tool, of the package it names.
 //
 // Syntax (KDL, read strictly: an unknown node, property or value is an error naming its line):

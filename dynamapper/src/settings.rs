@@ -161,7 +161,8 @@ pub struct SectWorldRendering {
     pub mobile_in_between_frames: crate::render::mobiles::in_between::MobileInBetweenFrames,
     /// Which mobiles' frames, and their RIFE in-betweens, the SPAN network upscales 2x on the GPU while the view
     /// magnifies them 1.5 times or more (render/mobiles/upscales.rs): none (off, the default), the bodies
-    /// runtime_specs/mobiles/Upscale.kdl picks (balanced, written `span_x2` before), or all (always).
+    /// runtime_specs/mobiles/Upscale.kdl picks (balanced, written `span_x2` before), or all but those it lists as
+    /// `never` (always).
     pub mobile_upscale: crate::render::mobiles::upscales::MobileUpscale,
     /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
     /// (world/mobile_motion.rs).

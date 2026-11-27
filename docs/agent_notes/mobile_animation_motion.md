@@ -466,7 +466,8 @@ network and its frame steps are uot-gpu-compute's `upscale`.
   2×). Upscales start at 1.5× and stop below 1.35×, so a zoom around the threshold does not flap
   (`UPSCALE_ON_MAGNIFICATION`, `UPSCALE_OFF_MAGNIFICATION`). Below it the 1× frames draw as before, and the queued
   jobs stop.
-- **Which bodies (per body, 2026-11-23)**: Always upscales every body; Balanced the bodies
+- **Which bodies (per body, 2026-11-23)**: Always upscales every body but those `Upscale.kdl` lists `never`
+  (2026-11-27); Balanced the bodies
   `runtime_specs/mobiles/Upscale.kdl` picks (below), by default the rule that follows. A body upscales whole or not at all, so its sharpness does not jump between
   actions (it did with a rule per clip: a Classic dragon 12 upscaled its walk but not its attack). A body upscales
   in Balanced only when every sequence it can show fits the size rule's canvas (the file's `max_canvas`, 260×260
@@ -543,7 +544,7 @@ crossfade, RIFE x2 and x4 (scripts and captures in `uodynamapper-scratch/span-in
 ### Modes, Upscale.kdl and tiles (2026-11-23)
 
 The user's decisions: three modes, Off, Balanced (the per-body rule above, now from a file) and Always (every body,
-whatever its size); large bodies upscale in tiles without growing the workspace.
+whatever its size, but those the file lists `never`); large bodies upscale in tiles without growing the workspace.
 
 - **`runtime_specs/mobiles/Upscale.kdl`** (`upscales/spec.rs`, strict, every error naming its line; a copy under
   `cache/runtime_specs/mobiles/` takes its place, read at startup). `default max_canvas=<side>` is the size rule
@@ -552,12 +553,13 @@ whatever its size); large bodies upscale in tiles without growing the workspace.
   in-game (server) body ids, a range, in one package or both; a package's entry comes before one for both, and a body
   listed twice in the same scope is an error. The bundled file holds only `default max_canvas=260`, so Balanced is
   today's rule.
-- **Always ignores the `body` entries**: it is the "upscale everything" choice, and a `never` that still held would
-  make it "Balanced without the size rule", a fourth mode nobody asked for; a body the user wants at 1x everywhere is a
-  Balanced `never`. Written in the file's header and the Preferences hover text.
+- **A `never` wins in Always too** (the user, 2026-11-27): Always upscales every body but those listed `never`, whatever
+  their size, and reads neither the size rule nor the `always` entries; a body the user wants at 1x is kept at 1x in
+  both modes. Until then (2026-11-23) Always ignored every `body` entry, as the "upscale everything" choice. Written in
+  the file's header and the Preferences hover text.
 - **One decision point**: `MobileUpscales::body_upscales(key, packages, rife, mode)` and its `body_choice`; the size
   rule's canvases are found only when Balanced asks for an unlisted body. A package that carries a body's 2× frames
-  (pack-time upscaling, below) passes the size rule; Off and a Balanced `never` still keep it at 1×.
+  (pack-time upscaling, below) passes the size rule; Off and a `never` (Balanced or Always) still keep it at 1×.
 - **Tiles** (uot-gpu-compute `upscale::tiles`): a canvas larger than its workspace is cut into windows of the
   workspace's size (256×256, `UPSCALE_TILE_SIDE`, the largest multiple of 8 within 260×260), each keeping as its core
   only what lies at least the network's reach inside its inner edges: 21 pixels, one per 3×3 convolution (1 + 3×6 + 1
@@ -662,7 +664,7 @@ run time. Format: [UDDP_FORMATS.md §3.2](../dev_wiki/UDDP_FORMATS.md#32-packed-
 - **Renderer** (`MobileUpscales`): a sequence wanted whose clip the package holds at 2× reads it on the background
   pool and writes it into the sequence's room in the upscaled pages: a clip is ready with no job, a RIFE sequence's
   job upscales only its in-betweens (every `factor`th frame is the packed key frame). Same modes and magnification
-  hysteresis: Off shows 1×, a Balanced `never` keeps 1×, and a body whose package holds all its clips at 2× passes
+  hysteresis: Off shows 1×, a `never` keeps 1× in Balanced and Always, and a body whose package holds all its clips at 2× passes
   the size rule. A sequence stored in parts, or packed frames that are not its canvases, upscale at run time.
 
 Measured on the Radeon 880M with the size rule alone, on copies of three Classic test packages the user's

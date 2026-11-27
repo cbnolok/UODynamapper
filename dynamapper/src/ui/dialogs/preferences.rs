@@ -702,8 +702,9 @@ pub fn sys_render_preferences_dialog(
                                              upscaled 2x by the SPAN network on the GPU, and shows at 2x from the start of a \
                                              cycle once all its frames are made. Off: the frames as stored. Balanced: the \
                                              bodies runtime_specs/mobiles/Upscale.kdl picks, by default all but the largest \
-                                             (dragons, wyrms, daemons, great bodies). Always: every body, the largest in \
-                                             tiles, which take seconds each. Switching remakes the frame atlases.",
+                                             (dragons, wyrms, daemons, great bodies). Always: every body but those \
+                                             Upscale.kdl lists as never, the largest in tiles, which take seconds each. \
+                                             Switching remakes the frame atlases.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

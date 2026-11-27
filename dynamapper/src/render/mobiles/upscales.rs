@@ -6,9 +6,9 @@
 //! BC7 for the BC7 atlas.
 //!
 //! A body upscales whole or not at all (`MobileUpscales::body_upscales`), so its sharpness does not change from one
-//! action to the next: Always upscales every body; Balanced those runtime_specs/mobiles/Upscale.kdl lists as
-//! `always` (spec.rs), none it lists as `never`, and of the rest a body its package holds 2x frames of and one each of
-//! whose sequences, the clip of every action and direction, or in a RIFE mode its RIFE sequence, fits the file's
+//! action to the next: Always upscales every body but those runtime_specs/mobiles/Upscale.kdl lists as `never`;
+//! Balanced those the file lists as `always` (spec.rs), none it lists as `never`, and of the rest a body its
+//! package holds 2x frames of and one each of whose sequences, the clip of every action and direction, or in a RIFE mode its RIFE sequence, fits the file's
 //! largest canvas (`max_canvas`, at most `UPSCALE_MAX_CANVAS_SIDE`). At 260, a larger body (the dragons, the daemons, the great UOP bodies) plays at 1x at
 //! any zoom in Balanced; its RIFE in-betweens, which have no size limit, are made as for any body. A rider and its
 //! mount are each a body of their own.
@@ -99,7 +99,7 @@ pub enum MobileUpscale {
     /// the ones within its size rule. Settings written before the three modes call it `span_x2`.
     #[serde(alias = "span_x2")]
     Balanced,
-    /// Every body, the largest in tiles; the file's `body` entries do not apply.
+    /// Every body, the largest in tiles, but those the file lists as `never`; its size rule does not apply.
     Always,
 }
 
@@ -356,7 +356,7 @@ impl UpscalePriority {
 /// The 2x sequences asked for, the jobs listed for the render world this frame, and the jobs it finished since.
 #[derive(Resource, Default)]
 pub struct MobileUpscales {
-    /// Which bodies Balanced upscales (runtime_specs/mobiles/Upscale.kdl).
+    /// Which bodies Balanced upscales, and which Always leaves at 1x (runtime_specs/mobiles/Upscale.kdl).
     spec: MobileUpscaleSpec,
     entries: HashMap<InBetweenKey, UpscaleEntry>,
     /// The canvases of each body drawn (`body_upscales`), by source and body.
@@ -701,13 +701,14 @@ fn canvas_within(canvas: UVec2, max_pixels: u32) -> bool {
 }
 
 /// Whether a body upscales in `mode`, given its entry in the spec (`listed`) and whether it `fits` the size rule or its
-/// package holds its 2x frames, asked only when needed: the one place the choice is made.
+/// package holds its 2x frames, asked only when needed: the one place the choice is made. A `never` entry wins in
+/// Always too (the user, 2026-11-27).
 fn body_choice(mode: MobileUpscale, listed: Option<BodyUpscale>, fits: impl FnOnce() -> bool) -> bool {
     match (mode, listed) {
         (MobileUpscale::Off, _) => false,
+        (MobileUpscale::Balanced | MobileUpscale::Always, Some(BodyUpscale::Never)) => false,
         (MobileUpscale::Always, _) => true,
         (MobileUpscale::Balanced, Some(BodyUpscale::Always)) => true,
-        (MobileUpscale::Balanced, Some(BodyUpscale::Never)) => false,
         (MobileUpscale::Balanced, None) => fits(),
     }
 }

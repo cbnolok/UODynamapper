@@ -1,6 +1,6 @@
 //! Which bodies the Balanced upscale mode upscales, `runtime_specs/mobiles/Upscale.kdl`: the size rule's largest
 //! canvas, and bodies always or never upscaled whatever their size, by their in-game body id, in either package or
-//! one. The file is hand-written and read strictly (`uot_kdl::strict`): every error names its line. It is read at
+//! one. The `never` entries hold in the Always mode too. The file is hand-written and read strictly (`uot_kdl::strict`): every error names its line. It is read at
 //! startup; a user copy under the cache dir takes the bundled file's place (`settings::runtime_specs`).
 
 use std::ops::RangeInclusive;

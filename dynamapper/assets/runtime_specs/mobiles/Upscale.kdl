@@ -1,7 +1,7 @@
 // Which creatures' and characters' animations the SPAN 2x upscale sharpens in its Balanced mode (Preferences, Mobile
 // upscale; `world_rendering.mobile_upscale = "balanced"`), while the view magnifies the art 1.5 times or more. Off
-// upscales none, and Always upscales every body and does not read the `body` entries below: it is the "upscale
-// everything" choice, whatever the cost. Dynamapper reads your copy, cache/runtime_specs/mobiles/Upscale.kdl beside the
+// upscales none, and Always upscales every body whatever the cost, but those listed upscale="never" below: it reads
+// neither the size rule nor the "always" entries. Dynamapper reads your copy, cache/runtime_specs/mobiles/Upscale.kdl beside the
 // assets folder, in place of this file when it exists, at startup: copy this file there and edit the copy. A copy that
 // does not read leaves this file in force, with a warning naming the line, until it is fixed.
 //
@@ -17,12 +17,12 @@
 //
 //   body <id> [<last id>] [package="cc"|"ec"] upscale="always"|"never"
 //     The body of in-game id <id> (the server's, as a mobile's body is sent), or every id from <id> to <last id>:
-//     "always" upscales it whatever its size (in tiles when large), "never" keeps it at 1x. With package, the entry
-//     holds for that package's animations only, "cc" the Classic ones and "ec" the Enhanced ones, and comes before an
-//     entry without one. A body is listed once per package, and once without one.
+//     "always" upscales it whatever its size (in tiles when large), "never" keeps it at 1x, in Always too. With
+//     package, the entry holds for that package's animations only, "cc" the Classic ones and "ec" the Enhanced ones,
+//     and comes before an entry without one. A body is listed once per package, and once without one.
 //
 // For example:
 //   body 12 package="cc" upscale="always"   // the Classic dragon at 2x
-//   body 400 401 upscale="never"            // human bodies at 1x in both packages
+//   body 400 401 upscale="never"            // human bodies at 1x in both packages, in Balanced and Always
 
 default max_canvas=260
