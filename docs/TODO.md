@@ -284,7 +284,9 @@ These need a person at the GUI or in a running client; the code side is done.
   gathers. Baking the outline into the package at pack time was measured and not shipped
   ([note](agent_notes/mobile_animation_motion.md#the-outlines-cost-and-a-baked-outline-2026-11-26)): it would need a
   package flag so the renderer skips its own outline (a format change, the user's call). Under SPAN 2x the run-time
-  line is one texel of the 2x frame, half as wide as at 1x; open whether an upscaled body should get a 2-texel line.
+  line is one texel of the 2x frame, half as wide as at 1x; `mobile_outline_width = "follows_upscale"` draws it two
+  texels wide, as at 1x ([note](agent_notes/mobile_animation_motion.md#the-outline-on-upscaled-frames-2026-11-27)).
+  Open: the user's pick from the clips; the default (`one_texel`) is one line of settings/world_rendering.toml.
 - Light-source items glow on the Classic paperdoll and the old-style gump paperdoll (the user liked the idea,
   2026-11-06). The Enhanced client's own paperdoll (`Paperdoll.uop`) already has the halo painted into lit items'
   frames (lit lantern 0xA15: a 375x306 frame, mostly partly transparent), so it needs nothing. An item

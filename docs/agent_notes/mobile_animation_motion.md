@@ -1119,7 +1119,9 @@ comes per body from `runtime_specs/mobiles/Sharpening.kdl`, and the style's `mob
   - `outline` (0..1): a line of the contour colour one texel wide outside the silhouette, at that opacity, laid
     before the alpha test. The frames are stored cropped to their visible pixels, so an outlined card grows by a texel
     each side (`LayerFrames::padded`, anchors and UVs moved by one atlas texel); the taps outside the frame's rect read
-    transparent (`mobile_frame_alone_tap`), so the line never picks up a neighbouring frame of the atlas.
+    transparent (`mobile_frame_alone_tap`), so the line never picks up a neighbouring frame of the atlas. On a 2x
+    frame the line is one texel of that frame unless `mobile_outline_width` says otherwise
+    ([the outline on upscaled frames](#the-outline-on-upscaled-frames-2026-11-27)).
 
   Recommendation: `alpha_contrast` about 0.5 for the Enhanced package when its rim bothers: it removes the
   half-transparent fringe texels without changing the silhouette's size or colour, costs no taps of its own, and
@@ -1219,6 +1221,51 @@ liches and orcs standing): `old-vs-gathers-human.mp4`,
 `old-vs-gathers-daemon.mp4`, `old-vs-gathers-crowd.mp4` (Enhanced, dev's taps against the gathers),
 `baked-vs-runtime-human-span.mp4` and `baked-vs-runtime-daemon-1x.mp4` (Enhanced over KR-like, SPAN balanced and RIFE
 x2, run-time against baked).
+
+### The outline on upscaled frames (2026-11-27)
+
+A 2x frame (SPAN at run time or packed prescale frames, `Clip::texel_scale` 2) draws an art pixel as two texels, so
+the one-texel outline is half as wide on screen as on the 1x frames. `world_rendering.mobile_outline_width` chooses:
+`one_texel` (shipped, the line as before) or `follows_upscale` (two texels on a 2x frame, as wide on screen as at
+1x). It is in Preferences (Upscaled Outline), the control socket's `set`, and the bundled
+settings/world_rendering.toml holds the default: flipping it is that file's one line.
+
+- **Rule** (`MobileOutlineWidth::reach_texels`, `MobileFrameFilter::for_frame`): the filter's `padding_texels`, the
+  card's padding, is also the outline's reach: 1, or with `follows_upscale` the clip's texel scale up to
+  `OUTLINE_MAX_REACH_TEXELS` (2). The struct and its WGSL layout stay as they were.
+- **Shader** (`mobile_outline_wide`, art/mobile_edges.wesl; `mobile_frames_wide_cross_alpha` and
+  `mobile_frames_bilinear_wide_cross_alpha`, art/mobile_frames.wesl): a reach of 2 takes the cross taps at distances
+  1 and 2 along the four axes, the highest of each arm's two. On a 2x-scaled silhouette that is exactly the 1x line
+  scaled by two (a diagonal tap would round the corners differently). The nearest styles take four gathers instead of
+  two, one 2x2 block per arm in a pinwheel; KR-like's client bilinear five instead of four (the centre block and the
+  blocks two texels away on each axis, the one-texel taps mixed from the shared texels); under the emulated mip box
+  the old full taps take a second, far tap each side. A crossfade mixes the inner and the outer taps of the two
+  frames separately; each tap takes the alpha contrast. The reach-1 paths are untouched.
+- **Cost** (gfx engine time per frame, the three variants alternated in one launch, outline off through the user's
+  `Sharpening.kdl`, paired medians of 5 rounds of 8 s, uncapped, SPAN `always`, 1900x1000):
+
+  | Scene | Enhanced: 1 texel / 2 texels against off | 2 against 1 | KR-like: 1 / 2 against off | 2 against 1 |
+  |---|---|---|---|---|
+  | Daemon (player), 4x view (off 13.3 / 15.0 ms) | +0.08 / +0.16 | +0.05 | +0.20 / +0.17 | −0.04 |
+  | Crowd of 32 humans and daemons + player, 2x view (off 15.7 / 19.1 ms) | +0.39 / +0.55 | +0.18 | +0.78 / +0.75 | −0.03 |
+
+  The 2-texel line costs Enhanced up to about +0.2 ms more on a crowd (its four gathers against two); in KR-like
+  it measures no more than the 1-texel line (five gathers against four, the setup shared, the extra texels in the
+  cache), within the noise.
+
+- **Same pixels by default**: the regression harness (quick tier, player hidden, 103 captures) against
+  `before-outline-span`: 84 identical, 19 within tolerance (lava and UOD-Painterly, 1 or 2 levels), none changed.
+  With bodies: a standing crowd at 2x with SPAN 2x frames (32 humans and daemons, static: two captures a second
+  apart alike) is byte for byte alike before and after in Enhanced. In KR-like and UOD-Painterly a few whole humans
+  differ between launches (their frames, not their outline; every daemon alike), and a second launch of the old
+  binary in KR-like matched the new one byte for byte.
+
+Clips (`outline-span/clips/` in the scratch folder, walking east from 2084,790 on map 1 after 2.5 s standing, 1x
+frames | SPAN 2x one texel | SPAN 2x two texels; each panel its own recording, so the walk cycles drift apart):
+`01`/`02` the Enhanced human 400 at 2x and 4x, `03`/`04` the daemon 9 at 2x and 4x, `05`/`06` the dragon 12 at 2x
+and 3x (4x does not fit), `07` the KR-like daemon at 4x, `08-sheet-standing.png` the stills. Recorded in a private
+headless KWin with x11grab (as [the cold-cache tests](shader_compile_progress.md#testing-with-a-cold-cache)); the
+control socket's captures come at about one a second.
 
 ## Block-compressed frame atlas (2026-11-21)
 
