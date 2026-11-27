@@ -80,7 +80,7 @@ const BODY_TYPE_RECORD_SIZE: usize = 7 + MOVE_ACTION_GROUP_COUNT * MOVE_ACTION_M
 /// Serialized animation record: body, action, direction, file, source index, frame start, frame count, flags, fps.
 const ANIMATION_RECORD_SIZE: usize = 24;
 /// The Classic client's flying animation switch for `GetActionFps` (`DAT_0074dca5`), set to 1 by both its callers of
-/// `FUN_00407f52` (Classic 7.0.103.0, confirmed).
+/// `FUN_00407f52` (Classic 7.0.102.3, confirmed).
 const CLASSIC_FLYING_ANIMATIONS: bool = true;
 pub(crate) const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
@@ -643,7 +643,7 @@ fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimC
 }
 
 /// The `mobtypes.txt` rows, with the move actions of `AnimationSequence.uop` for the UOP-flagged ones (the
-/// client reads them for those bodies only: `CMobile_UpdateUopMoveAction` 0x005b6e40, Classic 7.0.103.0), and the
+/// client reads them for those bodies only: `CMobile_UpdateUopMoveAction` 0x005b6e40, Classic 7.0.102.3), and the
 /// sequences, loaded only when a row is UOP-flagged.
 fn build_body_type_records(
     client_dir: &Path,
@@ -666,7 +666,7 @@ fn build_body_type_records(
 
 /// Sets the fps of the UOP records of every UOP-flagged body with a sequence entry to `GetActionFps` of the record's
 /// action, flying animations on: `CMobile_SetUopAction` 0x005b6580 sets such a body's frame time to 1000 / that fps
-/// (Classic 7.0.103.0, confirmed; the client turns the fps switch on at startup, `FUN_00407f52`). The others keep
+/// (Classic 7.0.102.3, confirmed; the client turns the fps switch on at startup, `FUN_00407f52`). The others keep
 /// `NO_SEQUENCE_FPS`.
 fn fill_uop_animation_fps(
     animations: &mut [MobileAnimCcAnimationRecord],

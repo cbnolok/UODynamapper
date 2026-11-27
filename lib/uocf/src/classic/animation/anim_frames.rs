@@ -2,7 +2,7 @@
 //! `AnimationFrame*.uop` entries `build/animationlegacyframe/%06d/%02d.bin` ([`uop`]), plus the PNG folder both
 //! export to and import from ([`folder`]).
 //!
-//! The rules come from the 7.0.103.0 client (`UOClassicAnim::DrawFrameRle`, `GetMulFrame`, `GetUopFrame`,
+//! The rules come from the 7.0.102.3 client (`UOClassicAnim::DrawFrameRle`, `GetMulFrame`, `GetUopFrame`,
 //! `FindFrameEntry`; `docs/client_research/ghidra-classic-frames/`) and from the shipped files, which
 //! this writer reproduces byte for byte (see `docs/agent_notes/cc_ec_shared_uop_formats.md`, Classic frames):
 //!
@@ -14,7 +14,7 @@
 //!   [`RLE_END_MARKER`] ends the frame;
 //! - the shipped encoder (every shipped frame): runs top to bottom (the client stops at the first run below its
 //!   clip box), left to right, each a maximal span of opaque pixels of one row (split at [`MAX_RUN_LENGTH`]),
-//!   nothing after the marker. No shipped pixel uses index 0; some use a colour of 0 (the 7.0.103
+//!   nothing after the marker. No shipped pixel uses index 0; some use a colour of 0 (the 7.0.102.3
 //!   `AnimationFrame2.uop`), which the client draws black.
 //!
 //! From RGBA ([`index_rgba_frames`]), as the gump writer (`gump_write`): alpha 0 is transparent, 255 opaque, other

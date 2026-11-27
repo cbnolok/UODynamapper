@@ -232,7 +232,7 @@ pub(super) fn place_frames(numbers: &[u16], spans: &[(u32, u32)]) -> (Vec<Vec<Op
 
 /// The world direction of stored direction `stored`. The Enhanced client numbers stored directions as world
 /// directions; Classic stores world direction `FIRST_STORED_DIRECTION + k` at `k` (ClassicUO `GetAnimDirection`,
-/// and the client's table at 0x007087dc: `GetObjectLayerFrame` 0x005441e0, Classic 7.0.103.0; confirmed).
+/// and the client's table at 0x007087dc: `GetObjectLayerFrame` 0x005441e0, Classic 7.0.102.3; confirmed).
 pub(super) fn world_direction(is_ec: bool, stored: u8) -> u8 {
     if is_ec { stored } else { stored + FIRST_STORED_DIRECTION }
 }

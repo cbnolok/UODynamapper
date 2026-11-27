@@ -2,7 +2,7 @@
 //!
 //! An entry (`UOClassicAnim::GetMulFrame`): the 256-word palette, a `u32` frame count, one `u32` offset per frame
 //! (relative to the end of the palette; 0 is no frame, which the client skips), then the frames
-//! ([`ClassicFrame`]). Every shipped entry (UO Gold to the 7.0.103 Classic Client) has its frames in offset order,
+//! ([`ClassicFrame`]). Every shipped entry (UO Gold to the 7.0.102.3 Classic Client) has its frames in offset order,
 //! back to back from the end of the offset table, each ending with its marker, and nothing after the last.
 //!
 //! An index entry is 12 bytes: `u32` lookup, length, extra (0 in the shipped animation indexes); a lookup of

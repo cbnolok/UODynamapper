@@ -1,4 +1,4 @@
-// Name the code of the 2024 Classic client (7.0.103.0 client.exe) that reads and writes entitled.def, the
+// Name the code of the 2024 Classic client (7.0.102.3 client.exe) that reads and writes entitled.def, the
 // desktop (desktop.nwb, desktop.uos), credits.dat, helpindx.dat, Data/assetmap.xml and the chat filter lists.
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
 // address is verified with the stated checks first; a failed check is reported, not named.
@@ -116,7 +116,7 @@ public class NameClassicUiFileCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256, TAG_FILES,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256, TAG_FILES,
             TAG_FILES_COMMENT, ENTRIES_CLASSIC_7_0_103),
     };
 

@@ -18,10 +18,13 @@ never executed, auto-analysed, named with `--apply` and saved.
 
 | Ghidra program | Source | PE timestamp / version | SHA-256 |
 |---|---|---|---|
-| `classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` | 7.0.103.0 | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
+| `classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` | 7.0.102.3 | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
 | `classic_7.0.20.0_client.exe` | `Ultima Online Classic_7_0_20_0/client.exe` | 7.0.20.0 | `27eef2c0a4679f204b923f29dd1506bb2c7e649410054aefad680264bb504c9e` |
 | `classic_6.0.14.3_client.exe` | `_packs/Ultima Online 6.0.14.3 Patch95.tar.zst` | 6.0.14.3 | `9104cea0ea14bd8ee81ee5aa111f1e3f39eca50ac33f818813202fadfdd3718d` |
 | `gold_client.exe` | `Ultima Online Gold/client.exe` | 2004-11-11, no version resource | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
+
+The program name's 7.0.103.0 is wrong: this `client.exe`'s PE version resource is 7.0.102.3 (`VS_FIXEDFILEINFO` and the
+`StringFileInfo` strings). The name is kept because the scripts target it.
 
 Other builds were not imported. Their facet tables were decoded from the file bytes only (see the results):
 
@@ -70,7 +73,7 @@ run_ghidra_script(program="classic_7.0.103.0_client.exe",
 save_program(program="classic_7.0.103.0_client.exe")
 ```
 
-The `--apply` reports are in `results/`: [7.0.103.0](results/classic_7.0.103.0_names.md),
+The `--apply` reports are in `results/`: [7.0.102.3](results/classic_7.0.103.0_names.md),
 [7.0.20.0](results/classic_7.0.20.0_names.md), [6.0.14.3](results/classic_6.0.14.3_names.md),
 [Gold](results/gold_names.md).
 
@@ -83,5 +86,5 @@ The `--apply` reports are in `results/`: [7.0.103.0](results/classic_7.0.103.0_n
   of an entry in that table.
 - Field readers: an imm32 scan of `.text` for the table address range finds every accessor. In 7.0.x
   the accessors read both copies.
-- Ghidra created no function at 0x0056cfe0 in 7.0.103 (it has no caller). It was created with
+- Ghidra created no function at 0x0056cfe0 in 7.0.102.3 (it has no caller). It was created with
   `create_function` before naming.

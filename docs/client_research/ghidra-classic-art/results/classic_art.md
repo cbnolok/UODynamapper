@@ -1,6 +1,6 @@
 # Classic art records
 
-Program `classic_7.0.103.0_client.exe` (7.0.103.0), names applied by `NameClassicArtCode.java`.
+Program `classic_7.0.103.0_client.exe` (7.0.102.3), names applied by `NameClassicArtCode.java`.
 
 ## The land / static split
 

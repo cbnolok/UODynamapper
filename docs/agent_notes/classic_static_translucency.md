@@ -2,7 +2,7 @@
 
 ## Original executable evidence
 
-Read-only inspection of `classic_7.0.103.0_client.exe` (SHA-256
+Read-only inspection of `classic_7.0.103.0_client.exe` (PE version 7.0.102.3 despite the name; SHA-256
 `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a`)
 locates ordinary object art dispatch at `0x0044e3a0`. The tiledata array pointer
 is `0x00afb748`, with 0x30-byte in-memory records. The dispatcher retains flags

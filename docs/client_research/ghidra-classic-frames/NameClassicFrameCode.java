@@ -1,4 +1,4 @@
-// Name the Classic client code (7.0.103.0 client.exe) that reads and draws mobile animation frames: the anim*.mul
+// Name the Classic client code (7.0.102.3 client.exe) that reads and draws mobile animation frames: the anim*.mul
 // and the AnimationFrame*.uop (build/animationlegacyframe) frame lookups, the AMOU frame-entry search, and the
 // Classic RLE frame drawers (runs of palette indices, a 0x7FFF7FFF end marker).
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
@@ -181,7 +181,7 @@ public class NameClassicFrameCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256,
             ENTRIES_CLASSIC_7_0_103),
     };
 

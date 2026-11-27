@@ -1,6 +1,6 @@
 # Classic facet names
 
-Program: `classic_7.0.103.0_client.exe` (tested build classic 7.0.103.0 client.exe), SHA-256 `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a`.
+Program: `classic_7.0.103.0_client.exe` (tested build classic 7.0.102.3 client.exe), SHA-256 `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a`.
 
 Mode: `--apply` (changes: {labels created=7, plate comments set=35, functions renamed=28, tags added=28}).
 

@@ -1,4 +1,4 @@
-// Name the code of the 2024 Classic client (7.0.103.0 client.exe) that reads the custom-house tables (walls.txt,
+// Name the code of the 2024 Classic client (7.0.102.3 client.exe) that reads the custom-house tables (walls.txt,
 // floors.txt, doors.txt, misc.txt, stairs.txt, teleprts.txt, roof.txt), suppinfo.txt, prof.txt, keynames.txt,
 // palette.mul and animinfo.mul.
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
@@ -111,7 +111,7 @@ public class NameClassicTextTableCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256, TAG_FILES,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256, TAG_FILES,
             TAG_FILES_COMMENT, ENTRIES_CLASSIC_7_0_103),
     };
 

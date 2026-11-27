@@ -14,7 +14,7 @@ Where the styles differ, a table shows them side by side; a rule stated once hol
 | `world/` | `dynamapper/src/render/scene/world/` |
 | `sh/` | `dynamapper/assets/shaders/world/` |
 | `conv/` | `lib/udd-conv/src/textures/` |
-| CC client | Classic `client.exe` 7.0.103.0 (PE FileVersion) |
+| CC client | Classic `client.exe` 7.0.102.3 (PE FileVersion) |
 | EC client | Enhanced `UOSA.exe` 4.0.102.3 |
 | KR client | Kingdom Reborn `UOKR.exe` 2.58.0.6 (its folder's `buildinfo.txt` says 2.53.0.2) |
 | CUO | ClassicUO's source, a read-only Classic reference |

@@ -198,7 +198,7 @@ pub const LAND_SOURCE_CC_ATLAS: u32 = 4;
 pub const LAND_SOURCE_CLASSIC_ART: u32 = 5;
 /// Classic land the Classic client does not draw (`LAND_NODRAW_ID`): the fragment is discarded; no payload.
 pub const LAND_SOURCE_NODRAW: u32 = 6;
-/// The land id the Classic client 7.0.103.0 never draws from its texmap or land art (tiledata "NODRAW";
+/// The land id the Classic client 7.0.102.3 never draws from its texmap or land art (tiledata "NODRAW";
 /// `FUN_0044c180` and `FUN_0044fa70` skip it unless a debug flag is set). Ids 0 and 1 are drawn.
 pub const LAND_NODRAW_ID: u32 = 2;
 /// The land ids whose Classic texmaps are pure black: the black openings of the cave mouths (0x1AE, 0x1DB) and the

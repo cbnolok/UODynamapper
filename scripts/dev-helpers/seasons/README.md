@@ -16,7 +16,8 @@ read a `seasons.txt`. OrionUO (`OrionUO.cpp` at `0377275cab9147725a6c74553191d6d
 
 ## The Classic client
 
-Checked read-only in Ghidra on `classic_7.0.103.0_client.exe` (project `UOSA`, `/classic`; see
+Checked read-only in Ghidra on `classic_7.0.103.0_client.exe` (PE version 7.0.102.3 despite the name; project
+`UOSA`, `/classic`; see
 [ghidra-classic-facets](../../../docs/client_research/ghidra-classic-facets/README.md) for the import). Every table entry above
 matches the client's.
 

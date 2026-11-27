@@ -136,7 +136,7 @@ Audio is traced in [`ghidra-audio`](ghidra-audio/README.md): how the clients dri
 How Kingdom Reborn darkens and tints the scene (the light-level and night-map composite, gamma, sprite shadows, the baked half-Lambert terrain shade, and the absence of sun, ambient, fog, tonemap, bloom and grading), with an item-by-item comparison against Dynamapper's KR-like preset, is traced in [`ghidra-kr-atmosphere`](ghidra-kr-atmosphere/README.md).
 WGSL translations of the EC and KR post-process and sprite shaders, from the `Shaders.uop` dump (bloom pipeline, sprite base and hue, the EC death effect), with a reference note each, are in [`client-shader-translations`](client-shader-translations/ec/ec_shaders_reference.md) (`ec/` and `kr/`); none is compiled into Dynamapper.
 The Classic `client.exe` facet table is decoded in [`ghidra-classic-facets`](ghidra-classic-facets/README.md),
-for UO Gold, ML, 5.0.9.1, 6.0.14.3, 7.0.20, 7.0.50 and 7.0.103. It covers the wrap rectangle, file ids,
+for UO Gold, ML, 5.0.9.1, 6.0.14.3, 7.0.20, 7.0.50 and 7.0.102.3. It covers the wrap rectangle, file ids,
 the Felucca-rules flag, the `map0x` table copy selected by 0xA9 flag 0x8000, and the mapdif/stadif patches
 and the client versions that still apply them.
 The Classic custom-house tables, `suppinfo.txt`, `prof.txt`, `keynames.txt`, `palette.mul`, `animinfo.mul` and

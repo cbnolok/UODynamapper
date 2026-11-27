@@ -65,7 +65,7 @@ const EXPECTED: [Expected; 9] = [
     },
     Expected {
         sha256: "4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a",
-        name: "7.0.103.0",
+        name: "7.0.102.3",
         applied: false,
         lookups: true,
     },

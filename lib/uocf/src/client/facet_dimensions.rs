@@ -182,7 +182,7 @@ const EC_CHECKSUM_OFFSET: usize = 0x158;
 const KR_CHECKSUM_OFFSET: usize = 0x168;
 
 /// The builds of the research (`uosa_facets.md`, `classic_facets.md`); the `fp` folder's `UOSA_TC.exe` and
-/// `UOSA_eclo.exe` are the same files as the main folder's, and the Classic folder's `client.exe` is 7.0.103.0.
+/// `UOSA_eclo.exe` are the same files as the main folder's, and the Classic folder's `client.exe` is 7.0.102.3.
 pub const KNOWN_BUILDS: [KnownBuild; 12] = [
     KnownBuild {
         name: "Enhanced Client UOSA.exe",
@@ -284,7 +284,7 @@ pub const KNOWN_BUILDS: [KnownBuild; 12] = [
         checksum_offset: 0x178,
     },
     KnownBuild {
-        name: "Classic 7.0.103.0 client.exe",
+        name: "Classic 7.0.102.3 client.exe",
         sha256: "4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a",
         family: ClientFamily::Classic,
         table_offsets: &[0x2b7478, 0x2b75c8],

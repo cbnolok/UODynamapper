@@ -15,7 +15,7 @@
 //! WS       = 1*(SP | HTAB)
 //! ```
 //!
-//! How the Classic client reads it (`UOClassicDefs::DefTable_ParseLine` in 7.0.103,
+//! How the Classic client reads it (`UOClassicDefs::DefTable_ParseLine` in 7.0.102.3,
 //! `docs/client_research/ghidra-audio/results/classic_audio.md`):
 //!
 //! - Each line is read with `fgets` of 255 bytes, so lines of more than [`MAX_LINE_BYTES`] bytes are refused here.
@@ -34,7 +34,7 @@
 //! `Sound.def` (685 ids in UO Gold, 787 in the current client) gives sound ids without a slot of their own the
 //! slot to play instead: `654 {487} 0`. Every shipped target list has one value and every third field is 0.
 //! `Music.def` holds the single line `0 {0} 0`; **no client reads it** (no `music.def` string in UO Gold, Classic
-//! 7.0.103, UOKR.exe or UOSA.exe): Classic music is chosen by `Music/Digital/Config.txt`.
+//! 7.0.102.3, UOKR.exe or UOSA.exe): Classic music is chosen by `Music/Digital/Config.txt`.
 //!
 //! [`DefTranslationTable::to_text`] writes a table back: every line as read (blank and comment lines too), a line
 //! set after parsing as `id {target, target} extra`, the file's line end (that of its first line; CRLF for a file

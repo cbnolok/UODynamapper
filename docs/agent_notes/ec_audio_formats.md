@@ -155,7 +155,7 @@ back byte for byte (every field as read, quotes included, each line's own line e
 ## `Sound.def` and `Music.def`
 
 Grammar and the client's reading in `lib/uocf/src/classic/audio/audio_def.rs` (`classic_audio.md` Q4, the same in UO
-Gold and 7.0.103). One `id {targets} extra` per line; 685 ids in UO Gold, 787 in the current client; every group
+Gold and 7.0.102.3). One `id {targets} extra` per line; 685 ids in UO Gold, 787 in the current client; every group
 has one target and every `extra` is 0.
 
 - The client reads lines with `fgets` of 255 bytes, skips blank and `#` lines and leading white space, reads ids
@@ -167,7 +167,7 @@ has one target and every `extra` is 0.
   `client_ignored`. Ids 778..1440 (UO Gold 778..1338, 351 / 249 ids) write `{-1}`; the parser keeps `-1` and
   notes that the client reads it as 1. Only one line ever applies: `856 {550} 0`, whose slot is missing; every other
   id has a slot of its own (`SoundMap::translation_notes`, in the census).
-- `Music.def` is the single line `0 {0} 0`, and no client reads it: neither UO Gold nor 7.0.103 has the string.
+- `Music.def` is the single line `0 {0} 0`, and no client reads it: neither UO Gold nor 7.0.102.3 has the string.
 
 ## `Music/Digital/Config.txt` and the music files
 

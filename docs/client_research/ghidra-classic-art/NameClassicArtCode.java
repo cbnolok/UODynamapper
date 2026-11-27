@@ -1,4 +1,4 @@
-// Name the Classic client code (7.0.103.0 client.exe) that reads the art records of art.mul and artLegacyMUL.uop
+// Name the Classic client code (7.0.102.3 client.exe) that reads the art records of art.mul and artLegacyMUL.uop
 // (build/artlegacymul/%08i.tga) and splits land tiles from statics by the art id (id < 0x4000 is land).
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
 // address is verified with the stated checks first; a failed check is reported, not named.
@@ -73,7 +73,7 @@ public class NameClassicArtCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256,
             ENTRIES_CLASSIC_7_0_103),
     };
 

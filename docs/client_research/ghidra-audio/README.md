@@ -20,7 +20,7 @@ Findings:
 - [results/miles_audio.md](results/miles_audio.md): mss32.dll and miles/mssmp3.asi (Miles 7.2c), the WAV
   and MP3 acceptance rules, the replace whitelist, the mixer and WAV edge cases, `mssvoice.asi`.
 - [results/uokr_audio.md](results/uokr_audio.md): UOKR.exe, the `audio_*.csv` tables, how it drives Miles.
-- [results/classic_audio.md](results/classic_audio.md): Classic 7.0.103.0 and UO Gold: Sound.def,
+- [results/classic_audio.md](results/classic_audio.md): Classic 7.0.102.3 and UO Gold: Sound.def,
   Music.def, the sound header, Config.txt, its DirectSound playback.
 
 The file formats themselves are in `docs/agent_notes/ec_audio_formats.md`. Every result is marked
@@ -35,7 +35,7 @@ All are in the Ghidra project `UOSA`. Each was imported read-only, never execute
 |---|---|---|
 | `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` 4.0.102.3 | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
 | `/UOKR.exe` | `UO - Old KR/UOKR.exe` 2.58.0.6 | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
-| `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
+| `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` 7.0.102.3 | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
 | `/classic/gold_client.exe` | `Ultima Online Gold/client.exe` (no version resource) | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
 | `/libs/mss32.dll` | `_Ultima Online Enhanced/mss32.dll` (Miles 7.2c) | `b588b4791ff6803247962c661b6d3ff9a8625d0f60363a6fa53f61d401f0e74e` |
 | `/libs/miles/mssmp3.asi` | `_Ultima Online Enhanced/miles/mssmp3.asi` | `0fb784a9cc9826a9ec2412b7d71453b917af6c74442647f38061512e2c3a05bb` |
@@ -43,6 +43,9 @@ All are in the Ghidra project `UOSA`. Each was imported read-only, never execute
 | `/libs-kr/mss32.dll` | `UO - Old KR/mss32.dll` (Miles 7.0x) | `272f65a0b4cb84aef765ee80547341de1b1dd9d16907add2d784cd5ad04d155a` |
 | `/libs-kr/miles/mssmp3.asi` | `UO - Old KR/miles/mssmp3.asi` | `f6bbeccf925b1f2b3132143b5a289ea7041554e30d739560b9d5eadf1a427bdd` |
 | `/miles-7.2a-sdk/mss32.dll`, `/miles-7.2a-sdk/mssmp3.asi` | The user's own copy of the Miles 7.2a SDK, with its PDBs | Not recorded |
+
+The program name's 7.0.103.0 is wrong: this `client.exe`'s PE version resource is 7.0.102.3 (`VS_FIXEDFILEINFO` and the
+`StringFileInfo` strings). The name is kept because the scripts target it.
 
 The client folders are under `/mnt/dati/_proj_local/_uo_clients/`. Do not commit the binaries or anything
 extracted from them.

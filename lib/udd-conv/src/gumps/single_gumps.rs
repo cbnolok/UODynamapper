@@ -43,7 +43,7 @@ const SHARED_CLASSIC_GUMP_TABLE_COMPRESSION: CompressionFlag = CompressionFlag::
 
 /// The paperdoll's body gump of each mobile body, as both clients pick it; they agree. Enhanced:
 /// `SelectPaperdollBodyGumpForBody` (UOSA.exe 0x0050d1c0, called by `UOPaperdoll::BuildImage` 0x0050c790). Classic:
-/// `DrawPaperdollGumpLayers` (client.exe 7.0.103.0 0x0051a4a0). Body 987 takes 13 for a woman; any other body takes
+/// `DrawPaperdollGumpLayers` (client.exe 7.0.102.3 0x0051a4a0). Body 987 takes 13 for a woman; any other body takes
 /// 12 or 13 by gender (Enhanced) or 12/13, 14/15, 666/665 by race (Classic), all listed. Gump 51253 is in the
 /// paperdoll equipment range, so it is on an atlas page, lossless already.
 ///

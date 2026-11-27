@@ -54,7 +54,7 @@
 //
 //     out = composited + decode_srgb(L.rgb / L.a) * L.a * g
 //
-// Classic dims by the Classic 2D client's rule (client.exe 7.0.103.0, a software renderer on a 16-bit frame), which
+// Classic dims by the Classic 2D client's rule (client.exe 7.0.102.3, a software renderer on a 16-bit frame), which
 // has no night map. The client keeps a darkness d per pixel and channel, starting at the light level L (the 0x4F
 // packet's, which the handler 0x00465600 takes only below 31, less the personal light level, 0 here); each light
 // subtracts its signed light.mul value v (5 bits, up to 31) from it under its quad, d = max(0, d - v) (the coloured
@@ -146,7 +146,7 @@ pub const CLIENT_SHADOW_BUFFER_CLEAR: f32 = 1.0;
 // ---- The Classic client's constants -----------------------------------------------
 
 /// The Classic client's darkness steps: a channel c under darkness d becomes floor(c * (32 - d) / 32) (client.exe
-/// 7.0.103.0, the table at 0x00788fd8 built by 0x004571b0), so light level L multiplies the frame by (32 - L) / 32.
+/// 7.0.102.3, the table at 0x00788fd8 built by 0x004571b0), so light level L multiplies the frame by (32 - L) / 32.
 pub const CLASSIC_DARKNESS_STEPS: f32 = 32.0;
 /// light.mul's brightest value (5 bits), which world_lights.uddp stores as 1: a light of value v takes v steps off
 /// the darkness, so a light buffer value of 1 is `CLASSIC_LIGHT_MUL_MAX / CLASSIC_DARKNESS_STEPS` of the multiplier.

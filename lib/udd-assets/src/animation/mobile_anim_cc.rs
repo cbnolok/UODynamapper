@@ -41,7 +41,7 @@ pub const MOBILE_ANIM_CC_FLAG_UOP_SOURCE: u16 = 1 << 14;
 pub const MOB_TYPE_FLAG_USES_UOP_FRAMES: u32 = 0x10000;
 pub const MOB_TYPE_BODY_IDS: std::ops::RangeInclusive<u16> = 1..=0x7FF;
 /// `mobtypes.txt` flags read by the movement action (ClassicUO `AnimationFlags`; the client's tests are named, Classic
-/// 7.0.103.0, confirmed): a monster idles on action 8 when it has it (`MobTypes_IdleAt8` 0x00597870).
+/// 7.0.102.3, confirmed): a monster idles on action 8 when it has it (`MobTypes_IdleAt8` 0x00597870).
 pub const MOB_TYPE_FLAG_IDLE_AT_8_FRAME: u32 = 0x4;
 /// A monster runs with action 19 when it has it (`MobTypes_CanFly` 0x00597960, which also needs the client's flying
 /// gate `DAT_00742cf8`).
@@ -129,7 +129,7 @@ pub struct MobileAnimCcAnimationRecord {
     /// Frames per second the client plays this animation at: for a `MOB_TYPE_FLAG_USES_UOP_FRAMES` body's UOP
     /// record, the fps of `action_id` in the body's `AnimationSequence.uop` entry (`GetActionFps`, aliases resolved,
     /// flying animations on; `CMobile_SetUopAction` 0x005b6580 sets the frame time to 1000 / fps, Classic
-    /// 7.0.103.0, confirmed). `NO_SEQUENCE_FPS` for the others: MUL frames, and UOP bodies without a sequence
+    /// 7.0.102.3, confirmed). `NO_SEQUENCE_FPS` for the others: MUL frames, and UOP bodies without a sequence
     /// entry, whose frame time the client doesn't set there.
     pub fps: f32,
 }
@@ -264,7 +264,7 @@ impl<'a> ClassicBodyTables<'a> {
 /// north-west): world `FIRST_STORED_DIRECTION + k` is stored at `k`; world 0, 1 and 2 show world 6, 5 and 4
 /// mirrored horizontally about the frame anchor (ClassicUO `GetAnimDirection`, and the client's stored direction
 /// table at 0x007087dc, [3, 2, 1, 0, 1, 2, 3, 4], with its mirror table at 0x007087fc, [1, 1, 1, 0, 0, 0, 0, 0]:
-/// `GetObjectLayerFrame` 0x005441e0, `GetMobileMulFrame` 0x0044e8e0, Classic 7.0.103.0; confirmed). `None` outside
+/// `GetObjectLayerFrame` 0x005441e0, `GetMobileMulFrame` 0x0044e8e0, Classic 7.0.102.3; confirmed). `None` outside
 /// 0..`DIRECTION_COUNT`.
 pub fn classic_stored_direction(direction: u8) -> Option<(u8, bool)> {
     if direction >= DIRECTION_COUNT {
@@ -495,7 +495,7 @@ impl MobileAnimCcPackage {
     ///
     /// A UOP-flagged body (`MOB_TYPE_FLAG_USES_UOP_FRAMES`) plays the move action of its sequence, as the client does
     /// (`CMobile_UpdateUopMoveAction` 0x005b6e40 through `FrameSetLookup_GetMoveAction` 0x00408114, Classic
-    /// 7.0.103.0; confirmed): group `GROUP_MOUNTED` when `mounted` and the sequence has it, else `GROUP_PEACE`
+    /// 7.0.102.3; confirmed): group `GROUP_MOUNTED` when `mounted` and the sequence has it, else `GROUP_PEACE`
     /// (`CMobile_UopSequenceGroup` 0x005b6270). One without a sequence entry takes the fixed UOP actions below.
     ///
     /// The others follow ClassicUO `GetGroupForAnimation` by choice:

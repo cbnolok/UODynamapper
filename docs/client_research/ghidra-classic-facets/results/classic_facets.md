@@ -30,10 +30,10 @@ Every build has a hard-coded `.rdata` table of 48-byte records. It has 5 records
 ### The six ids
 
 The six ids are indexes into the client's file name table. Each entry is a fixed name plus open/cache
-fields. The stride is 56 bytes up to 7.0.20 and 60 bytes from 7.0.50; in 7.0.103 the entry is
+fields. The stride is 56 bytes up to 7.0.20 and 60 bytes from 7.0.50; in 7.0.102.3 the entry is
 0x00710900 + id·0x3c and the name is at +4. The names are static strings. No build makes the `x` suffix
 with sprintf: the `x` variants are separate entries of the name table (`map0xLegacyMUL.uop` id 50,
-`staidx0x.mul` id 51, `statics0x.mul` id 52, ... in 7.0.103), and only the second facet table points at
+`staidx0x.mul` id 51, `statics0x.mul` id 52, ... in 7.0.102.3), and only the second facet table points at
 them. Traced.
 
 ### felucca_rules (+0x2c)
@@ -41,10 +41,10 @@ them. Traced.
 The flag is 1 only for Felucca, in every build. `CurrentFacetHasFeluccaRules` returns it for the current
 facet. It returns 1 on every facet when `g_SiegeRules` is set (0xA9 flags bit 2, 0x4).
 
-The only consumer is the PvP confirmation. The check (7.0.103 0x0050aeb0) needs flag && the "query
+The only consumer is the PvP confirmation. The check (7.0.102.3 0x0050aeb0) needs flag && the "query
 criminal actions" option (0x00742ce9, from the config file or the options gump) && a target with
 notoriety hue 0x59 (innocent). Then `ConfirmCriminalAction` 0x0050acf0 shows "This may flag you
-criminal!". 7.0.103 has a raw-index accessor of +0x2c at 0x005a0540, but nothing calls it and Ghidra
+criminal!". 7.0.102.3 has a raw-index accessor of +0x2c at 0x005a0540, but nothing calls it and Ghidra
 made no function there. Traced.
 
 ## Q1: wrap_width / wrap_height
@@ -52,7 +52,7 @@ made no function there. Traced.
 Values in every build: Felucca and Trammel have wrap 5120 × 4096. Every other facet has wrap equal to its
 size. Felucca and Trammel are 6144 wide in Gold and 7168 in ML and later.
 
-Meaning (traced in 7.0.103; the same globals are read the same way in Gold, `BuildLandTileWrapped`
+Meaning (traced in 7.0.102.3; the same globals are read the same way in Gold, `BuildLandTileWrapped`
 0x004e9df0):
 
 - **The wrap region.** [0, wrap_w) × [0, wrap_h) is a torus. The region x ≥ wrap_w is flat: for Felucca
@@ -88,22 +88,22 @@ Server interaction: none. The wrap is client-side only and is chosen by the 0xBF
 
 ## Q2: the two table copies (7.0.x)
 
-- `g_UseFacetVariants` (7.0.103 0x00a58d7e, 7.0.20 0x00a1bcde) is written in one place,
-  `ApplyCharListFlags` (7.0.103 0x005640b0, 7.0.20 0x00559c20). That function stores each bit of the 0xA9
-  u32 flags in its own byte (0x00a58d70.. in 7.0.103). Bit 15 (0x8000) goes to `g_UseFacetVariants` and
+- `g_UseFacetVariants` (7.0.102.3 0x00a58d7e, 7.0.20 0x00a1bcde) is written in one place,
+  `ApplyCharListFlags` (7.0.102.3 0x005640b0, 7.0.20 0x00559c20). That function stores each bit of the 0xA9
+  u32 flags in its own byte (0x00a58d70.. in 7.0.102.3). Bit 15 (0x8000) goes to `g_UseFacetVariants` and
   bit 2 (0x4) to `g_SiegeRules`. Its only caller is `Handle_0xA9_CharList` (0x0047f460 / 0x0047dfd0).
   That handler reads the characters, then the cities (index byte, 32-byte name, 32-byte area, 6 × u32),
   then the u32 flags. Traced. Gold's `ApplyCharListFlags` 0x004ca750 keeps bits 0..7 only: **Gold has no
   bit 15 and no second copy**. ServUO calls bit 15 `NewFeluccaAreas` (naming not verified in a client).
 - **Copy selection.** Every table accessor tests `g_UseFacetVariants` and reads `g_FacetTableVariants`
-  instead of `g_FacetTable` (7.0.103 0x006b75c8 / 0x006b7478; 7.0.20 0x006851d8 / 0x00685088). Traced.
+  instead of `g_FacetTable` (7.0.102.3 0x006b75c8 / 0x006b7478; 7.0.20 0x006851d8 / 0x00685088). Traced.
   **This is the only mechanism that picks map0 vs map0x.** No file-existence test or fallback chooses a
   variant. A missing variant file then fails like a missing base file. Inferred from the open path; the
   open itself was not traced to the error.
 - **How the copies differ** (bytes): only the file ids differ. Sizes, wrap, dif ids and felucca_rules are
   equal.
 
-  | Facet | 7.0.20 copy B | 7.0.50 and 7.0.103 copy B |
+  | Facet | 7.0.20 copy B | 7.0.50 and 7.0.102.3 copy B |
   |---|---|---|
   | Felucca | map0x / staidx0x / statics0x .mul | map0xLegacyMUL.uop / staidx0x / statics0x .mul |
   | Trammel | map1x / staidx1x / statics1x .mul | map1xLegacyMUL.uop / staidx1x / statics1x |
@@ -114,13 +114,13 @@ Server interaction: none. The wrap is client-side only and is chosen by the 0xBF
   This matches EC's swap set {0, 1, 2, 5} from 7.0.50 on.
 - **Ter Mur's dif ids.** In every 7.x table, both copies, Ter Mur's mapdif/stadif/stadifi ids name
   `mapdif4`/`stadif4`/`stadifi4` (Tokuno's). This is harmless because nothing reads them.
-- **Map presence probe.** `ProbeLegacyMapUops` 0x0059ffb0 (7.0.103) builds a bit mask of the existing
+- **Map presence probe.** `ProbeLegacyMapUops` 0x0059ffb0 (7.0.102.3) builds a bit mask of the existing
   `map%uLegacyMUL.uop`, u = 0..15. It does not probe map1: bit 1 copies bit 0. 0x005a1c50 sends bytes 0
   and 1 of the mask to the server when entering the world. It never probes the `x` files. Traced for the
   probe; the packet's purpose is inferred.
 - **Mapdif/stadif in 7.0.x.**
   - The patch counts still arrive with 0xBF/0x18, and `ReloadDifLists` still loads the lists.
-  - But `StadifBlockLookup` 0x0056cf50 and `MapdifBlockLookup` 0x0056cfe0 (7.0.103) have **no caller**.
+  - But `StadifBlockLookup` 0x0056cf50 and `MapdifBlockLookup` 0x0056cfe0 (7.0.102.3) have **no caller**.
     7.0.20 has the same dead pair: `StadifBlockLookup` 0x00561850 and `MapdifBlockLookup` 0x005618e0. No
     code reads record +0x1c..+0x24. (An earlier pass called 0x00561850 the mapdif lookup; it reads the
     stadif maps 0x00a2e2c8. Ghidra had not made a function at 0x005618e0; it does now.)
@@ -148,9 +148,9 @@ patches.
   - sub 8: `SetFacet`;
   - sub 0x11 (legacy): 4 × u32 (statics map0, statics map1, land map0, land map1);
   - sub 0x18: u32 map count, then per map {u32 statics patch count, u32 land patch count}. Gold keeps
-    up to 5 maps and 7.0.103 up to 6 (`if (i < 6)`).
+    up to 5 maps and 7.0.102.3 up to 6 (`if (i < 6)`).
 
-  Both subcommands then call `LoadDifLists` 0x004d0cb0 (7.0.103: `ReloadDifLists` 0x0056e8a0 →
+  Both subcommands then call `LoadDifLists` 0x004d0cb0 (7.0.102.3: `ReloadDifLists` 0x0056e8a0 →
   `LoadStadifLists` 0x0056e5c0 + `LoadMapdifLists` 0x0056e700).
 - **The counts.** They are BSS, so 0 until the server sends 0xBF/0x18 or 0x11. **Without that packet no
   patch is applied.**
@@ -193,7 +193,7 @@ and [uokr_facets.md](../../ghidra-facets/results/uokr_facets.md#no-facetnx-varia
 
 ## Address index
 
-| Item | Gold | 6.0.14.3 | 7.0.20 | 7.0.103 |
+| Item | Gold | 6.0.14.3 | 7.0.20 | 7.0.102.3 |
 |---|---|---|---|---|
 | g_FacetTable | 0x0056f918 | 0x005a6db0 | 0x00685088 | 0x006b7478 |
 | g_FacetTableVariants | none | none | 0x006851d8 | 0x006b75c8 |
@@ -285,10 +285,10 @@ indexed read). The ignored test `lib/uocf/tests/real_files/classic_dif_usage.rs`
 | 7.0.20.0 | loaded, never applied | 0x00562440 / 0x00562300 | 0x00a2e310 / 0x00a2e2c8, 6 | 0x005618e0 / 0x00561850 | 0 |
 | 7.0.29.97 (`client_tc.exe`) | loaded, never applied | 0x005650b0 / 0x00564f70 | 0x00a319e8 / 0x00a319a0, 6 | 0x00563990 / 0x00563900 | 0 |
 | 7.0.50.0 | loaded, never applied | 0x005643f0 / 0x005642b0 | 0x00a51778 / 0x00a51730, 6 | 0x00562cd0 / 0x00562c40 | 0 |
-| 7.0.103.0 | loaded, never applied | 0x0056e700 / 0x0056e5c0 | 0x00a6b720 / 0x00a6b6d8, 6 | 0x0056cfe0 / 0x0056cf50 | 0 |
+| 7.0.102.3 | loaded, never applied | 0x0056e700 / 0x0056e5c0 | 0x00a6b720 / 0x00a6b6d8, 6 | 0x0056cfe0 / 0x0056cf50 | 0 |
 | 7.0.115.0 (Classic fp folder) | loaded, never applied | 0x00577fa0 / 0x00577e60 | 0x009b9100 / 0x009b90b8, 6 | 0x00575fe0 / 0x00575f50 | 0 |
 
-The Gold, 6.0.14.3, 7.0.20 and 7.0.103 rows agree with Ghidra (decompiled lookups and their xrefs). The
+The Gold, 6.0.14.3, 7.0.20 and 7.0.102.3 rows agree with Ghidra (decompiled lookups and their xrefs). The
 ML and 5.0.9.1 rows confirm the call-count inference of Q3 from the lookups themselves.
 
 A converter should apply the dif files only to a kind the client applies; for 6.0.14.3 and later it should

@@ -96,7 +96,7 @@ What the converter does today (`lib/udd-conv/src/animation/mobile_anim_cc.rs`):
 - An entry that can't be read gets a warning naming its file, slot, body, action, direction and reason. The total is in
   the build summary and the CLI output. Reading walks the runs at planning, so a bad entry can't abort the pixel stage.
 - A MUL frame grows to hold every run. The client places runs from the anchor and clips only to the screen, never
-  reading the frame's size (`DrawFrameRle`, 7.0.103.0). Each pixel stays at its offset from the anchor. No shipped frame
+  reading the frame's size (`DrawFrameRle`, 7.0.102.3). Each pixel stays at its offset from the anchor. No shipped frame
   needs this: 0 of 526,895 MUL frames and 0 of 470,415 UOP frames have a run outside their size.
 - When a package holds a MUL and a UOP entry for one action, the reader takes the one the client would use: UOP when
   the `mobtypes.txt` row has flag 0x10000, otherwise MUL. The other source only fills in when that one has none.
@@ -901,7 +901,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     - The paperdoll body gumps stay RGBA8888 in both lossy packs, by the user's rule "we can't lose exact grays"
       (2026-11-06). Both clients draw the body with partial hue on exact greys, indexed by red. The ids come from
       `PAPERDOLL_BODY_GUMP_BY_BODY` in `lib/udd-conv/src/gumps/single_gumps.rs`, the body-to-gump table both clients share
-      (Enhanced `SelectPaperdollBodyGumpForBody` 0x0050d1c0, Classic 7.0.103.0 `DrawPaperdollGumpLayers` 0x0051a4a0): six
+      (Enhanced `SelectPaperdollBodyGumpForBody` 0x0050d1c0, Classic 7.0.102.3 `DrawPaperdollGumpLayers` 0x0051a4a0): six
       single gumps, 12-15, 665 and 666, and 51253 on an atlas page. They add 12.9 KB to `gumps_ec` BC7 (40.507 MB) and
       13.9 KB to `gumps_cc` BC1 (20.850 MB), and keep every exact grey and red byte.
     - Dynamapper's paperdoll does as the clients do (2026-11-06): the hue index is the red channel, not the (R+G+B)/3

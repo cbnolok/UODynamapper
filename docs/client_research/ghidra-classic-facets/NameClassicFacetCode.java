@@ -72,7 +72,7 @@ public class NameClassicFacetCode extends GhidraScript {
     private record Build(String label, String sha256, Label[] labels, Entry[] entries) {
     }
 
-    // classic_7.0.103.0 (the last 2D client in the tested set; UOP maps).
+    // classic_7.0.103.0_client.exe, PE version 7.0.102.3 (the last 2D client in the tested set; UOP maps).
     private static final Label[] LABELS_7_0_103 = {
         new Label("006b7478", "g_FacetTable", "6 x " + RECORD + " (stride 0x3c); used when g_UseFacetVariants is 0", "005a0310", FIRST_FACET_NAME),
         new Label("006b75c8", "g_FacetTableVariants", "copy of g_FacetTable used when g_UseFacetVariants is 1: Felucca, Trammel, Ilshenar and Ter Mur take map0x/1x/2x/5xLegacyMUL.uop and statics/staidx 0x/1x/2x/5x; sizes, wrap, dif ids and flag equal", "005a0310", FIRST_FACET_NAME),
@@ -241,7 +241,7 @@ public class NameClassicFacetCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic 7.0.103.0 client.exe", CLASSIC_7_0_103_SHA256, LABELS_7_0_103, ENTRIES_7_0_103),
+        new Build("classic 7.0.102.3 client.exe", CLASSIC_7_0_103_SHA256, LABELS_7_0_103, ENTRIES_7_0_103),
         new Build("classic 7.0.20.0 client.exe", CLASSIC_7_0_20_SHA256, LABELS_7_0_20, ENTRIES_7_0_20),
         new Build("classic 6.0.14.3 client.exe", CLASSIC_6_0_14_3_SHA256, LABELS_6_0_14_3, ENTRIES_6_0_14_3),
         new Build("UO Gold client.exe (no version resource, PE timestamp 2004-11-11)", GOLD_SHA256, LABELS_GOLD, ENTRIES_GOLD),

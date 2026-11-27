@@ -72,7 +72,7 @@ them once a mobile tick, which runs when more than 75 ms passed, and only while 
 2 a run step, so its cycles are locked to the ground ([Human walk and run](#human-walk-and-run-2026-11-22)). Classic UOP
 bodies (`mobtypes.txt` flag 0x10000) take
 1000 / fps of the action in their `AnimationSequence.uop` entry, aliases resolved (`CMobile_SetUopAction` 0x005b6580,
-Classic 7.0.103.0, [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#uop-bodies));
+Classic 7.0.102.3, [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#uop-bodies));
 those entries are the Enhanced client's, which times every body by them (`GetActionFps`). `mobile_anim_cc.uddp`
 stores that fps on the UOP animation records; MUL records and UOP bodies without an entry keep 80 ms.
 
@@ -227,7 +227,7 @@ run's 0.35 s cycle is a third of its own. The [planted-foot measurement](#plante
 reproduces these within about 0.1 tiles except the Enhanced run, so they stay; the diagonal facings 4 and 6 measured
 shorter than 5 because the flow divided their travel by a diagonal step's 31.1 px instead of a side step's 44.
 
-The clients (Ghidra): Classic 7.0.103.0 locks the frames to the steps. The frame counter +0x1a0 moves once a tick,
+The clients (Ghidra): Classic 7.0.102.3 locks the frames to the steps. The frame counter +0x1a0 moves once a tick,
 only while a step runs, and a step lasts the `animinfo.mul` ticks, 4 walking and 2 running for every body; missing
 or 0 entries also read 4 and 2 (`AnimInfo_Load` 0x0056a970). A 10-frame cycle therefore covers 2.5 tiles walking and
 5 running, and the human's legs move at about half the ground's pace. ClassicUO's 80 ms a frame gives 1.25 cycles a

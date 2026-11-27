@@ -1,4 +1,4 @@
-// Read-only probe of how the Classic client (7.0.103.0 client.exe) paces a walking mobile's frames: every instruction
+// Read-only probe of how the Classic client (7.0.102.3 client.exe) paces a walking mobile's frames: every instruction
 // whose memory operand has one of the given displacements off a register (a CMobile field), with its function and
 // whether it writes the field. Used for the frame counter +0x1a0, the UOP frame time +0x238 and frame +0x220.
 // Prints to the console; names nothing. Findings: results/classic_frames.md#walk-pace.
@@ -26,7 +26,7 @@ public class ProbeClassicWalkPace extends GhidraScript {
     public void run() throws Exception {
         String sha = currentProgram.getExecutableSHA256();
         if (!CLASSIC_7_0_103_SHA256.equalsIgnoreCase(sha)) {
-            printerr("not classic 7.0.103.0 client.exe: " + sha);
+            printerr("not classic 7.0.102.3 client.exe: " + sha);
             return;
         }
         Set<Long> wanted = new HashSet<>();

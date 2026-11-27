@@ -1,4 +1,4 @@
-// Name the Classic client code (7.0.103.0 client.exe) that picks and paces a mobile's movement actions: the mobile
+// Name the Classic client code (7.0.102.3 client.exe) that picks and paces a mobile's movement actions: the mobile
 // tick (step ticks, standing, frames in place, idle fidgets), the UOP move action from the AnimationSequence groups,
 // and the mobtypes.txt queries the MUL action choice (GetMobileMulFrame) reads.
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
@@ -117,7 +117,7 @@ public class NameClassicMoveCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256,
             ENTRIES_CLASSIC_7_0_103),
     };
 

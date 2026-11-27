@@ -24,7 +24,7 @@
 //!
 //! No other facet size is hard-coded. The limits ([`validate_classic_size`]): block counts are i32 (signed shifts,
 //! `IMUL`), a block's file offset is `196 * block` in 32 bits with an unsigned bound check, and the MUL files are
-//! mapped whole into the 32-bit address space (2 GiB, 4 GiB with LARGEADDRESSAWARE: only 7.0.103 and later).
+//! mapped whole into the 32-bit address space (2 GiB, 4 GiB with LARGEADDRESSAWARE: only 7.0.102.3 and later).
 
 crate::eyre_imports!();
 
@@ -261,7 +261,7 @@ fn file_name_at(bytes: &[u8], offset: usize) -> Option<String> {
 }
 
 /// Every candidate file name table: runs of at least [`MIN_FILE_NAME_ENTRIES`] entries whose ordinals count from 1,
-/// plus a last entry with a name whose ordinal field is overwritten (UO Gold, 7.0.103).
+/// plus a last entry with a name whose ordinal field is overwritten (UO Gold, 7.0.102.3).
 pub fn locate_classic_file_names(bytes: &[u8], pe: &PeImage) -> Vec<ClassicFileNames> {
     let mut tables = Vec::new();
     for section in pe.sections.iter().filter(|section| section.is_data()) {

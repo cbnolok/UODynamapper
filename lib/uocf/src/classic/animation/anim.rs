@@ -18,7 +18,7 @@ use crate::utils::path::find_file_ignoring_case;
 
 pub const MAX_ANIM_FILES: u8 = 6; // anim, anim2, anim3, anim4, anim5
 const MAX_CLASSIC_ANIM_FRAME_DIMENSION: u16 = 2048;
-/// A frame offset of 0 is no frame: the client skips it (`UOClassicAnim::GetMulFrame`); 365 frames of the 7.0.103
+/// A frame offset of 0 is no frame: the client skips it (`UOClassicAnim::GetMulFrame`); 365 frames of the 7.0.102.3
 /// `anim.mul` have it.
 const MISSING_FRAME_OFFSET: usize = 0;
 const MAX_CLASSIC_ANIM_FRAME_PIXELS: usize =

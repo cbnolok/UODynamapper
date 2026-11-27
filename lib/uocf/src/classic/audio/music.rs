@@ -1,7 +1,7 @@
 //! Classic Client music: `Music/Digital/Config.txt`, the list of the MP3 files the music ids play, read strictly
 //! ([`MusicConfig`]), and the files it names.
 //!
-//! The client's reading (`DigitalMusic_LoadConfig` and `DigitalMusic_Play` in UO Gold and 7.0.103;
+//! The client's reading (`DigitalMusic_LoadConfig` and `DigitalMusic_Play` in UO Gold and 7.0.102.3;
 //! `docs/client_research/ghidra-audio/results/classic_audio.md`):
 //!
 //! - Lines are read with `fgets` of 512 bytes ([`CONFIG_MAX_LINE_BYTES`] before the line feed); trailing characters

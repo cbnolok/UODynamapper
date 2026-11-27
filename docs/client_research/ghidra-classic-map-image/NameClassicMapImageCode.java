@@ -1,4 +1,4 @@
-// Name the code of the 2024 Classic client (7.0.103.0 client.exe) that draws facet00.mul-facet05.mul, the world
+// Name the code of the 2024 Classic client (7.0.102.3 client.exe) that draws facet00.mul-facet05.mul, the world
 // map images of the map item gump (CCourseGump), and UO Gold's course gump, which shades multimap.rle instead.
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
 // address is verified with the stated checks first; a failed check is reported, not named.
@@ -80,7 +80,7 @@ public class NameClassicMapImageCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256, TAG_IMAGE,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256, TAG_IMAGE,
             TAG_IMAGE_COMMENT, ENTRIES_CLASSIC_7_0_103),
         new Build("gold_client.exe (UO Gold, no version resource, PE timestamp 2004-11-11)", GOLD_SHA256, TAG_IMAGE, TAG_IMAGE_COMMENT, ENTRIES_GOLD),
     };

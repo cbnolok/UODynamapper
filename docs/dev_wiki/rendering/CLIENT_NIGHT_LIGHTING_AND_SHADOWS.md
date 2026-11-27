@@ -135,7 +135,7 @@ The client draws its light sprites into B, lerped one after the other over the n
 
 ### Classic night lighting
 
-Classic dims as the Classic 2D client does (client 7.0.103.0, traced in Ghidra; the addresses are that client.exe's). The client keeps a darkness d per pixel of a light buffer, 0 to 31:
+Classic dims as the Classic 2D client does (client 7.0.102.3, traced in Ghidra; the addresses are that client.exe's). The client keeps a darkness d per pixel of a light buffer, 0 to 31:
 
 - **The level.** The 0x4F packet's handler (0x00465600) stores the server light level L (0x007893f4) when it is below 31. The buffer starts at `d = clamp(L - P, 0, 31)`, P the personal light level (0x007893f8; Dynamapper has no player, so 0).
 - **The lights.** Each light takes its light.mul value v off the darkness under it, `d = max(0, d - v)`, per channel on the coloured path (0x00448c80, the per-graphic colours 0x00448ea0 and 0x00448ff0) or on one value (0x00458a40, d clamped to 0..31).

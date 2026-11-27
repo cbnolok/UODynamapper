@@ -1,5 +1,5 @@
 // Name the audio code of the Enhanced Client (UOSA.exe), Kingdom Reborn (UOKR.exe), the Classic clients
-// (7.0.103.0 and UO Gold client.exe) and the Miles Sound System 7.2c files the EC ships (mss32.dll,
+// (7.0.102.3 and UO Gold client.exe) and the Miles Sound System 7.2c files the EC ships (mss32.dll,
 // miles/mssmp3.asi): the sound and music tables and their CSV readers, the play paths, the Miles file callbacks,
 // the Miles WAV/MP3 acceptance code, the KR audio_*.csv parsers, the Classic Sound.def parser and the Classic
 // digital music Config.txt reader.
@@ -293,9 +293,9 @@ public class NameAudioCode extends GhidraScript {
 
     private static final Entry[] ENTRIES_GOLD = {
         new Entry("004f7940", CLASSIC_AUDIO, "DigitalMusic_LoadConfig", false, "MUSIC\\DIGITAL\\CONFIG.TXT"
-            + " reader, as in 7.0.103", "string:MUSIC\\DIGITAL\\CONFIG.TXT"),
+            + " reader, as in 7.0.102.3", "string:MUSIC\\DIGITAL\\CONFIG.TXT"),
         new Entry("004f8860", CLASSIC_AUDIO, "DigitalMusic_Play", false, "loops when the flag is \"lop\" or"
-            + " \"loop\", as in 7.0.103", "string:MUSIC\\DIGITAL\\", "calls:005ce108", "calls:004f9920"),
+            + " \"loop\", as in 7.0.102.3", "string:MUSIC\\DIGITAL\\", "calls:005ce108", "calls:004f9920"),
     };
 
     private static final Entry[] ENTRIES_MSS32 = {
@@ -329,7 +329,7 @@ public class NameAudioCode extends GhidraScript {
     private static final Build[] BUILDS = {
         new Build("UOSA.exe 4.0.102.3 (Enhanced Client)", UOSA_SHA256, ENTRIES_UOSA),
         new Build("UOKR.exe 2.58.0.6 (Kingdom Reborn)", UOKR_SHA256, ENTRIES_UOKR),
-        new Build("classic 7.0.103.0 client.exe", CLASSIC_7_0_103_SHA256, ENTRIES_CLASSIC_7_0_103),
+        new Build("classic 7.0.102.3 client.exe", CLASSIC_7_0_103_SHA256, ENTRIES_CLASSIC_7_0_103),
         new Build("UO Gold client.exe (no version resource, PE timestamp 2004-11-11)", GOLD_SHA256, ENTRIES_GOLD),
         new Build("EC mss32.dll (Miles 7.2c)", MSS32_SHA256, ENTRIES_MSS32),
         new Build("EC miles/mssmp3.asi (no version resource, shipped with Miles 7.2c)", MSSMP3_SHA256, ENTRIES_MSSMP3),

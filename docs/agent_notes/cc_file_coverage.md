@@ -197,7 +197,7 @@ The 2024 file has 1,314 blocks, with 660 `coveredBy`, 498 `covers`, 472 `remove`
 `classic/graphics/art_write.rs`, measured on every record of the Classic (`artLegacyMUL.uop`), Classic fp, 7.0.20,
 Mondain's Legacy and UO Gold (`art.mul`) clients (`classic_art_encoding::every_shipped_art_record_encodes_back`):
 
-- The art id decides: below 0x4000 a land tile, else a static (item id + 0x4000). Confirmed in the 7.0.103
+- The art id decides: below 0x4000 a land tile, else a static (item id + 0x4000). Confirmed in the 7.0.102.3
   client: `UOClassicArt::GetArtRecord` 0x005d7c00 (`docs/client_research/ghidra-classic-art/`).
 - Land: 2,048 bytes, the 1,012 diamond colors then 24 bytes, zero in the Classic clients, old memory in 3,725
   Mondain's Legacy and UO Gold records. Color 0 is opaque black.

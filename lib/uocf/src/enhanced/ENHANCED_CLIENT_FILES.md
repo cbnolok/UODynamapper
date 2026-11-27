@@ -261,7 +261,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   7C ?? 5E B0 01`. At most one match is accepted; KR has none (resizing
   facet 0 or 1 of an EC build without one warns).
 - Classic 2D clients (`client.exe` Gold, Mondain's Legacy, 5.0.9.1 to
-  7.0.103 and the current one, `client_tc.exe`) keep their map sizes in
+  7.0.102.3 and the current one, `client_tc.exe`) keep their map sizes in
   48-byte records `{char* name, u32 width, u32 height, u32 wrap width, u32
   wrap height, u32 file ids [statics, staidx, mapdif, stadif, stadifi, map],
   u32 felucca_rules}` in `.rdata`: one 5-record copy up to 6.0.14.3, two
@@ -273,7 +273,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   name at +4, the ordinal index + 1 8 bytes before the end), shown decoded.
   Two more values derive from the sizes:
   - the startup copy of facet 0, `.data` `{wrap w, wrap h, width, height}`
-    (7.0.103 VA 0x74229c): `SetFacet` returns early while the facet stays 0,
+    (7.0.102.3 VA 0x74229c): `SetFacet` returns early while the facet stays 0,
     so Felucca uses these initial values; found from the call to the wrap
     width accessor followed by `MOV [moffs32],EAX`;
   - the wrap seam, two `CMP r32,0x1400; [MOV r32,m]; SETGE r8` near the

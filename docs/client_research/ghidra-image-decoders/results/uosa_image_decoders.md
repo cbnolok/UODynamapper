@@ -52,7 +52,7 @@ Confidence: **confirmed** (read in code and checked on data), **high** (read in 
 | `Hues.uop` atlas (`build/hues/hues.dds`) | literal `Build\Hues\Hues.dds` through `SpriteTextureFileLocation`. Type 1, but the path holds no WorldArt, Textures, TileArtLegacy or TileArtEnhanced, so it loads direct | `NiDDSReader` | DDS magic and size | magenta |
 | `Hues.uop` bitmaps (`data/definitions/hues/hue%04d.bmp`) | fixed loader: `UOHues::LoadHueTables` 0x004274a0 calls `UOHues::LoadHueBitmap` 0x004271f0 through `UOAssets::ReadFileFromPath`. No image converter is involved | UO's own parser | only `biBitCount == 32`, `biWidth == 256`, `biHeight == 2`. Pixels at `bfOffBits`. `bfType`, `bfSize`, `biSize`, planes and compression are not read. The blob length is not checked (2,048 bytes are read from `bfOffBits`) | header mismatch: logged, the hue gets no table |
 | KR `TileArtLegacy.uop` (`data/tileartlegacy/%d.tga`, UOKR.exe 2.58.0.6) | never opened (2026-11-16). `UOFacet::MountPackages` mounts a fixed list of 32 packages that ends with `LegacyTexture.uop` (xref 0x00609f0d) and holds no `TileArtLegacy.uop`; no KR exe names that package. Its 16,384 entries are the tileart records' source paths (16,383 TGA, 1 placeholder). The legacy art loads as in UOSA.exe: KR's `assetmap.xml` has the same type 22 line, and KR's `LegacyTexture.uop` holds `build/tileartlegacy/%08d.dds` for 16,346 of ids 0..16383 (16,877 entries). **Confirmed** for the mount list, **high** for the DDS route | - | - | - |
-| Classic `artLegacyMUL.uop` (`build/artlegacymul/%08i.tga`) | 7.0.103 client: `FUN_0056b4b0` formats `build/` + `art` + `legacymul/` + `%08i.tga` for file ids 6 (art) and 7 (gumpart), `.dat` for the others. The generic MUL index lookup `FUN_0056e000` / `FUN_0056b5d0` turns the name into {entry, size}, and the bytes go to the same decoders as `art.mul` records | raw MUL art | none: the `.tga` is only hashed | as for a missing MUL record |
+| Classic `artLegacyMUL.uop` (`build/artlegacymul/%08i.tga`) | 7.0.102.3 client: `FUN_0056b4b0` formats `build/` + `art` + `legacymul/` + `%08i.tga` for file ids 6 (art) and 7 (gumpart), `.dat` for the others. The generic MUL index lookup `FUN_0056e000` / `FUN_0056b5d0` turns the name into {entry, size}, and the bytes go to the same decoders as `art.mul` records | raw MUL art | none: the `.tga` is only hashed | as for a missing MUL record |
 
 ## The texture request chain
 
@@ -212,5 +212,5 @@ another extension.
   - UI textures: `MakeGumpTextureLocation` 0x00519700, `MakeManagedTextureLocation` 0x00519570,
     `UITexture_CreateSourceTexture` 0x00911470.
 
-The Classic 7.0.103 functions above (`FUN_0056b4b0`, `FUN_0056b5d0`, `FUN_0056e000`) were only read, not
+The Classic 7.0.102.3 functions above (`FUN_0056b4b0`, `FUN_0056b5d0`, `FUN_0056e000`) were only read, not
 renamed.

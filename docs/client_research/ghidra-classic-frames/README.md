@@ -24,7 +24,10 @@ In the Ghidra project `UOSA`, imported read-only, never executed, auto-analysed,
 
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
-| `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` (7.0.103.0) | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
+| `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` (7.0.102.3) | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
+
+The program name's 7.0.103.0 is wrong: this `client.exe`'s PE version resource is 7.0.102.3 (`VS_FIXEDFILEINFO` and the
+`StringFileInfo` strings). The name is kept because the scripts target it.
 
 The client folders are under `/mnt/dati/_proj_local/_uo_clients/`. Do not commit the binary or anything
 extracted from it.

@@ -4,7 +4,7 @@
 //! This module handles the loading and decoding of light sources from the Ultima Online
 //! client files. Light sources are used to create lighting effects in the game world.
 //!
-//! Each pixel is a signed intensity byte, -31 to 31 in the shipped files. The Classic client (7.0.103.0, the
+//! Each pixel is a signed intensity byte, -31 to 31 in the shipped files. The Classic client (7.0.102.3, the
 //! single-value path at 0x00458a40 and the white light at 0x00448c80) sign-extends it and takes it off the darkness:
 //! a positive value lights, a negative one darkens. [`LightMap::light`] keeps the values as stored.
 

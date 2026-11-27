@@ -106,7 +106,7 @@ default_preset = "classic.morning"
 #                    B = the night map (TerrainTexture.uop entry 21, in tex_aux_ec.uddp) with the lights lerped
 #                    over it. UOD-Painterly takes it at overlay_strength 0: the darkness without the map's blue,
 #                    its own grading colouring the night.
-#                    Classic: the Classic client's rule (client.exe 7.0.103: the 0x4F light level handler and the
+#                    Classic: the Classic client's rule (client.exe 7.0.102.3: the 0x4F light level handler and the
 #                    light buffer it multiplies the frame by), per channel on the 8-bit values:
 #                    out = scene * clamp((32 - light_level) / 32 + light.mul lights * 31 / 32), the lights adding
 #                    their light.mul value back up to the day's brightness. No night map, so no overlay keys.

@@ -4,7 +4,7 @@ How `UOSA.exe` (Enhanced Client) picks the decoder for an image it loads from a 
 (`Texture.uop`, `LegacyTexture.uop`, `TerrainTexture.uop`, `Interface.uop`, `EffectTexture.uop`,
 `SystemTextures.uop`, `Hues.uop`), and what each decoder checks in the header. Names the code of the texture
 request chain, the asset loader configuration, the `assetmap.xml` parsers and the Gamebryo image readers that
-were still unnamed. Also covers the Classic 7.0.103 client's `artLegacyMUL.uop` reads.
+were still unnamed. Also covers the Classic 7.0.102.3 client's `artLegacyMUL.uop` reads.
 
 Findings: [results/uosa_image_decoders.md](results/uosa_image_decoders.md) has the per-package table
 (decision point, decoder, header checks, failure behaviour, with addresses), the reader details, the asset

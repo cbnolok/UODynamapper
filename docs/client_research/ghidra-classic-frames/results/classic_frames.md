@@ -163,7 +163,7 @@ the frame time it had. **confirmed**. The package stores that fps on the UOP ani
 The package keeps the stand, walk and run actions of groups 0, 1 and 2 (`move_actions`, alternate off), so the
 renderer plays them; without a sequence entry it falls back to ClassicUO's fixed UOP actions.
 
-The move actions (stand/walk/run, `-` for a missing group) of the 300 UOP rows of `mobtypes.txt` in the 7.0.103.0
+The move actions (stand/walk/run, `-` for a missing group) of the 300 UOP rows of `mobtypes.txt` in the 7.0.102.3
 client folder, as packed (2026-11-21); 181 rows have no sequence entry, 176 of them EQUIPMENT:
 
 | Type | War | Peace | Mounted | Bodies |

@@ -45,7 +45,7 @@ Checked on the 2024 and 2026 ("fp") Classic and Enhanced Client folders.
 
 ## Classic frames: `anim*.mul` and `animationlegacyframe`
 
-The same frame codec in both, read by the 7.0.103.0 client in `UOClassicAnim::DrawFrameRle`, `GetMulFrame`,
+The same frame codec in both, read by the 7.0.102.3 client in `UOClassicAnim::DrawFrameRle`, `GetMulFrame`,
 `GetUopFrame` and `FindFrameEntry` (`docs/client_research/ghidra-classic-frames/`). **V** = read in
 the client code; **S** = holds on every shipped file checked; **I** = inferred.
 
@@ -53,7 +53,7 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
   `palette[index]` for every pixel of a run, bit 15 and a word of 0 included (0 draws black) (V): there is no
   transparent index or colour; transparency is "not in a run". The hued draws, the shadow and the hit test also
   take a colour-0 pixel as opaque (V, per path in the research results). uocf's decoders draw it opaque black
-  (ClassicUO draws it transparent); shipped `AnimationFrame2` and `3.uop` frames have such pixels (4,081 frames in the 7.0.103
+  (ClassicUO draws it transparent); shipped `AnimationFrame2` and `3.uop` frames have such pixels (4,081 frames in the 7.0.102.3
   `AnimationFrame2.uop`, 9,660 in CC fp, 10,362 in 7.0.20; also 44 in the 7.0.20 `animationframe4.uop`), no MUL
   frame does (S). Index 0 is never used by a pixel (S).
 - **Frame**: `i16` anchor x, `i16` anchor y, `u16` width, `u16` height (V); runs; the `u32` end marker
@@ -65,7 +65,7 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
 - **Shipped encoder** (S, every frame): runs row by row, left to right, each a maximal span of opaque pixels of
   one row (split at 0xFFF, which the offset range never reaches); no bytes after the marker.
 - **MUL entry** (`anim*.idx` 12-byte entries: lookup, length, extra 0): the palette, a `u32` frame count, `u32`
-  offsets relative to the end of the palette (0 = missing frame, skipped by the client (V); 365 in the 7.0.103
+  offsets relative to the end of the palette (0 = missing frame, skipped by the client (V); 365 in the 7.0.102.3
   `anim.mul`), the frames. Every shipped entry has ascending contiguous offsets from `4 + 4 * count`, no zero-size
   frame and no bytes after its last frame (S). The `.mul` files are not in index order and have gaps (S), so the
   writer appends changed entries at the end and points the index there. An entry is one direction of one action;
@@ -85,7 +85,7 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
   and the client's partial hue (0x8000) hues a 0 as a grey but draws 0x0001 as it is.
 - **Round trips** (`classic_animation_frame_encoding` real-file tests): indexed re-encode and RGBA with the
   entry's palette byte-identical on 100% of the entries, and the uocf decoder agrees on every frame:
-  7.0.103 CC `AnimationFrame1-4.uop` (9,610 entries, 470,415 frames), CC fp `AnimationFrame1-4, 6.uop` (10,724
+  7.0.102.3 CC `AnimationFrame1-4.uop` (9,610 entries, 470,415 frames), CC fp `AnimationFrame1-4, 6.uop` (10,724
   entries, 525,916 frames), 7.0.20 `animationframe1-4.uop` (7,307 entries, 357,566 frames); `anim*.mul` of Gold
   (`anim`-`anim4`), Mondain's Legacy (`anim`-`anim5`), 7.0.20 (`anim`-`anim5`), CC (`anim`-`anim5`) and CC fp
   (`anim`-`anim6`): every entry, 100%. A rebuilt palette keeps every pixel (no shipped entry has more than 255

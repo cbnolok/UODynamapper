@@ -7,7 +7,7 @@ check. **confirmed** = read in the code; **probable** = inferred from the code a
 
 The Classic client plays sounds with DirectSound directly; Miles is not involved.
 
-## Functions (7.0.103.0)
+## Functions (7.0.102.3)
 
 | Address | Name | Notes |
 |---|---|---|
@@ -31,7 +31,7 @@ UO Gold: `UOClassicAudio::DigitalMusic_LoadConfig` 0x004f7940, `UOClassicAudio::
 
 ### Music.def is not read
 
-**confirmed** by string absence: no `music.def` string exists in Classic 7.0.103, UO Gold, UOKR.exe or
+**confirmed** by string absence: no `music.def` string exists in Classic 7.0.102.3, UO Gold, UOKR.exe or
 UOSA.exe. `LoadDefFiles` loads only the def files listed above. Classic music is selected by
 `MUSIC\DIGITAL\CONFIG.TXT` (below).
 
@@ -125,7 +125,7 @@ holds 1655 entries; its highest id is 1666.
 
 ## Q5. Config.txt and `lop`
 
-**confirmed** in 7.0.103 and UO Gold.
+**confirmed** in 7.0.102.3 and UO Gold.
 
 ### `DigitalMusic_LoadConfig`
 
@@ -141,7 +141,7 @@ holds 1655 entries; its highest id is 1666.
 3. `.mp3` is appended when the last 4 characters hold no `.`.
 4. The extension must then be `mp3` (`_stricmp`), otherwise nothing plays.
 5. The music **loops when the flag is exactly `loop` or `lop`**: a `std::string` compare, case-sensitive.
-   The strings are `"lop"`/`"loop"`: 7.0.103 at 0x006b7c08, Gold at 0x005ce108/0x005ce10c.
+   The strings are `"lop"`/`"loop"`: 7.0.102.3 at 0x006b7c08, Gold at 0x005ce108/0x005ce10c.
 
 ### What the Config.txt parser should change
 

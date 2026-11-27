@@ -14,8 +14,11 @@ auto-analysed, then named with `--apply` and saved.
 
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
-| `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` (7.0.103.0) | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
+| `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` (7.0.102.3) | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
 | `/classic/gold_client.exe` | `Ultima Online Gold/client.exe` (no version resource) (2004-11-11) | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
+
+The program name's 7.0.103.0 is wrong: this `client.exe`'s PE version resource is 7.0.102.3 (`VS_FIXEDFILEINFO` and the
+`StringFileInfo` strings). The name is kept because the scripts target it.
 
 The other clients were searched for the file names only: ML, 7.0.20, `uotd.exe`, UOKR and UOSA. The client
 folders are under `/mnt/dati/_proj_local/_uo_clients/`. Do not commit the binaries or anything extracted from
@@ -51,7 +54,7 @@ report. The second `--apply` reported `changes: none` on both programs, and both
 |---|---|---|
 | UO Gold (2004), ML (2007) | not named, not shipped (ML ships a `facet00.dds` that no client names) | Gold: `multimap.rle` shading (confirmed) |
 | 7.0.20 | named, shipped (`facet00`-`facet05`) | the facet image (probable: same strings, not traced) |
-| 2024 (7.0.103.0), fp | named, shipped; fp and 2024 differ in `facet00` and `facet01` only | the facet image (confirmed) |
+| 2024 (7.0.102.3), fp | named, shipped; fp and 2024 differ in `facet00` and `facet01` only | the facet image (confirmed) |
 | UOKR, UOSA | `facetN.uop` names only; the 2D clients ship no `facetN.uop` | not traced |
 
 In 2024 the `facet0.uop`..`facet5x.uop` strings sit in a UOP package registration list. That list is probably

@@ -1,4 +1,4 @@
-// Name the code that reads the Classic def files (7.0.103.0 client.exe: art.def, body.def, bodyconv.def,
+// Name the code that reads the Classic def files (7.0.102.3 client.exe: art.def, body.def, bodyconv.def,
 // Equipconv.def; gump.def, anim1-4.def, texterr.def and corpse.def go through DefTable_Load, named by
 // NameAudioCode) and the Enhanced Client code (UOSA.exe) that loads an Interface XML document and drops it when
 // TinyXML reports an error.
@@ -88,7 +88,7 @@ public class NameClassicDefCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256, TAG_DEFS,
+        new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.102.3)", CLASSIC_7_0_103_SHA256, TAG_DEFS,
             TAG_DEFS_COMMENT, ENTRIES_CLASSIC_7_0_103),
         new Build("UOSA.exe 4.0.102.3 (Enhanced Client)", UOSA_SHA256, TAG_XML, TAG_XML_COMMENT, ENTRIES_UOSA),
     };

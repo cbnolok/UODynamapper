@@ -439,7 +439,7 @@ The Classic side is in [../../ghidra-classic-facets/results/classic_facets.md](.
   - `g_FacetDimensions` has no variant.
 - **Same server flag as Classic (traced on both sides).**
   - Classic 7.0.x copies bit 15 into `g_UseFacetVariants` and reads the second facet table. That table
-    holds map0x/1x (7.0.20), or map0x/1x/2x/5x with the matching staidx/statics (7.0.50, 7.0.103).
+    holds map0x/1x (7.0.20), or map0x/1x/2x/5x with the matching staidx/statics (7.0.50, 7.0.102.3).
   - Gold has no bit 15.
   - EC's set {0, 1, 2, 5} equals the 7.0.50+ Classic set.
 

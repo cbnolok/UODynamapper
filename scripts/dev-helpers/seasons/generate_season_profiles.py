@@ -6,7 +6,7 @@ Classic client's season tables.
 
 The tables are read from ClassicUO's SeasonManager.cs as it was at commit
 5889a2d6fb35ba5e7f06b7b1d6d70ad1ded30b01 (src/Game/Managers/SeasonManager.cs),
-when it still held the tables in code. They match the Classic client 7.0.103.0
+when it still held the tables in code. They match the Classic client 7.0.102.3
 entry for entry (README.md: where they are in the client and how they were
 compared). Later ClassicUO versions read a seasons.txt instead.
 
@@ -36,7 +36,7 @@ STATIC_FUNCTIONS = {"spring": "GetSpringGraphic", "fall": "GetFallGraphic", "des
 # The array of the winter land graphics. No other season changes land.
 WINTER_LAND_ARRAY = "_winterGraphic"
 # Where a season applies, as the areas of its profile. The Classic client switches the desolation statics only while
-# the player's x is below 0x1800, on every map (FUN_0045c5a0 in the Classic client 7.0.103.0); the profile applies to
+# the player's x is below 0x1800, on every map (FUN_0045c5a0 in the Classic client 7.0.102.3); the profile applies to
 # the statics west of that line. y2 0xFFFF reaches past the last row of every map.
 AREAS = {"desolation": ["apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF"]}
 AREA_NOTE = ("The Classic client switches these statics while the player stands west of x 0x1800, on every map; "
@@ -139,7 +139,7 @@ def profiles(source):
     statics = {season: switch_table(function_body(source, function), function)
                for season, function in STATIC_FUNCTIONS.items()}
     out = [BEGIN_MARKER, *comment(
-        f"From ClassicUO {SOURCE_PATH} at commit {SOURCE_COMMIT}, whose tables match the Classic client 7.0.103.0 "
+        f"From ClassicUO {SOURCE_PATH} at commit {SOURCE_COMMIT}, whose tables match the Classic client 7.0.102.3 "
         "entry for entry. Do not edit by hand: run the script again.")]
     for season in SEASONS:
         out += comment(NOTES[season])
