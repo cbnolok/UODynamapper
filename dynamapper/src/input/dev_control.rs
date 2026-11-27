@@ -15,8 +15,8 @@ use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::world::player::Player;
 use crate::world::maps::WorldGeoData;
 use crate::world::mobile_motion::{MobileMotion, DIRECTION_COUNT};
-use crate::render::mobiles::{MobileClipChoice, ceiling::MobileCeilingCache, draw::{MobileAppearance, MobileShownLayers},
-    pace::MobileCycleClock};
+use crate::render::mobiles::{MobileClipChoice, ceiling::MobileCeilingCache, draw::{MobileAppearance, MobileDrawProgress,
+    MobileHeldClip, MobileShownLayers}, pace::MobileCycleClock};
 use crate::prelude::*;
 use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
 use bevy_egui::EguiPreUpdateSet;
@@ -51,8 +51,9 @@ enum ControlCommand {
     /// collected again from the land loaded now: a correct cache reports the same `status.art.digest` after it.
     ReloadLand {},
     /// A mobile standing at a cell, facing 0 (north) to 7 (north-west), for tests of the mobiles' drawing: `body`, on
-    /// the mount body `mount` (0 for none). It shows on the map the player is on; `clear_mobiles` removes them all.
-    SpawnMobile { x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8 },
+    /// the mount body `mount` (0 for none), held `clip_secs` into its standing clip (0 when left out). It shows on the
+    /// map the player is on; `clear_mobiles` removes them all.
+    SpawnMobile { x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8, clip_secs: Option<f32> },
     ClearMobiles {},
 }
 
@@ -60,20 +61,24 @@ enum ControlCommand {
 #[derive(Component)]
 struct DevMobile;
 
-/// The components of a mobile `spawn_mobile` places: drawn as the player's mobile is, standing.
-fn dev_mobile(x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8) -> Result<impl Bundle, String> {
+/// The components of a mobile `spawn_mobile` places: drawn as the player's mobile is, standing, held at one point of
+/// its clip (its clock never runs), so every capture of it shows the same frame.
+fn dev_mobile(x: u16, y: u16, z: i8, body: u16, mount: u16, facing: u8, clip_secs: Option<f32>)
+    -> Result<impl Bundle, String> {
     if body == 0 {
         return Err("spawn_mobile needs a body".into());
     }
     if facing >= DIRECTION_COUNT {
         return Err(format!("spawn_mobile facing must be below {DIRECTION_COUNT}"));
     }
-    let mut motion = MobileMotion::default();
-    motion.facing = facing;
+    let clip_secs = clip_secs.unwrap_or(0.0);
+    if !(clip_secs.is_finite() && clip_secs >= 0.0) {
+        return Err("spawn_mobile clip_secs must be a finite number of seconds, 0 or more".into());
+    }
     let appearance = MobileAppearance { body: u32::from(body), mount_body: (mount != 0).then_some(u32::from(mount)) };
-    Ok((DevMobile, Transform::from_translation(UOVec4::new(x, y, z, 0).to_bevy_vec3_ignore_map()), motion, appearance,
-        MobileClipChoice::default(), MobileCycleClock::default(), MobileShownLayers::default(),
-        MobileCeilingCache::default()))
+    Ok((DevMobile, Transform::from_translation(UOVec4::new(x, y, z, 0).to_bevy_vec3_ignore_map()),
+        MobileMotion::standing(facing, clip_secs), appearance, MobileHeldClip, MobileClipChoice::default(),
+        MobileCycleClock::default(), MobileShownLayers::default(), MobileCeilingCache::default()))
 }
 
 /// The last accepted runtime switch (preset, sources or setting): readiness after a switch counts frames from it.
@@ -182,10 +187,11 @@ fn poll_control(
         Option<Res<crate::world::z_view::ZViewLimit>>,
         Option<Res<crate::world::caves::CavesRes>>,
         (Option<Res<crate::render::statics::static_batches::RenderStaticInstances>>,
-            Option<Res<crate::render::statics::static_batches::RenderStaticLandInstances>>)),
+            Option<Res<crate::render::statics::static_batches::RenderStaticLandInstances>>),
+        Option<Res<MobileDrawProgress>>),
 ) {
     let (static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
-        caves, static_instances) = render_state;
+        caves, static_instances, mobiles) = render_state;
     let (windows, inspect_text, land_chunks) = view;
     let (mut capture_pending, mut switch) = locals;
     if capture_pending.as_ref().is_some_and(|(path, started)|
@@ -291,6 +297,8 @@ fn poll_control(
                         }),
                         "player_cave": caves.as_ref().and_then(|caves| caves.player()).map(|cave| json!({
                             "floor_z": cave.floor_z(), "cells": cave.inside_cells()})),
+                        "mobiles": mobiles.as_ref().map(|progress| json!({"mobiles": progress.mobiles,
+                            "instances": progress.instances, "waiting_layers": progress.waiting_layers})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
                             "pointer": pointer.0.map(|position| [position.x, position.y])},
                         "cursor_inspect": inspect_text.single().ok().map(|text| &text.0),
@@ -336,8 +344,8 @@ fn poll_control(
                     });
                     Ok(switched(&mut switch, true, frame_rate.total_frames(), json!({"reload_land": true})))
                 }
-                ControlCommand::SpawnMobile { x, y, z, body, mount, facing } => {
-                    let entity = commands.spawn(dev_mobile(x, y, z, body, mount, facing)?).id();
+                ControlCommand::SpawnMobile { x, y, z, body, mount, facing, clip_secs } => {
+                    let entity = commands.spawn(dev_mobile(x, y, z, body, mount, facing, clip_secs)?).id();
                     Ok(json!({"ok": true, "spawned": entity.to_bits(), "position": [x, y, z]}))
                 }
                 ControlCommand::ClearMobiles {} => {
@@ -397,13 +405,35 @@ mod tests {
             r#"{"command":"clear_mobiles","all":true}"#] {
             assert!(serde_json::from_str::<ControlCommand>(value).is_err(), "{value}");
         }
-        let ControlCommand::SpawnMobile { x, y, z, body, mount, facing } = serde_json::from_str::<ControlCommand>(
+        let ControlCommand::SpawnMobile { x, y, z, body, mount, facing, clip_secs } = serde_json::from_str::<ControlCommand>(
             r#"{"command":"spawn_mobile","x":1409,"y":1596,"z":30,"body":12,"mount":0,"facing":3}"#).unwrap()
         else { panic!("spawn_mobile") };
-        assert_eq!((x, y, z, body, mount, facing), (1409, 1596, 30, 12, 0, 3));
-        assert!(dev_mobile(x, y, z, body, mount, facing).is_ok());
-        assert!(dev_mobile(x, y, z, 0, mount, facing).is_err());
-        assert!(dev_mobile(x, y, z, body, mount, DIRECTION_COUNT).is_err());
+        assert_eq!((x, y, z, body, mount, facing, clip_secs), (1409, 1596, 30, 12, 0, 3, None));
+        assert!(dev_mobile(x, y, z, body, mount, facing, clip_secs).is_ok());
+        assert!(dev_mobile(x, y, z, 0, mount, facing, clip_secs).is_err());
+        assert!(dev_mobile(x, y, z, body, mount, DIRECTION_COUNT, clip_secs).is_err());
+    }
+
+    /// A spawned mobile is held where `clip_secs` puts it, 0 by default: its clock never runs, so its frame stays.
+    #[test]
+    fn spawn_mobile_holds_the_clip_time_given_and_refuses_a_negative_or_infinite_one() {
+        let ControlCommand::SpawnMobile { clip_secs, .. } = serde_json::from_str::<ControlCommand>(
+            r#"{"command":"spawn_mobile","x":1,"y":2,"z":0,"body":9,"mount":0,"facing":0,"clip_secs":0.35}"#).unwrap()
+        else { panic!("spawn_mobile") };
+        assert_eq!(clip_secs, Some(0.35));
+        assert!(serde_json::from_str::<ControlCommand>(
+            r#"{"command":"spawn_mobile","x":1,"y":2,"z":0,"body":9,"mount":0,"facing":0,"clip_secs":"late"}"#).is_err());
+        for refused in [-0.1, f32::INFINITY, f32::NAN] {
+            assert!(dev_mobile(1, 2, 0, 9, 0, 0, Some(refused)).is_err(), "{refused}");
+        }
+        let mut world = World::new();
+        let held = world.spawn(dev_mobile(1, 2, 0, 9, 200, 5, clip_secs).unwrap()).id();
+        let default = world.spawn(dev_mobile(1, 2, 0, 9, 0, 5, None).unwrap()).id();
+        let motion = |entity: Entity| *world.get::<MobileMotion>(entity).unwrap();
+        assert_eq!((motion(held).facing, motion(held).clip_secs()), (5, 0.35));
+        assert_eq!(motion(default).clip_secs(), 0.0);
+        assert!(world.get::<MobileHeldClip>(held).is_some());
+        assert_eq!(world.get::<MobileAppearance>(held).unwrap().mount_body, Some(200));
     }
 
     #[test]

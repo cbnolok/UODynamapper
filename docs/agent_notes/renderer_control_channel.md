@@ -209,10 +209,24 @@ For draw-order checks of other bodies at chosen cells (`input/dev_control.rs`,
   source, sharpening and upscale settings. The reply gives its entity bits. It
   carries no map: it shows on whatever map the player is on, so spawn it after
   the teleport. A body of 0 or a facing past 7 is refused.
+  Optional `"clip_secs": 0.35` holds it that many seconds into its standing clip
+  (0 when left out; negative or infinite is refused). A spawned mobile is held
+  (`MobileHeldClip`): its clock never runs, so every capture shows one frame, and
+  each layer shows its 2x frames as soon as they are ready, where a playing body
+  switches only as its sequence starts over. A mobile kept across a source or
+  preset switch keeps the cycle and 2x choices it made before: clear and spawn
+  again for a capture that must match a fresh launch.
 - `{"command":"clear_mobiles"}`: removes every spawned mobile.
 
 At most `MAX_MOBILE_INSTANCES` frames (64; a mount and its rider are two, an
 upscaled frame wider than a page one per part) are drawn at once, the player's
-first when it is drawn; frames past the cap are left out. A spawned mobile has no
-status entry: `wait-ready` does not wait for its clips, so let a frame or two pass
-and discard the first capture, as after a switch.
+first when it is drawn; frames past the cap are left out.
+
+`status.mobiles` (`MobileDrawProgress`, 2026-11-27) reports the last draw:
+`mobiles` (those with an appearance, the player's when shown), `instances` (the
+frames drawn) and `waiting_layers` (layers whose clip still decodes, whose
+in-between sequence is still to come, or that want 2x frames not shown yet).
+`wait-ready` waits for `waiting_layers` 0 and keeps `mobiles` in its stable
+fingerprint. The status can be a frame old: after a spawn, wait for
+`total_frames` to move on and for `mobiles` to count the spawned ones, then
+discard the first capture, as the regression harness does (`place_mobiles`).

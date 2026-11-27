@@ -101,6 +101,11 @@ impl Default for MobileMotion {
 }
 
 impl MobileMotion {
+    /// A body standing facing `facing`, `clip_secs` into its standing clip.
+    pub fn standing(facing: u8, clip_secs: f32) -> Self {
+        Self { facing, clip_secs, ..Self::default() }
+    }
+
     /// A step by `delta`, running or walking, mounted or not, `speed` times faster than the client steps.
     pub fn step(&mut self, delta: IVec2, run: bool, mounted: bool, speed: f32) {
         if let Some(facing) = direction_of_step(delta) {

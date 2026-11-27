@@ -29,6 +29,12 @@ def switch_settled(status):
             and (applied.get('art') == settings.get('art_texture_source') or not settings.get('enable_statics')))
 
 
+def mobiles_settled(status):
+    """Whether every drawn mobile shows its final frames: no layer waits for its clip, in-betweens or 2x frames; true
+    for a build without status.mobiles."""
+    return not (status.get('mobiles') or {}).get('waiting_layers')
+
+
 def scene_fingerprint(status):
     """What must hold still across the stable snapshots: the scene's collections, light buffers and switch."""
     art = status.get('art') or {}
@@ -38,7 +44,8 @@ def scene_fingerprint(status):
             (status.get('static_lights') or {}).get('instances'), (status.get('static_lights') or {}).get('digest'),
             (status.get('client_light_sprites') or {}).get('instances'),
             (status.get('client_light_sprites') or {}).get('digest'),
-            json.dumps(status.get('z_view'), sort_keys=True), control.get('switch_serial'))
+            json.dumps(status.get('z_view'), sort_keys=True), control.get('switch_serial'),
+            json.dumps(status.get('mobiles'), sort_keys=True))
 
 
 def request(endpoint, command, timeout):
@@ -77,7 +84,7 @@ def wait_for_input(endpoint, timeout):
 
 
 def wait_for_scene(endpoint, timeout, position=None):
-    """Wait for matching terrain and art state, and a settled runtime switch, across three stable snapshots."""
+    """Wait for matching terrain, art and mobiles, and a settled runtime switch, across three stable snapshots."""
     deadline = time.monotonic() + timeout
     stable = 0
     previous = None
@@ -97,7 +104,7 @@ def wait_for_scene(endpoint, timeout, position=None):
                 and art['map_id'] == position[3] and art['visible_chunks'] > 0
                 and art['atlas_misses'] == 0 and art['pending_pages'] == 0
                 # The chunks still building off the frame; a binary from before those builds reports none.
-                and art.get('pending_chunk_builds', 0) == 0 and switch_settled(status)):
+                and art.get('pending_chunk_builds', 0) == 0 and switch_settled(status) and mobiles_settled(status)):
             fingerprint = scene_fingerprint(status)
             stable = stable + 1 if fingerprint == previous else 1
             previous = fingerprint
@@ -184,6 +191,7 @@ def main():
     spawn.add_argument('--z', type=int, default=0)
     spawn.add_argument('--mount', type=int, default=0, help='the mount body, 0 for none')
     spawn.add_argument('--facing', type=int, default=0, help='0 north, clockwise to 7 north-west')
+    spawn.add_argument('--clip-secs', type=float, help='the time into its standing clip it is held at (default 0)')
     actions.add_parser('clear-mobiles', help='Remove every mobile spawn-mobile placed')
     setting = actions.add_parser('set', help='Set one whitelisted setting, for example set show_only_player_floor true')
     setting.add_argument('key')
@@ -211,6 +219,8 @@ def main():
     if args.command == 'spawn-mobile':
         command.update(command='spawn_mobile', x=args.x, y=args.y, z=args.z, body=args.body, mount=args.mount,
                        facing=args.facing)
+        if args.clip_secs is not None:
+            command['clip_secs'] = args.clip_secs
     if args.command == 'clear-mobiles':
         command['command'] = 'clear_mobiles'
     if args.command == 'preset':

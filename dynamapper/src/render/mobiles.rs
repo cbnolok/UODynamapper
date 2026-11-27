@@ -94,6 +94,7 @@ impl Plugin for MobileSpritesPlugin {
         log_plugin_build(self);
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
+            .init_resource::<draw::MobileDrawProgress>()
             .init_resource::<rife_in_betweens::MobileInBetweens>()
             .insert_resource(upscales::MobileUpscales::new(upscales::spec::MobileUpscaleSpec::load()))
             .init_resource::<upscales::MobileUpscaleGate>()

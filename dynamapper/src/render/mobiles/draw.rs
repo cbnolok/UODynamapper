@@ -213,6 +213,22 @@ pub struct MobileShownLayers {
     upscales: MobileUpscaleSwitches,
 }
 
+/// A mobile held at one point of its clip, whose clock never runs: the control channel's test mobiles
+/// (`spawn_mobile`). A held clip never starts over, so each of its layers shows its 2x frames as soon as they are
+/// ready, where a playing one switches only as its sequence starts over (`UpscaleSwitch::next`).
+#[derive(Component, Debug, Default)]
+pub struct MobileHeldClip;
+
+/// How far the mobiles' drawing has come, for the control channel's readiness (`status.mobiles`): the mobiles with an
+/// appearance, the frames drawn, and the layers still waiting for their clip to decode, for their in-between sequence
+/// or for the 2x frames they want.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MobileDrawProgress {
+    pub mobiles: u32,
+    pub instances: u32,
+    pub waiting_layers: u32,
+}
+
 /// The layers to draw of `wanted`: while one of their clips is `loading`, the layers shown before if theirs are all
 /// `resident`; else `wanted`, which become the layers shown.
 fn layers_to_draw(wanted: Vec<DrawnFrame>, shown: &mut MobileShownLayers, loading: impl Fn(ClipKey) -> bool,
@@ -261,7 +277,7 @@ pub fn sys_draw_mobiles(
     mut commands: Commands,
     time: Res<Time>,
     mut mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice, &mut MobileCycleClock,
-        &mut MobileShownLayers, &MobileCeilingCache)>,
+        &mut MobileShownLayers, &MobileCeilingCache, Has<MobileHeldClip>)>,
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
@@ -273,8 +289,8 @@ pub fn sys_draw_mobiles(
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
     settings: Res<Settings>,
-    (scene_state, caves, mut sharpening, z_view): (Res<SceneStateData>, Res<CavesRes>, ResMut<MobileSharpening>,
-        Res<ZViewLimit>),
+    (scene_state, caves, mut sharpening, z_view, mut progress): (Res<SceneStateData>, Res<CavesRes>,
+        ResMut<MobileSharpening>, Res<ZViewLimit>, ResMut<MobileDrawProgress>),
     static_lights: Option<Res<RenderStaticLightInstances>>,
 ) {
     let (Some(mut draw_assets), Some(mut atlas)) = (draw_assets, atlas) else { return };
@@ -294,7 +310,9 @@ pub fn sys_draw_mobiles(
     }
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
-    for (transform, motion, appearance, choice, mut clock, mut shown, ceiling) in mobiles_q.iter_mut() {
+    let (mut mobiles, mut waiting_layers) = (0, 0);
+    for (transform, motion, appearance, choice, mut clock, mut shown, ceiling, held) in mobiles_q.iter_mut() {
+        mobiles += 1;
         let (Some(source), Some(actions)) = (choice.source, choice.actions) else { continue };
         let mut frames = Vec::with_capacity(2);
         if let (Some(mount_body), Some(mount_action)) = (appearance.mount_body, actions.mount_action) {
@@ -312,6 +330,8 @@ pub fn sys_draw_mobiles(
         for drawn in &frames {
             clips.get_or_load(drawn.key, &packages.0);
         }
+        // A layer whose clip decodes is still to come, even while the layers shown before stand in for it.
+        waiting_layers += frames.iter().filter(|drawn| clips.loading(drawn.key)).count() as u32;
         let frames = layers_to_draw(frames, &mut shown, |key| clips.loading(key), |key| clips.resident(key).is_some());
         let cave_flags = mobile_cave_flags(&caves, transform.translation);
         // The roof or upper floor over it, while the z-view's cut draws it.
@@ -354,9 +374,11 @@ pub fn sys_draw_mobiles(
                 upscales.want(key, drawn.key, UpscalePriority { distance, area }, now);
             }
             let upscaled = upscales.ready(&key);
-            let switch = UpscaleSwitch::next(shown.upscales.get(drawn.tie_level), drawn.tie_level, key,
-                clip.frames.len(), pick.index, wanted, upscaled.is_some());
+            let last = shown.upscales.get(drawn.tie_level).filter(|_| !held);
+            let switch = UpscaleSwitch::next(last, drawn.tie_level, key, clip.frames.len(), pick.index, wanted,
+                upscaled.is_some());
             switches.push(switch);
+            waiting_layers += u32::from(rife_waits || (wanted && !switch.upscaled));
             if wanted && let Some(parts) = upscaled {
                 parts.iter().for_each(|part| part.touch_pages(&mut atlas, now));
             }
@@ -382,6 +404,7 @@ pub fn sys_draw_mobiles(
     }
 
     let count = instances.len() as u32;
+    progress.set_if_neq(MobileDrawProgress { mobiles, instances: count, waiting_layers });
     if count > 0 {
         let _ = storage_buffers.insert(&draw_assets.instances, ShaderBuffer::from(instances));
     }
