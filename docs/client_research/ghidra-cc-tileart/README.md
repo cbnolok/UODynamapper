@@ -2,8 +2,9 @@
 
 This study asks what the Classic Client reads from `tileart.uop` and `string_dictionary.uop`, and whether any of it
 replaces or adds to `tiledata.mul`. The question is about Classic art packages: `tex_art_cc`
-(`lib/udd-conv/src/textures/tex_art_cc.rs`, `select_tex_art_cc_metadata_source`) falls back to tileart.uop slot
-aliases and draw offsets when the source has no tiledata.mul.
+(`lib/udd-conv/src/textures/tex_art_cc.rs`) fell back to tileart.uop slot aliases and draw offsets when the source
+had no tiledata.mul. Following this study the fallback is gone (the user, 2026-11-27): the packer requires the
+tiledata.mul of the Classic folder the art comes from (`find_tex_art_cc_tiledata`).
 
 **Answer.** For Classic art, tileart.uop is redundant whenever tiledata.mul is present:
 

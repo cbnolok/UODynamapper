@@ -14,7 +14,7 @@ A typical map setup includes `tilemeta.uddp`, `tex_art_cc.uddp`, `tex_land_cc.ud
 
 Common commands:
 
-- `pack-art`: pack Classic Client art from MUL or UOP sources into `tex_art_cc.uddp`.
+- `pack-art`: pack Classic Client art from MUL or UOP sources into `tex_art_cc.uddp`. The Classic folder the art comes from must hold `tiledata.mul`; `tileart.uop` is not read.
 - `pack-texmaps`: pack Classic Client land textures into `tex_land_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`, each with its Kingdom Reborn section (see below).
 - `make-kr-delta`: write `kr_delta.uddp`, the Kingdom Reborn client files the packers read as a delta over the Enhanced Client (see below).

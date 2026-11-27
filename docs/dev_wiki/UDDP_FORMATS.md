@@ -291,7 +291,7 @@ Current package policy:
 
 `upscale_factor`, `upscale_algorithm`, and draw offsets are intentionally stored per slot because art packages may mix native, 2x, 3x, and 4x assets and aliased art ids may share pixels while keeping distinct placement. Missing or non-upscaled slots use factor `1` and algorithm `0`.
 
-`tex_art_cc.uddp` may include tileart-derived owner aliases when built with EC metadata available. Those alias slots reuse the packed Classic source rectangle selected by tileart `cc_texture_id`, but keep the owning item id and its own `draw_offset_x/draw_offset_y`. Runtime CC placement resolves the owning item slot first and falls back to the raw Classic texture slot only for packages packed without EC metadata, which have no aliases (optional by design).
+`tex_art_cc.uddp` holds one slot per Classic art id and no aliases. It is packed against the `tiledata.mul` of the Classic client folder the art comes from, which the packer requires (a folder without it is an error naming the folder): the Classic client takes every art id, flag and height from tiledata.mul and never reads `tileart.uop` for art ([ghidra-cc-tileart](../client_research/ghidra-cc-tileart/README.md)). The draw offsets are computed: x is minus half the art width, y is 0.
 
 ### 2.3 Gump Atlas Metadata
 

@@ -2,6 +2,7 @@ use crate::app::UddConvApp;
 use crate::logic::tasks::{
     cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, effects_ec_source, hues_source,
     paperdoll_ec_sources, single_gump_pixel_format, EcGumpsShare, HuesSource, PAPERDOLL_EC_SOURCE_NAMES,
+    TEX_ART_CC_SOURCE_PREFERENCE,
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, ComputeDevice, GumpsEcSharing, HueRamp,
@@ -19,7 +20,7 @@ use udd_conv::gump_atlas::{
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::single_gumps::{GumpPixelFormat, PAPERDOLL_BODY_GUMP_BY_BODY};
 use udd_conv::source_paths::gather_source_dirs;
-use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
+use udd_conv::tex_art_cc::resolve_tex_art_cc_tiledata;
 use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
@@ -1191,12 +1192,12 @@ fn draw_gump_upscale_cell(ui: &mut egui::Ui, label: &str, id: &str, filter: &mut
 fn tex_art_cc_metadata_source_label(app: &UddConvApp) -> String {
     let sources = gather_source_dirs(app.settings.cc_dir.as_ref(), app.settings.ec_dir.as_ref());
     if sources.is_empty() {
-        return "Draw offsets: select a Classic or Enhanced source directory".to_string();
+        return "Tile data: select a Classic or Enhanced source directory".to_string();
     }
 
-    match select_tex_art_cc_metadata_source(&sources) {
-        Ok(source) => format!("Draw offsets: {}", source.path.display()),
-        Err(_) => "Draw offsets: missing tiledata.mul or tileart.uop".to_string(),
+    match resolve_tex_art_cc_tiledata(&sources, TEX_ART_CC_SOURCE_PREFERENCE) {
+        Ok(path) => format!("Tile data: {}", path.display()),
+        Err(error) => format!("Tile data: {error}"),
     }
 }
 

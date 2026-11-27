@@ -331,6 +331,9 @@ appearance: the male whips 41610/41611/41618/41619 take 1490/1494 instead of 148
   - 23 slots would show another item's art.
   - 3,216 offsets describe textures of another size.
   - About 1,800 offsets are Enhanced-authored adjustments that Classic does not apply.
+
+  Done 2026-11-27 (the user's decision): the fallback is removed, and a Classic folder without tiledata.mul is an
+  error naming the folder. A Classic art package of the plain Classic folder is byte-identical to before.
 - **tileart.uop still matters for non-art Classic packages**, because tiledata.mul does not have this data:
   - sitting: words 0, 3, 4 and 5
   - the paperdoll appearance: for UOP bodies (666, 667, 1253) always, for MUL-frame bodies on the 14 items with a

@@ -866,6 +866,10 @@ fn plural_packages(count: usize) -> String {
     if count == 1 { "1 package".to_string() } else { format!("{count} packages") }
 }
 
+/// Which Classic art the Classic Art card packs when a folder has both: `artLegacyMUL.uop` first.
+pub(crate) const TEX_ART_CC_SOURCE_PREFERENCE: udd_conv::classic_sources::SourceFormatPreference =
+    udd_conv::classic_sources::SourceFormatPreference::Uop;
+
 fn pack_tex_art_cc(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
     let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No source dirs"); }
@@ -898,7 +902,7 @@ fn pack_tex_art_cc(settings: &AppSettings, output: &Path, progress: &AssetProgre
             },
             bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_tex_art_cc),
             bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
-            source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
+            source_preference: TEX_ART_CC_SOURCE_PREFERENCE,
         },
         &classic_patch_options(settings),
         |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
