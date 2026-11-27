@@ -85,6 +85,11 @@ MIN_ZOOM, MAX_ZOOM = 0.25, 50.0  # RenderZoom bounds in render/view/camera.rs.
 MAX_PIXEL_THRESHOLD = 255
 MAX_CHANGED_PCT = 100.0
 NAME_PATTERN = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
+# A fixture's test mobiles (spawn_mobile): the body and mount ids are u16, the facings 0 (north) to 7 (north-west); a
+# few per view, well under the instances the mobiles' draw holds (MAX_MOBILE_INSTANCES).
+MAX_FIXTURE_MOBILES = 8
+MAX_BODY = 0xFFFF
+FACINGS = 8
 
 # A preview window two thirds of the screen or larger comes up maximized: keep at or under this width.
 MAX_WINDOW_WIDTH = 1900
@@ -101,7 +106,8 @@ LIVE_CHUNK_SECONDS = 60
 # overrides are all here shares the switching launches; any other override needs launches of its own.
 LIVE_SETTINGS = {
     'world_rendering': ('show_only_player_floor', 'player_floor_building_only', 'caves', 'cave_surroundings',
-                        'enable_statics', 'enable_static_lights', 'show_hidden_multi_parts'),
+                        'enable_statics', 'enable_static_lights', 'show_hidden_multi_parts',
+                        'mobile_in_between_frames', 'mobile_upscale'),
     'graphics': ('cc_terrain_transitions', 'ec_terrain_transitions'),
     'style': ('light_cover', 'player_floor_rule', 'land_texture_variation'),
 }
@@ -120,6 +126,10 @@ SCENE_STABLE_SNAPSHOTS = 3
 SCENE_POLL_SECONDS = 0.1
 # After the scene reports ready: light-cover rechecks and uploads that follow the land.
 SETTLE_SECONDS = 1.0
+# After spawning a fixture's mobiles: the draw frames that must pass before status.mobiles counts them, and how long
+# their clips, in-betweens and 2x frames may take.
+MOBILE_DRAW_FRAMES = 3
+MOBILE_TIMEOUT_SECONDS = 120
 # The zoom the app reports is an f32: compare it to the fixture's with this slack.
 ZOOM_TOLERANCE = 1e-4
 CAPTURE_TIMEOUT_SECONDS = 60
@@ -195,23 +205,31 @@ class Fixture:
     tolerance: Tolerance
     settings: dict
     reference: dict = None
+    mobiles: tuple = ()    # dicts of spawn_mobile's x, y, z, body, mount, facing and clip_secs
 
     def view(self):
-        """Everything a capture of this fixture depends on: a baseline taken with another view is stale."""
-        return {'map': self.map, 'x': self.x, 'y': self.y, 'z': self.z, 'zoom': self.zoom, 'camera': self.camera,
+        """Everything a capture of this fixture depends on: a baseline taken with another view is stale. The mobiles
+        count only when there are any, so the views without keep their hashes."""
+        view = {'map': self.map, 'x': self.x, 'y': self.y, 'z': self.z, 'zoom': self.zoom, 'camera': self.camera,
                 'settings': self.settings}
+        if self.mobiles:
+            view['mobiles'] = list(self.mobiles)
+        return view
 
     def view_hash(self):
         return hashlib.sha256(json.dumps(self.view(), sort_keys=True).encode()).hexdigest()[:16]
 
 
 FIXTURE_REQUIRED = ('name', 'guards', 'tier', 'map', 'x', 'y', 'z')
-FIXTURE_OPTIONAL = ('tags', 'times', 'styles', 'sources', 'zoom', 'camera', 'tolerance', 'settings', 'reference')
+FIXTURE_OPTIONAL = ('tags', 'times', 'styles', 'sources', 'zoom', 'camera', 'tolerance', 'settings', 'reference',
+                    'mobiles')
 DEFAULTS_REQUIRED = ('times', 'styles', 'zoom', 'camera', 'tolerance', 'sources', 'quick_sources')
 TOLERANCE_KEYS = ('pixel_threshold', 'changed_pct')
 SETTINGS_KEYS = ('world_rendering', 'graphics', 'style', 'preset')
 REFERENCE_REQUIRED = ('path', 'note')
 REFERENCE_OPTIONAL = ('crop',)
+MOBILE_REQUIRED = ('x', 'y', 'z', 'body', 'facing')
+MOBILE_OPTIONAL = ('mount', 'clip_secs')
 
 
 class FixtureFile:
@@ -281,6 +299,28 @@ class FixtureFile:
             raise self.error(line, f'{where}: tolerance out of range (pixel_threshold 0..{MAX_PIXEL_THRESHOLD - 1}, '
                                    f'changed_pct 0..{MAX_CHANGED_PCT})')
         return Tolerance(threshold, float(share))
+
+    def mobile_list(self, value, where, line):
+        """The fixture's test mobiles, each as spawn_mobile takes it (mount 0 and clip_secs 0 when left out)."""
+        self.typed(value, (list,), where, line, 'mobiles')
+        if not 0 < len(value) <= MAX_FIXTURE_MOBILES:
+            raise self.error(line, f'{where}: "mobiles" lists 1..{MAX_FIXTURE_MOBILES} mobiles')
+        out = []
+        for index, mobile in enumerate(value):
+            at = f'{where}.mobiles[{index}]'
+            self.typed(mobile, (dict,), where, line, f'mobiles[{index}]')
+            self.check_keys(mobile, MOBILE_REQUIRED, MOBILE_OPTIONAL, at, line)
+            x, y, z, body, facing = (self.typed(mobile[key], (int,), at, line, key) for key in MOBILE_REQUIRED)
+            mount = self.typed(mobile.get('mount', 0), (int,), at, line, 'mount')
+            clip_secs = float(self.typed(mobile.get('clip_secs', 0.0), (int, float), at, line, 'clip_secs'))
+            if not (0 <= x < MAX_COORD and 0 <= y < MAX_COORD and MIN_Z <= z <= MAX_Z and 0 < body <= MAX_BODY
+                    and 0 <= mount <= MAX_BODY and 0 <= facing < FACINGS and 0 <= clip_secs < float('inf')):
+                raise self.error(line, f'{at}: out of range (x and y 0..{MAX_COORD - 1}, z {MIN_Z}..{MAX_Z}, body '
+                                       f'1..{MAX_BODY}, mount 0..{MAX_BODY}, facing 0..{FACINGS - 1}, clip_secs 0 '
+                                       f'or more)')
+            out.append({'x': x, 'y': y, 'z': z, 'body': body, 'mount': mount, 'facing': facing,
+                        'clip_secs': clip_secs})
+        return tuple(out)
 
     def per_style_sources(self, value, where, line, key):
         self.typed(value, (dict,), where, line, key)
@@ -378,7 +418,8 @@ def load_fixtures(path=FIXTURES, settings_files=None):
             tolerance=reader.tolerance(table['tolerance'], where, line) if 'tolerance' in table
             else base['tolerance'],
             settings={group: dict(sorted(values.items())) for group, values in sorted(settings.items())},
-            reference=reference)
+            reference=reference,
+            mobiles=reader.mobile_list(table['mobiles'], where, line) if 'mobiles' in table else ())
         if settings_files is not None:
             try:
                 settings_files.check_overrides(fixture)
@@ -984,10 +1025,11 @@ class Launch:
             self.request({'command': 'teleport', 'x': f.x, 'y': f.y, 'z': f.z, 'map': f.map})
         self.position = target
         self.wait_ready(capture)
+        placed = self.place_mobiles(capture)
         time.sleep(SETTLE_SECONDS)
         status = self.wait_ready(capture)
-        if switched:
-            # As after a launch: the first frame after a switch may be stale.
+        if switched or placed:
+            # As after a launch: the first frame after a switch, or with new mobiles, may be stale.
             self.switches += 1
             self.capture_png(self.staging / f'0_discard.{self.switches}.png')
         path, attempts, stable, difference = self.capture_stable(capture)
@@ -1001,7 +1043,7 @@ class Launch:
             'problems': problems, 'seconds': round(time.monotonic() - began, 2),
             'reload_land': reload_check,
             'status': {key: status.get(key) for key in ('position', 'art', 'z_view', 'static_lights',
-                                                         'client_light_sprites')}
+                                                         'client_light_sprites', 'mobiles')}
             | {'render': {key: (status.get('render') or {}).get(key) for key in (
                 'preset', 'light_cover', 'light_cover_rule', 'player_floor_rule',
                 'land_texture_variation', 'local_lights')},
@@ -1011,10 +1053,36 @@ class Launch:
         log(f'  {capture.key}  {result["seconds"]}s{flag}')
         return result
 
+    def place_mobiles(self, capture):
+        """Clear the mobiles placed before and spawn the fixture's, each held at its clip time, then wait until they
+        draw their final frames. Every capture spawns them afresh: a mobile kept across a source or preset switch
+        would keep the cycle and 2x choices of the frames it drew before. Returns whether anything changed."""
+        mobiles = capture.fixture.mobiles
+        if not (mobiles or self.spawned):
+            return False
+        self.request({'command': 'clear_mobiles'})
+        for mobile in mobiles:
+            self.request({'command': 'spawn_mobile'} | mobile)
+        self.spawned = bool(mobiles)
+        first = self.request({'command': 'status'}).get('total_frames', 0)
+        deadline = time.monotonic() + MOBILE_TIMEOUT_SECONDS
+        while True:
+            status = self.request({'command': 'status'})
+            drawn = status.get('mobiles')
+            if drawn is None:
+                raise HarnessError(f'{capture.key}: the binary reports no status.mobiles; it cannot wait for mobiles')
+            if (status.get('total_frames', 0) - first >= MOBILE_DRAW_FRAMES and drawn['mobiles'] == len(mobiles)
+                    and drawn['instances'] >= len(mobiles) and not drawn['waiting_layers']):
+                return True
+            if time.monotonic() > deadline:
+                raise HarnessError(f'{capture.key}: the mobiles never drew their final frames: {drawn}')
+            time.sleep(SCENE_POLL_SECONDS)
+
     def forget_view(self):
         """After a failed view the app's state is unknown: the next view sends every switch, and its teleport."""
         self.state = {'sources': None, 'preset': None, 'settings': {}, 'zoom': None, 'position': None}
         self.position = []
+        self.spawned = True
 
     def run(self):
         """Capture as many of the launch's captures as fit the budget; returns (results, the ones left over).
@@ -1040,6 +1108,7 @@ class Launch:
                 # The startup settings are the first capture's (write_run_settings).
                 self.state = live_state(self.ctx.files, first)
                 self.switches = 0
+                self.spawned = False
                 for index, capture in enumerate(self.captures):
                     if time.monotonic() - self.started > budget:
                         left = self.captures[index:]
@@ -1899,6 +1968,65 @@ settings = { preset = { "effects.light_decal_intensity" = 0.5 } }
                                             '[[fixture]]\nname = "two-view"\nsettings = { style = { foo = 1 } }'),
                              'settings.style', 'player_floor_rule')
         self.assert_rejected(SAMPLE.replace('x = 30', 'x = 30 30'), 'fixtures.toml')
+
+    def test_mobiles_read_strictly_and_count_in_the_view_only_when_listed(self):
+        mobiles = ('mobiles = [{ x = 31, y = 40, z = 0, body = 400, mount = 200, facing = 3 },\n'
+                   '           { x = 32, y = 41, z = 0, body = 9, facing = 0, clip_secs = 0.5 }]\n')
+        fixtures = load_fixtures(self.write(SAMPLE.replace('sources = ["ec/cc"]', f'sources = ["ec/cc"]\n{mobiles}')),
+                                 self.files)
+        plain = load_fixtures(self.write(SAMPLE), self.files)
+        self.assertEqual(fixtures[1].mobiles, (
+            {'x': 31, 'y': 40, 'z': 0, 'body': 400, 'mount': 200, 'facing': 3, 'clip_secs': 0.0},
+            {'x': 32, 'y': 41, 'z': 0, 'body': 9, 'mount': 0, 'facing': 0, 'clip_secs': 0.5}))
+        self.assertEqual(plain[1].mobiles, ())
+        self.assertNotIn('mobiles', plain[1].view())
+        self.assertNotEqual(fixtures[1].view_hash(), plain[1].view_hash())
+        self.assertEqual(fixtures[0].view_hash(), plain[0].view_hash())
+        with_mobiles = SAMPLE.replace('sources = ["ec/cc"]', 'sources = ["ec/cc"]\nmobiles = [{ MOBILE }]')
+        for mobile, words in (('x = 1, y = 2, z = 0, body = 9', ('missing required key "facing"',)),
+                              ('x = 1, y = 2, z = 0, body = 9, facing = 8', ('out of range',)),
+                              ('x = 1, y = 2, z = 0, body = 0, facing = 0', ('out of range',)),
+                              ('x = 1, y = 2, z = 0, body = 9, facing = 0, clip_secs = -1', ('out of range',)),
+                              ('x = 1, y = 2, z = 0, body = 9, facing = 0, colour = 1', ('unknown key "colour"',)),
+                              ('x = 1, y = 2, z = 0, body = "9", facing = 0', ('"body" must be int',))):
+            self.assert_rejected(with_mobiles.replace('MOBILE', mobile), 'mobiles[0]', *words)
+        self.assert_rejected(SAMPLE.replace('sources = ["ec/cc"]', 'sources = ["ec/cc"]\nmobiles = []'),
+                             f'1..{MAX_FIXTURE_MOBILES}')
+
+    def test_mobiles_spawn_afresh_for_each_view_and_clear_after(self):
+        """A view with mobiles clears and spawns them, and waits for their frames; the next view without clears."""
+        mobile = {'x': 1, 'y': 2, 'z': 0, 'body': 9, 'mount': 0, 'facing': 4, 'clip_secs': 0.0}
+        sent = []
+        frames = iter(range(0, 1000, 2))
+
+        class FakeLaunch(Launch):
+            def __init__(self):
+                self.spawned = False
+
+            def request(self, command):
+                sent.append(command['command'])
+                return {'total_frames': next(frames), 'mobiles': {
+                    'mobiles': len(self.listed), 'instances': len(self.listed), 'waiting_layers': 0}}
+
+        launch = FakeLaunch()
+        fixture = load_fixtures(self.write(SAMPLE), self.files)[1]
+        with_mobiles = Capture(Fixture(**(fixture.__dict__ | {'mobiles': (mobile,)})), 'classic', 'afternoon', 'cc',
+                               'cc')
+        without = Capture(fixture, 'classic', 'afternoon', 'cc', 'cc')
+        launch.listed = ()
+        self.assertFalse(launch.place_mobiles(without))
+        self.assertEqual(sent, [])
+        launch.listed = with_mobiles.fixture.mobiles
+        self.assertTrue(launch.place_mobiles(with_mobiles))
+        self.assertEqual(sent[:2], ['clear_mobiles', 'spawn_mobile'])
+        sent.clear()
+        launch.listed = ()
+        self.assertTrue(launch.place_mobiles(without))
+        self.assertEqual(sent[0], 'clear_mobiles')
+        self.assertNotIn('spawn_mobile', sent)
+        sent.clear()
+        self.assertFalse(launch.place_mobiles(without))
+        self.assertEqual(sent, [])
 
     def test_toml_set_is_section_aware(self):
         text = 'a = 1\n[s]\na = 2\n[s.t]\na = 3\n'

@@ -27,6 +27,10 @@
 #                 preset = { "table.key" = value }    land.toml [<style>.<time>.<table>] of the slot that renders
 #   reference   optional; { path = "...", note = "...", crop = [x, y, width, height] } an original-client
 #               screenshot shown beside the captures in the sheets (crop optional)
+#   mobiles     optional; up to 8 standing test mobiles spawned on the view's map after the teleport, each
+#               { x, y, z, body, facing = <0 north..7 north-west>, mount = <body, 0 none>, clip_secs = <seconds> }
+#               (mount and clip_secs optional, 0 by default): held that far into the standing clip, spawned
+#               afresh for every capture; the art source picks their frames ("cc" Classic, "ec" Enhanced)
 
 [defaults]
 times = ["afternoon"]
@@ -1063,3 +1067,161 @@ x = 5183
 y = 727
 z = 0
 sources = ["ec/kr"]
+
+# ---------------------------------------------------------------------------------------------------------------
+# Mobiles: standing test mobiles spawned through the control socket, each held at frame 0 of its standing clip.
+# The art source picks the frames: art "cc" draws the Classic bodies, "ec" the Enhanced ones.
+# Their tolerance is 5 pixels (0.0005 % of 1280x800) past 4 levels: a sliver of land over a hoof or a static's
+# foot under one is 12 to 64 pixels, well inside the default 0.01 %, while two runs differ by 1 level at most.
+# ---------------------------------------------------------------------------------------------------------------
+
+[[fixture]]
+name = "mobiles-open-ground-bodies"
+guards = """Standing bodies on flat open land west of Yew (map 1): a human (400), a daemon (9), a dragon (12) and a \
+horse (200), Classic frames with art CC and Enhanced ones with art EC, each whole on its cell: no sliver of the \
+land in front along a cell edge over its feet, legs or tail (fcedcb44, 6fe5fcb3), the Enhanced layers drawn up from \
+the anchor and not 30 px into the ground, the dragon's wings and tail whole."""
+tier = "quick"
+tags = ["mobiles", "depth"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2112
+y = 791
+z = 0
+mobiles = [{ x = 2110, y = 789, z = 0, body = 400, facing = 3 },
+           { x = 2113, y = 789, z = 0, body = 9, facing = 4 },
+           { x = 2110, y = 792, z = 0, body = 12, facing = 2 },
+           { x = 2114, y = 792, z = 0, body = 200, facing = 5 }]
+
+[[fixture]]
+name = "mobiles-britain-planter-ophidian-behind-horse-in-front"
+guards = """Britain's planter (map 1, flower beds Impassable z 0, 5 high, a spider tree on them): an ophidian (86) \
+standing behind it is covered by the beds and the tree where they stand in front of it, its tail lying over the \
+land of its own rows (b2957a8a, fcedcb44); a horse (200) standing in front of it draws over the beds, its hooves \
+whole."""
+tier = "quick"
+tags = ["mobiles", "depth", "britain"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 1481
+y = 1704
+z = 0
+mobiles = [{ x = 1480, y = 1702, z = 0, body = 86, facing = 4 },
+           { x = 1482, y = 1706, z = 0, body = 200, facing = 6 }]
+
+[[fixture]]
+name = "mobiles-pitched-roof-over-tall-bodies"
+guards = """Tall bodies in a Britain house under a pitched slate roof (map 1, floor land 20, roof 40 at the eaves to \
+52 at the ridge), the player outside by its west wall: a dragon (12) and a daemon (9) standing inside have their \
+heads covered by the roof over them, never drawn over it (each mobile's ceiling, fcedcb44)."""
+tier = "full"
+tags = ["mobiles", "roofs", "britain"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 1484
+y = 1688
+z = 15
+mobiles = [{ x = 1488, y = 1688, z = 20, body = 12, facing = 3 },
+           { x = 1490, y = 1685, z = 20, body = 9, facing = 4 }]
+
+[[fixture]]
+name = "mobiles-ophidian-tails-yew-field"
+guards = """Ophidians (86) standing on the field west of Yew (map 1, land 0 with transitions), facing east, south, \
+south-west and west: the tail lying below and beside the anchor whole over the next row's land, Classic frames \
+included (b2957a8a), no sliver of the land in front along the cell edges (6fe5fcb3)."""
+tier = "full"
+tags = ["mobiles", "depth"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2093
+y = 790
+z = 0
+sources = ["cc/cc", "ec/ec"]
+mobiles = [{ x = 2091, y = 789, z = 0, body = 86, facing = 2 },
+           { x = 2094, y = 789, z = 0, body = 86, facing = 4 },
+           { x = 2092, y = 792, z = 0, body = 86, facing = 5 },
+           { x = 2095, y = 792, z = 0, body = 86, facing = 6 }]
+
+[[fixture]]
+name = "mobiles-minoc-mine-claws"
+guards = """Bodies on the Minoc mine's cave floor (map 1, cave floor statics at z 0 over land 80 to 100) with the \
+player's-floor view: the dragon's (12) claws and the horse's (200) hooves whole, no sliver of the cave floor in \
+front along a cell edge (6fe5fcb3)."""
+tier = "full"
+tags = ["mobiles", "depth", "caves", "minoc"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2578
+y = 476
+z = 0
+settings = { world_rendering = { show_only_player_floor = true } }
+mobiles = [{ x = 2578, y = 478, z = 0, body = 12, facing = 3 },
+           { x = 2576, y = 479, z = 0, body = 200, facing = 2 }]
+
+[[fixture]]
+name = "mobiles-britain-upper-floor-rug"
+guards = """Bodies on a Britain house's upper floor (map 1, wooden boards at z 50, the stone roof at 70 cut by the \
+player's-floor view): a horse (200) on the boards and a daemon (9) on the carpet (z 51) with its hooves and claws \
+whole, no sliver of the boards or of an Enhanced rug's overhanging fringe along a cell edge (6fe5fcb3)."""
+tier = "full"
+tags = ["mobiles", "depth", "z-view", "britain"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 1412
+y = 1600
+z = 50
+settings = { world_rendering = { show_only_player_floor = true } }
+mobiles = [{ x = 1412, y = 1601, z = 50, body = 200, facing = 3 },
+           { x = 1414, y = 1600, z = 51, body = 9, facing = 4 }]
+
+[[fixture]]
+name = "mobiles-mounted-riders"
+guards = """Humans (400) riding horses (200) on open land west of Yew (map 1), facing south-east and west: the rider \
+over its mount, both layers whole, the Enhanced rider level with its mount's back (the layer offsets drawn up), and \
+the mount's legs below the anchor lying level with the rider's (fcedcb44)."""
+tier = "full"
+tags = ["mobiles", "mounts"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2112
+y = 791
+z = 0
+mobiles = [{ x = 2111, y = 790, z = 0, body = 400, mount = 200, facing = 3 },
+           { x = 2114, y = 792, z = 0, body = 400, mount = 200, facing = 6 }]
+
+[[fixture]]
+name = "mobiles-span-upscaled"
+guards = """The SPAN 2x frames of a human (400) and a horse (200) at zoom 0.5 with the Balanced upscale (map 1, west \
+of Yew): drawn once ready, as a held mobile switches at once (MobileHeldClip), placed as their 1x frames, no seam \
+between the parts of a frame wider than a page (e612dfe7, 0ae6b89a)."""
+tier = "full"
+tags = ["mobiles", "upscale"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2112
+y = 791
+z = 0
+zoom = 0.5
+styles = ["classic", "enhanced"]
+settings = { world_rendering = { mobile_upscale = "balanced" } }
+mobiles = [{ x = 2111, y = 790, z = 0, body = 400, facing = 3 },
+           { x = 2113, y = 791, z = 0, body = 200, facing = 4 }]
+
+[[fixture]]
+name = "mobiles-enhanced-outline"
+guards = """The Enhanced bodies' outline (Sharpening.kdl's default outline 1.0) at zoom 2, around a human (400), a \
+daemon (9) and a horse (200) on open land (map 1): a thin dark edge all round each frame's silhouette, none cut by \
+the card's border (0da0fb2e, 2da9aee4)."""
+tier = "full"
+tags = ["mobiles", "outline"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2112
+y = 791
+z = 0
+zoom = 2.0
+styles = ["enhanced"]
+sources = ["ec/ec"]
+mobiles = [{ x = 2111, y = 790, z = 0, body = 400, facing = 3 },
+           { x = 2113, y = 790, z = 0, body = 9, facing = 4 },
+           { x = 2112, y = 792, z = 0, body = 200, facing = 2 }]
