@@ -1102,7 +1102,7 @@ comes per body from `runtime_specs/mobiles/Sharpening.kdl`, and the style's `mob
   the table in force and warns (console and in-game system message) with the line. A bundled file that does not read
   at startup stops the app, as every runtime spec.
 - **Path to the shader**: `MobileSharpening` (`render/mobiles/sharpening.rs`) resolves and caches each (package,
-  body)'s `MobileFrameFilter` (32 bytes); `sys_draw_mobiles` puts it in each frame's `MobileSpriteInstance` (now 240
+  body)'s `MobileFrameFilter` (48 bytes); `sys_draw_mobiles` puts it in each frame's `MobileSpriteInstance` (now 256
   bytes), so every frame drawn carries its body's filter and nothing is looked up per fragment. The shader's strength
   is `min(effects.mobile_sharpening * frame_filter.sharpening, 1)`. An instance's filter of zeros is the old off path:
   each step is behind its own branch (sharpening or contour, the alpha contrast, the outline), so with all off the
@@ -1267,7 +1267,68 @@ and 3x (4x does not fit), `07` the KR-like daemon at 4x, `08-sheet-standing.png`
 headless KWin with x11grab (as [the cold-cache tests](shader_compile_progress.md#testing-with-a-cold-cache)); the
 control socket's captures come at about one a second.
 
-## Block-compressed frame atlas (2026-11-21)
+### Interior lines and contrast (2026-11-27)
+
+The Classic frames' pixel art draws dark lines inside the body (an arm across the torso, between the legs, along a
+wing or a plate); the Enhanced frames' rendered art has there only a change of colour, and reads flatter in game.
+Two Sharpening.kdl properties draw those edges, resolved per package, size class and body as the others, off in
+the bundled file (`inner_threshold` sets where an edge starts for both):
+
+- **A, `inner_lines=<0..1>`**: a line one texel wide on the darker side of each strong edge, a darker shade of the
+  colour under it (1 keeps 45 % of it).
+- **B, `inner_contrast=<0..1>`**: no line; the texels on the dark side darkened and those on the light side
+  lightened, softly limited so that a hard edge is not clipped.
+
+- **Algorithm** (`art/mobile_inner_edges.wesl`, after the CAS sharpening and before the contour, on the
+  sRGB-encoded colours of the frame's own texels). The frames hold no depth or normals, so the edges are colour
+  discontinuities:
+  - The step is the Sobel gradient's length over the 3x3 window that CAS already reads (RGB distance over √3).
+  - The step is capped by the weaker of its two neighbours' steps along the edge: an edge must go on past the
+    texel, so a fleck of fur or scale texture makes none. That is a cheap coherence test standing in for hysteresis
+    or a minimum length.
+  - The weight ramps from `inner_threshold` (default 0.12) to 1.5 times it.
+  - Only on an edge texel are two more taps read, two texels away along the edge's axis.
+  - The line comes from a non-maximum suppression along that axis, a tie going to the darker side.
+  - The contrast pushes luma by 3 times the centre's luma less the mean of the four axis taps, limited softly to
+    0.3.
+  - A transparent tap lends the centre's colour, so the silhouette makes no interior edge, and the rim (alpha below
+    0.98) is left as it is.
+  - True hysteresis or an XDoG would need a wider window or a preparation pass over the frame.
+- **SPAN**: the filter runs on the drawn frame's texel grid, so on a 2x frame the line is one texel of the 2x frame,
+  half as wide on screen as at 1x, as the one-texel outline. The sheets show it.
+- **Tuned values** (Enhanced monsters, 2026-11-27): `inner_lines=1.0 inner_threshold=0.12` and
+  `inner_contrast=1.0 inner_threshold=0.08`. At 0.08 the lines trace the daemon's skin mottling; at 0.14 they keep
+  only the wing and limb edges. The grizzly's and gorilla's fur takes no line at any of them. The contrast draws no
+  line, so it takes the lower threshold well. A contrast gain of 2 with a limit of 0.2 was too faint at 1x; 3 and
+  0.3 marks the wing ribs and the plate edges without clipping.
+- **Known defects**:
+  - A line rings a specular highlight on its darker side (the daemon's chest).
+  - At 0.12 the daemon's skin mottling still takes a few short lines, and at 1x the lines come somewhat dashed
+    where an edge's step wavers about the threshold.
+  - The thresholds behave alike at 1x and on SPAN 2x frames, the 2x lines somewhat more connected.
+  - The humans, elves and gargoyles (400-403, 605-606, 666-667) have not been looked at.
+- **Cost** (gfx engine time per frame, off / A / B alternated in one launch through the user's Sharpening.kdl,
+  paired medians of 5 rounds of 8 s, uncapped, SPAN `always`, 1900x1000; CAS and the outline on as shipped):
+
+  | Scene | Enhanced: A / B against off | KR-like: A / B against off |
+  |---|---|---|
+  | Daemon (player), 4x view (off 13.4 / 15.5 ms) | +0.07 / +0.07 | +0.06 / +0.12 |
+  | Crowd of 32 Enhanced monsters (9, 212, 29, 764) + player, 2x view (off 16.1 / 20.0 ms) | +0.38 / +0.41 | +0.43 / +0.59 |
+
+  The first version read the four far taps on every texel: +0.72 / +0.74 ms on the Enhanced crowd and +1.38 /
+  +1.35 ms on the KR-like one, where every tap is the client's bilinear filter. Reading two taps, and only on an
+  edge, halved the Enhanced cost and took two thirds off KR-like's, with the same pixels.
+- **Same pixels when off** (the bundled file sets neither property): the regression harness (quick tier, 111
+  captures, with the standing-mobile fixtures) against `before-inner-lines`: 92 identical, 19 within tolerance
+  (lava, UOD-Painterly and night views, 1 or 2 levels), none changed; the mobile fixtures identical or 1 level.
+
+Sheets and clips (`inner-lines/sheets/` and `inner-lines/clips/` in the scratch folder):
+- Sheets: per body (daemon 9, dragon 12, grizzly 212, gorilla 29, the armoured 764), rows Enhanced, KR-like and
+  UOD-Painterly, columns off | A | B | Classic, at 1x frames and zoom 1 and on SPAN 2x frames at zoom 0.5. Each comes
+  1:1 and as a 4x nearest crop.
+- Clips: walking east from 2084,790 on map 1, off | A | B, each panel its own recording, x264 yuv444p at qp 0 to 8
+  under 30 MiB.
+
 
 The frame atlas takes its pixel format from the animation package it shows: a `Rgba8888` package's frames go to an
 `Rgba8UnormSrgb` atlas exactly as before, a BC7 package's to a `Bc7RgbaUnormSrgb` one, and RIFE's in-betweens to the
