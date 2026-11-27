@@ -707,7 +707,7 @@ fn fill_uop_move_actions(
     Ok(())
 }
 
-fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
+pub(crate) fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
     let mut records = BTreeMap::<u16, MobileAnimCcBodyTypeRecord>::new();
     for line in text.lines() {
         let line = line.trim();

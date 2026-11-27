@@ -106,6 +106,7 @@ mod tests {
         let refs = encode_item_texture_refs(&refs);
         let lights = encode_item_lights(&[]);
         let tileart_records = udd_assets::tilemeta::TileMetaTileArtRecords::default().to_bytes();
+        let classic_paperdoll = udd_assets::tilemeta::TileMetaClassicPaperdoll::default().to_bytes();
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         for (path, data) in [
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
@@ -116,6 +117,7 @@ mod tests {
             (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, definitions.as_slice()),
             (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights.as_slice()),
             (udd_assets::tilemeta::TILEMETA_TILEART_RECORD_ENTRY_PATH, tileart_records.as_slice()),
+            (udd_assets::tilemeta::TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH, classic_paperdoll.as_slice()),
         ] {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,

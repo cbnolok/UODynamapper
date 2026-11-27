@@ -18,7 +18,7 @@ Common commands:
 - `pack-texmaps`: pack Classic Client land textures into `tex_land_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`, each with its Kingdom Reborn section (see below).
 - `make-kr-delta`: write `kr_delta.uddp`, the Kingdom Reborn client files the packers read as a delta over the Enhanced Client (see below).
-- `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
+- `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`, with the Classic paperdoll's tables from the Classic folder (`mobtypes.txt`, `Equipconv.def`, `gump.def`).
 - `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback and its day, night and night-sight maps (`TerrainTexture.uop`); see below.
 - `pack-ec-paperdoll`: pack the Enhanced Client's 3D paperdoll frames (`Paperdoll.uop`), lossless, into `paperdoll_ec.uddp`, with what each dress-layer item takes off; Dynamapper hues them with `hues.uddp`.
 - `pack-radar`: generate a radar map such as `facet0X.dds` from Classic Client map and statics data.
@@ -230,6 +230,8 @@ Stores the non-base support images that tileart refs name and that a runtime con
 ### `tilemeta.uddp`
 
 Stores dense land/item metadata tables used by the runtime to merge Classic Client tiledata with Enhanced Client metadata and sidecars.
+
+The Classic gump paperdoll reads it as the Classic client does (`DrawPaperdollGumpLayers`, [cc_tileart study](../client_research/ghidra-cc-tileart/results/cc_tileart.md#31-paperdoll-and-equipment-gumps)): the item's anim from tiledata, or from tileart's appearance for the UOP-frame bodies of `mobtypes.txt` and for an item whose "animation by body" filter matches the body; then the gump from `Equipconv.def`, + 10000 for a woman when that gump exists, and `gump.def` for a gump that does not. The tileart filters are in `metadata/item_definitions.bin`, the Classic folder's three tables in `metadata/classic_paperdoll.bin` ([UDDP_FORMATS.md](UDDP_FORMATS.md) section 2). The Classic and Enhanced `tileart.uop` records are the same (37,756 entries, 2026-11-27), so the Enhanced folder's tileart serves the Classic rule.
 
 Each EC texture ref carries the shader input it feeds (`stable_role`), taken from the block's shader name and the item position, as the client binds them; file names are not read.
 

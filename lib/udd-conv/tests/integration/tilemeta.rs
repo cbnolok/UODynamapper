@@ -22,13 +22,16 @@ use udd_assets::{
 use udd_conv::tilemeta::*;
 use udd_container::CompressionFlag;
 
-/// The item definitions, item lights and tileart records entries every tilemeta package holds, with no records.
+/// The item definitions, item lights, tileart records and Classic paperdoll entries every tilemeta package holds, with
+/// no records.
 fn add_empty_item_definitions(package: &mut UddpBuilder) {
     let definitions = TileMetaItemDefinitions::default().to_bytes().expect("encode item definitions");
     let lights = udd_assets::tilemeta::encode_item_lights(&[]);
     let records = udd_assets::tilemeta::TileMetaTileArtRecords::default().to_bytes();
+    let classic_paperdoll = udd_assets::tilemeta::TileMetaClassicPaperdoll::default().to_bytes();
     for (path, data) in [(TILEMETA_ITEM_DEFINITION_ENTRY_PATH, &definitions), (udd_assets::tilemeta::TILEMETA_ITEM_LIGHT_ENTRY_PATH, &lights),
-        (udd_assets::tilemeta::TILEMETA_TILEART_RECORD_ENTRY_PATH, &records)] {
+        (udd_assets::tilemeta::TILEMETA_TILEART_RECORD_ENTRY_PATH, &records),
+        (udd_assets::tilemeta::TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH, &classic_paperdoll)] {
         package
             .add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8,

@@ -1,5 +1,6 @@
-//! `metadata/item_definitions.bin`: the `tileart.uop` records the Enhanced paperdoll reads, with
-//! the properties and appearance filters it reads, so the lookup of `uocf::enhanced::paperdoll` runs on a package.
+//! `metadata/item_definitions.bin`: the `tileart.uop` records the paperdolls read, with the properties and appearance
+//! filters they read, so the lookups of `uocf::enhanced::paperdoll` and `uocf::classic::ui::paperdoll_gump` run on a
+//! package.
 //!
 //! The client looks a definition up by its entry name, `build/tileart/%08d.bin`; the tile id stored in the record is
 //! only copied (`GetTileId`), and a few client records store another id than their name's. A record is keyed by its
@@ -10,10 +11,11 @@
 //! - per record: `u32` entry id, `u8` presence mask (bit i < 7: `STORED_PROPERTIES[i]` is present;
 //!   `PRESENT_STORED_TILE_ID`: the stored tile id differs from the entry id), `u8` filter count, the stored tile id
 //!   (`u32`) when it differs, one `u32` per present property in `STORED_PROPERTIES` order, then the filters;
-//! - per filter: `u8` kind; `FILTER_KIND_BY_OWNER_BODY_TYPE` is followed by a `u16` row count and that many
-//!   (`u32` body type, `u32` appearance) rows, `FILTER_KIND_BY_OWNER_GENDER` by a `u8` gender and a `u32` appearance.
+//! - per filter: `u8` kind; `FILTER_KIND_BY_OWNER_BODY_TYPE` and `FILTER_KIND_ANIMATION_BY_OWNER_BODY_TYPE` are
+//!   followed by a `u16` row count and that many (`u32` body type, `u32` appearance) rows,
+//!   `FILTER_KIND_BY_OWNER_GENDER` by a `u8` gender and a `u32` appearance.
 //!
-//! Animation filters (subtype 2) are not stored: the paperdoll skips them.
+//! The animation filters (subtype 2) are skipped by the Enhanced paperdoll and read by the Classic one.
 
 use color_eyre::eyre;
 use uocf::enhanced::paperdoll::{AppearanceFilter, PaperdollDefinition, PaperdollDefinitions};
@@ -43,6 +45,7 @@ pub const STORED_PROPERTIES: [(PropertyList, PropertyKey); 7] = [
 const PRESENT_STORED_TILE_ID: u8 = 1 << STORED_PROPERTIES.len();
 const FILTER_KIND_BY_OWNER_BODY_TYPE: u8 = 0;
 const FILTER_KIND_BY_OWNER_GENDER: u8 = 1;
+const FILTER_KIND_ANIMATION_BY_OWNER_BODY_TYPE: u8 = 2;
 const U8_BYTES: usize = 1;
 const U16_BYTES: usize = 2;
 const U32_BYTES: usize = 4;
@@ -52,6 +55,7 @@ const U32_BYTES: usize = 4;
 enum StoredFilter {
     ByOwnerBodyType { start: usize, len: usize },
     ByOwnerGender { gender: u8, appearance: u32 },
+    AnimationByOwnerBodyType { start: usize, len: usize },
 }
 
 /// One stored record.
@@ -107,16 +111,23 @@ impl TileMetaItemDefinitions {
                 }
             }
             for filter in &entry.appearance_vector {
+                let mut push_rows = |rows: &[TaeBodyAppearance]| {
+                    let start = definitions.body_rows.len();
+                    definitions.body_rows.extend(rows.iter().cloned());
+                    (start, rows.len())
+                };
                 let stored = match filter {
                     TaeAppearanceFilter::ByOwnerBodyType(rows) => {
-                        let start = definitions.body_rows.len();
-                        definitions.body_rows.extend(rows.iter().cloned());
-                        StoredFilter::ByOwnerBodyType { start, len: rows.len() }
+                        let (start, len) = push_rows(rows);
+                        StoredFilter::ByOwnerBodyType { start, len }
                     }
                     TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
                         StoredFilter::ByOwnerGender { gender: *gender, appearance: *appearance }
                     }
-                    TaeAppearanceFilter::AnimationByOwnerBodyType(_) => continue,
+                    TaeAppearanceFilter::AnimationByOwnerBodyType(rows) => {
+                        let (start, len) = push_rows(rows);
+                        StoredFilter::AnimationByOwnerBodyType { start, len }
+                    }
                 };
                 definitions.filters.push(stored);
                 record.filter_count += 1;
@@ -161,8 +172,11 @@ impl TileMetaItemDefinitions {
             }
             for filter in &self.filters[record.filter_start..record.filter_start + record.filter_count] {
                 match *filter {
-                    StoredFilter::ByOwnerBodyType { start, len } => {
-                        bytes.push(FILTER_KIND_BY_OWNER_BODY_TYPE);
+                    StoredFilter::ByOwnerBodyType { start, len } | StoredFilter::AnimationByOwnerBodyType { start, len } => {
+                        bytes.push(match filter {
+                            StoredFilter::ByOwnerBodyType { .. } => FILTER_KIND_BY_OWNER_BODY_TYPE,
+                            _ => FILTER_KIND_ANIMATION_BY_OWNER_BODY_TYPE,
+                        });
                         let row_count = u16::try_from(len)
                             .map_err(|_| eyre::eyre!("tileart entry {} has a filter of {len} rows", record.entry_id))?;
                         bytes.extend_from_slice(&row_count.to_le_bytes());
@@ -204,7 +218,7 @@ impl TileMetaItemDefinitions {
             let filter_start = definitions.filters.len();
             for _ in 0..filter_count {
                 let filter = match reader.u8()? {
-                    FILTER_KIND_BY_OWNER_BODY_TYPE => {
+                    kind @ (FILTER_KIND_BY_OWNER_BODY_TYPE | FILTER_KIND_ANIMATION_BY_OWNER_BODY_TYPE) => {
                         let len = usize::from(reader.u16()?);
                         let start = definitions.body_rows.len();
                         for _ in 0..len {
@@ -212,7 +226,11 @@ impl TileMetaItemDefinitions {
                             let appearance = reader.u32()?;
                             definitions.body_rows.push(TaeBodyAppearance { body_type, appearance });
                         }
-                        StoredFilter::ByOwnerBodyType { start, len }
+                        if kind == FILTER_KIND_BY_OWNER_BODY_TYPE {
+                            StoredFilter::ByOwnerBodyType { start, len }
+                        } else {
+                            StoredFilter::AnimationByOwnerBodyType { start, len }
+                        }
                     }
                     FILTER_KIND_BY_OWNER_GENDER => {
                         let gender = reader.u8()?;
@@ -308,6 +326,9 @@ impl<'a> PaperdollDefinition<'a> for TileMetaItemDefinition<'a> {
                 AppearanceFilter::ByOwnerBodyType(&definitions.body_rows[start..start + len])
             }
             StoredFilter::ByOwnerGender { gender, appearance } => AppearanceFilter::ByOwnerGender { gender, appearance },
+            StoredFilter::AnimationByOwnerBodyType { start, len } => {
+                AppearanceFilter::AnimationByOwnerBodyType(&definitions.body_rows[start..start + len])
+            }
         })
     }
 }
@@ -401,10 +422,7 @@ mod tests {
                 assert_eq!(stored.value(list, key), expected, "{} {list:?} {key:?}", entry.tile_id);
             }
             let filters: Vec<_> = stored.appearance_filters().collect();
-            let expected: Vec<_> = original
-                .appearance_filters()
-                .filter(|filter| *filter != AppearanceFilter::Animation)
-                .collect();
+            let expected: Vec<_> = original.appearance_filters().collect();
             assert_eq!(filters, expected, "{}", entry.tile_id);
         }
         assert!(read.definition(OLD_GUMP).is_none());

@@ -2065,6 +2065,7 @@ mod tests {
         let lights = encode_item_lights(&[]);
         let definitions = TileMetaItemDefinitions::default().to_bytes().unwrap();
         let tileart = TileMetaTileArtRecords::default().to_bytes();
+        let classic_paperdoll = TileMetaClassicPaperdoll::default().to_bytes();
         let record = record.map(TileMetaOverridesRecord::to_bytes);
         let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
         for (path, data) in [
@@ -2076,6 +2077,7 @@ mod tests {
             (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, definitions.as_slice()),
             (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights.as_slice()),
             (TILEMETA_TILEART_RECORD_ENTRY_PATH, tileart.as_slice()),
+            (TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH, classic_paperdoll.as_slice()),
         ].into_iter().chain(record.as_deref().map(|record| (TILEMETA_OVERRIDES_ENTRY_PATH, record))) {
             builder.add_file(udd_container::AddFileRequest {
                 data_type: udd_container::DataType::Metadata as u8,

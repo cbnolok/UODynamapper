@@ -209,6 +209,8 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
     std::fs::create_dir_all(&out_dir).unwrap();
     let dress_layer = slot_layer("dress").unwrap();
     let item_tile = |item_id: u32| tilemeta.item_tile(item_id).copied();
+    let has_classic_gump = |gump_id: u32| gump_map.has_gump(GumpClient::Classic, gump_id);
+    let classic_gumps = ClassicGumpSources { tables: tilemeta.classic_paperdoll(), has_gump: &has_classic_gump };
     let name = |item_id: u32| tilemeta.item_tile(item_id).map(|tile| tile.name_ascii().to_string()).unwrap_or_default();
     let mut scratch = Vec::new();
 
@@ -234,7 +236,9 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
             };
             let layers = |items: &[u32]| {
                 let none = StoredDressDecisions::none();
-                gump_paperdoll_layers(&request(items), client, item_tile, tilemeta.item_definitions(), &client_order, &none)
+                gump_paperdoll_layers(
+                    &request(items), client, item_tile, tilemeta.item_definitions(), classic_gumps, &client_order, &none,
+                )
             };
             // Each candidate's gump on this profile's canvas: the garments as the texels they touch.
             let mut dresses = Vec::new();
@@ -358,7 +362,8 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
             };
             let stored = StoredDressDecisions::new(Some(&package), tilemeta.item_definitions(), profile.body);
             let mut layers =
-                gump_paperdoll_layers(&request, client, item_tile, tilemeta.item_definitions(), order, &stored).unwrap();
+                gump_paperdoll_layers(&request, client, item_tile, tilemeta.item_definitions(), classic_gumps, order, &stored)
+                    .unwrap();
             // A body the client's gumps lack is left out: the garments are what is looked at.
             layers.retain(|layer| layer.item.is_some() || gump_map.has_gump(client, layer.gump_id));
             let gump = compose_paperdoll(&gump_map, client, None, profile, &layers).unwrap();

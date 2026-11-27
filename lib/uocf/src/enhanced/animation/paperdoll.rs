@@ -91,8 +91,9 @@ pub enum AppearanceFilter<'a> {
     ByOwnerBodyType(&'a [TaeBodyAppearance]),
     /// Subtype 1: `appearance` when the wearer has `gender`.
     ByOwnerGender { gender: u8, appearance: u32 },
-    /// Subtype 2, the animation filter, which the paperdoll skips.
-    Animation,
+    /// Subtype 2, the animation filter: matched as subtype 0, skipped by `GetAppearance` and read by the Classic
+    /// client's `GetAnimationAppearance` ([`animation_appearance`]).
+    AnimationByOwnerBodyType(&'a [TaeBodyAppearance]),
 }
 
 impl<'a> From<&'a TaeAppearanceFilter> for AppearanceFilter<'a> {
@@ -102,7 +103,7 @@ impl<'a> From<&'a TaeAppearanceFilter> for AppearanceFilter<'a> {
             TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
                 Self::ByOwnerGender { gender: *gender, appearance: *appearance }
             }
-            TaeAppearanceFilter::AnimationByOwnerBodyType(_) => Self::Animation,
+            TaeAppearanceFilter::AnimationByOwnerBodyType(rows) => Self::AnimationByOwnerBodyType(rows),
         }
     }
 }
@@ -313,26 +314,44 @@ pub fn body_frame<S: PaperdollFrames, D>(sets: &S, wearer: &Wearer<D>) -> Option
 /// `UOObjectDefinitionBase::GetAppearance` (0x00842bb2) for a wearer: the Appearance property (8), else the tile
 /// id, unless an appearance filter applies first (`AppearanceFilterByOwnerBodyType::Apply` 0x0084b3c4 matches the
 /// wearer's Appearance, else its tile id, against a row's body type; `AppearanceFilterByOwnerGender::Apply`
-/// 0x0084b485 its gender). Animation filters (subtype 2) are skipped.
+/// 0x0084b485 its gender). Animation filters (subtype 2) are skipped. The Classic client's `GetAppearance`
+/// (0x00405bf1) is the same.
 pub fn appearance<'a, D: PaperdollDefinition<'a>>(definition: D, owner: Option<D>) -> u32 {
     let own = definition.property(PropertyKey::Appearance).unwrap_or(definition.tile_id());
     let Some(owner) = owner else { return own };
     for filter in definition.appearance_filters() {
         let applied = match filter {
-            AppearanceFilter::ByOwnerBodyType(rows) => {
-                let key = owner.property(PropertyKey::Appearance).unwrap_or(owner.tile_id());
-                rows.iter().find(|row| row.body_type == key).map(|row| row.appearance)
-            }
+            AppearanceFilter::ByOwnerBodyType(rows) => owner_body_row(rows, owner),
             AppearanceFilter::ByOwnerGender { gender, appearance } => {
                 (gender_of(owner) == u32::from(gender)).then_some(appearance)
             }
-            AppearanceFilter::Animation => None,
+            AppearanceFilter::AnimationByOwnerBodyType(_) => None,
         };
         if let Some(appearance) = applied {
             return appearance;
         }
     }
     own
+}
+
+/// The appearance of the row of `rows` whose body type is `owner`'s key: its Appearance property, else its tile id.
+fn owner_body_row<'a, D: PaperdollDefinition<'a>>(rows: &[TaeBodyAppearance], owner: D) -> Option<u32> {
+    let key = owner.property(PropertyKey::Appearance).unwrap_or(owner.tile_id());
+    rows.iter().find(|row| row.body_type == key).map(|row| row.appearance)
+}
+
+/// The Classic client's `GetAnimationAppearance` (+0xc0, 0x00405ce4) for a wearer: the appearance of the first
+/// animation filter (subtype 2) row that matches `owner` as a subtype 0 row does, else 0; 0 without an owner. The
+/// Classic paperdoll takes it only as a switch (`uocf::classic::ui::paperdoll_gump`).
+pub fn animation_appearance<'a, D: PaperdollDefinition<'a>>(definition: D, owner: Option<D>) -> u32 {
+    let Some(owner) = owner else { return 0 };
+    definition
+        .appearance_filters()
+        .find_map(|filter| match filter {
+            AppearanceFilter::AnimationByOwnerBodyType(rows) => owner_body_row(rows, owner),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// `FindLayerFrame` (0x0050b850): a definition with an Appearance property tries the definition it names first, up

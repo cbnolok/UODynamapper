@@ -36,7 +36,11 @@ use crate::tex_art_ec::{
     compute_tex_art_ec_crop_adjustments_from_loaded_sources, load_tex_art_ec_sources, TexArtEcLoadedSources,
 };
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
+use udd_assets::mobile_anim_cc::MOB_TYPE_FLAG_USES_UOP_FRAMES;
+use udd_assets::tilemeta::classic_paperdoll::TileMetaEquipConvRow;
 use udd_assets::tilemeta::item_definitions::{PropertyList, STORED_PROPERTIES};
+use udd_assets::tilemeta::{TileMetaClassicPaperdoll, TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH};
+use uocf::classic::tables::def_files::{EquipConvDefFile, TargetsDefFile};
 use udd_assets::tilemeta::{
     encode_item_lights, encode_item_texture_refs, EcMaterialLogicalFamily, TileMetaItemLight, TILEMETA_ITEM_LIGHT_ENTRY_PATH, EcMaterialPhysicalPackage,
     TileMetaTileArtRecords, TILEMETA_TILEART_RECORD_ENTRY_PATH,
@@ -91,7 +95,70 @@ struct BuiltTileMetaTables {
     item_lights: Vec<TileMetaItemLight>,
     /// Every `tileart.uop` record, byte for byte.
     tileart_records: TileMetaTileArtRecords,
+    classic_paperdoll: TileMetaClassicPaperdoll,
     package_compression: CompressionFlag,
+}
+
+/// The Classic client's files its paperdoll gump reads besides tileart (`uocf::classic::ui::paperdoll_gump`).
+const MOBTYPES_FILE_NAME: &str = "mobtypes.txt";
+const EQUIPCONV_FILE_NAME: &str = "Equipconv.def";
+const GUMP_DEF_FILE_NAME: &str = "gump.def";
+
+/// The Classic paperdoll's tables from the first of `cc_source_dirs` holding each file, looked up ignoring case: the
+/// `mobtypes.txt` bodies with UOP frames, `Equipconv.def` and `gump.def`. A missing file gives an empty table, with a
+/// warning: the Classic paperdoll then numbers every gump by the tiledata anim + 50,000.
+fn build_classic_paperdoll(cc_source_dirs: &[PathBuf]) -> eyre::Result<TileMetaClassicPaperdoll> {
+    let find = |name: &str| {
+        let path = find_first_existing_file(cc_source_dirs, &[name]);
+        if path.is_none() {
+            log::warn!("tilemeta: no {name} in the Classic folder; the Classic paperdoll goes without it");
+        }
+        path
+    };
+    let uop_frame_bodies = match find(MOBTYPES_FILE_NAME) {
+        Some(path) => {
+            let text = std::fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?;
+            crate::mobile_anim_cc::parse_mobtypes_txt(&text)
+                .wrap_err_with(|| format!("{}", path.display()))?
+                .into_iter()
+                .filter(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0)
+                .map(|record| u32::from(record.body_id))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let equip_conv = match find(EQUIPCONV_FILE_NAME) {
+        Some(path) => EquipConvDefFile::load(&path)?
+            .records()
+            .map(|record| TileMetaEquipConvRow {
+                body: u32::from(record.body),
+                equipment: u32::from(record.equipment),
+                converted: record.converted,
+                gump: record.gump,
+                hue: record.hue,
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let gump_def = match find(GUMP_DEF_FILE_NAME) {
+        Some(path) => TargetsDefFile::load(&path)?
+            .records()
+            .map(|record| {
+                let hue = u16::try_from(record.value)
+                    .wrap_err_with(|| format!("{}: gump {} has hue {}", path.display(), record.id, record.value))?;
+                Ok((u32::from(record.id), record.client_targets().into_iter().map(u32::from).collect(), hue))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+    let tables = TileMetaClassicPaperdoll::from_client_rows(uop_frame_bodies, equip_conv, gump_def)?;
+    info!(
+        "tilemeta: Classic paperdoll tables: {} bodies with UOP frames, {} Equipconv.def rows, {} gump.def rows",
+        tables.uop_frame_bodies().len(),
+        tables.equip_conv_rows().len(),
+        tables.gump_def_rows().len(),
+    );
+    Ok(tables)
 }
 
 /// Map of the light texture in tileart block `LIGHT_TEXTURE_BLOCK_INDEX`: the client's lighting component reads the
@@ -122,10 +189,10 @@ fn tiledata_layer(tiledata: &TileData, tile_id: u32) -> Option<u8> {
     (item.quality != 0).then_some(item.quality)
 }
 
-/// Whether the Enhanced paperdoll can read the `tileart.uop` record of entry `entry_id`: every record from
-/// 10,000,000 (bodies, the targets of Appearance and Paperdoll values, and the default record 99999999 an item
-/// without a record takes), and an item record with a stored property, an appearance filter it reads, or a tiledata
-/// layer (its layer when the record has no Layer).
+/// Whether a paperdoll can read the `tileart.uop` record of entry `entry_id`: every record from 10,000,000 (bodies,
+/// the targets of Appearance and Paperdoll values, and the default record 99999999 an item without a record takes),
+/// and an item record with a stored property, an appearance filter (the Classic paperdoll reads the animation
+/// filters too), or a tiledata layer (its layer when the record has no Layer).
 fn paperdoll_reads(entry_id: u32, entry: &TileArtEntry, tiledata_layer: Option<u8>) -> bool {
     entry_id >= MOBILE_DEFINITION_BASE
         || tiledata_layer.is_some()
@@ -133,10 +200,7 @@ fn paperdoll_reads(entry_id: u32, entry: &TileArtEntry, tiledata_layer: Option<u
             PropertyList::First => entry.property1(key).is_some(),
             PropertyList::Second => entry.property2(key).is_some(),
         })
-        || entry
-            .appearance_vector
-            .iter()
-            .any(|filter| !matches!(filter, TaeAppearanceFilter::AnimationByOwnerBodyType(_)))
+        || !entry.appearance_vector.is_empty()
 }
 
 /// How the tileart Layer (props1 key 6) of the items compares with their tiledata layer (quality).
@@ -300,6 +364,25 @@ mod tests {
         assert_eq!(map_cc_flags_to_tilemeta(TaeFlag::Unused2.bits()), 0);
     }
 
+    /// The Classic paperdoll's tables come from the Classic folder's files as the client reads them, and a folder
+    /// without them gives empty tables.
+    #[test]
+    fn classic_paperdoll_tables_come_from_the_classic_folder() {
+        use uocf::classic::ui::paperdoll_gump::{ClassicPaperdollTables, EquipConvGump, GumpDefTarget};
+        let dir = std::env::temp_dir().join(format!("tilemeta_classic_paperdoll_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("test folder");
+        std::fs::write(dir.join("MobTypes.txt"), "400\tHUMAN\t20000\n666\tEQUIPMENT\t0\n666\tHUMAN\t10000\t0 # Gargoyle\n")
+            .expect("mobtypes");
+        std::fs::write(dir.join("equipconv.def"), "401 1249 1250 61250 0\r\n401 1249 1251 0 0\r\n").expect("equipconv");
+        std::fs::write(dir.join("Gump.def"), "50759\t{50468}\t0\r\n50759\t{50469}\t1153\r\n").expect("gump.def");
+        let tables = build_classic_paperdoll(&[dir.clone()]).expect("tables");
+        assert_eq!(tables.uop_frame_bodies(), [666]);
+        assert_eq!(tables.equip_conv(401, 1249), Some(EquipConvGump { converted: 1251, gump: 0 }));
+        assert_eq!(tables.gump_def(50759), Some(GumpDefTarget { target: 50468, hue: 0 }));
+        std::fs::remove_dir_all(&dir).expect("remove test folder");
+        assert_eq!(build_classic_paperdoll(&[dir]).expect("no files"), TileMetaClassicPaperdoll::default());
+    }
+
     #[test]
     fn source_item_materials_survive_converter_package_roundtrip() {
         let path = std::env::temp_dir().join(format!("tilemeta_materials_{}.uddp", std::process::id()));
@@ -313,6 +396,7 @@ mod tests {
             item_materials: [(6038, vec![material.clone()])].into_iter().collect(),
             item_definitions: TileMetaItemDefinitions::default(), item_lights: Vec::new(),
             tileart_records: TileMetaTileArtRecords::default(),
+            classic_paperdoll: TileMetaClassicPaperdoll::default(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write source material metadata");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read source material metadata");
@@ -352,6 +436,7 @@ mod tests {
                 .expect("definitions"),
             item_lights: Vec::new(),
             tileart_records: TileMetaTileArtRecords::default(),
+            classic_paperdoll: TileMetaClassicPaperdoll::default(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write item definitions");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read item definitions");
@@ -562,6 +647,7 @@ fn write_tilemeta_uddp_with_progress(
     let item_definition_bytes = built.item_definitions.to_bytes()?;
     let item_light_bytes = encode_item_lights(&built.item_lights);
     let tileart_record_bytes = built.tileart_records.to_bytes();
+    let classic_paperdoll_bytes = built.classic_paperdoll.to_bytes();
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -643,6 +729,16 @@ fn write_tilemeta_uddp_with_progress(
         path_hash64: None,
         id: None,
         data: &tileart_record_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: built.package_compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &classic_paperdoll_bytes,
     })?;
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
@@ -913,6 +1009,7 @@ fn build_tilemeta_tables_with_ec_sources(
     let tileart_records = read_tileart_records(&ec_sources.tileart_path)?;
     info!("tilemeta: {} tileart.uop records kept byte for byte ({} bytes)", tileart_records.len(),
         tileart_records.iter().map(|(_, bytes)| bytes.len()).sum::<usize>());
+    let classic_paperdoll = build_classic_paperdoll(cc_source_dirs)?;
 
     Ok(BuiltTileMetaTables {
         land_tiles: tilemeta_land,
@@ -923,6 +1020,7 @@ fn build_tilemeta_tables_with_ec_sources(
         item_definitions,
         item_lights,
         tileart_records,
+        classic_paperdoll,
         package_compression: options.package_compression,
     })
 }

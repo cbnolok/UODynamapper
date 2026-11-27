@@ -294,7 +294,14 @@ These need a person at the GUI or in a running client; the code side is done.
   setting in the app and no per-item numbers. Open: where on the item the light sits (the centre of its drawn area, or
   its brightest part). The lit lanterns use gump 50500 and the unlit ones 50503; the coloured lanterns 0x40FE..0x4101
   are light sources but use the unlit gump 50503, so the light would make them glow too. The only paperdoll gumps with a glow painted in, 50322
-  and 60322, are used by no item, and the client draws that glow as an opaque dark disc.
+  and 60322, are used by no human item, and the client draws that glow as an opaque dark disc; on gargoyles the
+  Classic rule gives them to the lanterns 2584 and 2594 (their tileart appearance 322, [cc_tileart
+  study](client_research/ghidra-cc-tileart/results/cc_tileart.md#31-paperdoll-and-equipment-gumps)).
+- Classic gump paperdoll, after the Classic client's rule (2026-11-27,
+  [cc_tileart study](client_research/ghidra-cc-tileart/results/cc_tileart.md#6-consequences-for-the-converter)).
+  Open: the Enhanced gump paperdoll still takes the tiledata anim and the profile offsets, which the Enhanced client
+  may not (its `UOPaperdoll::BuildImage` reads tileart; not traced); `0x00515df0` in `DrawPaperdollGumpLayers` is
+  unread; a `gump.def` row of several targets gives the first, where the client picks one at random.
 
 ### Export And Tooling
 

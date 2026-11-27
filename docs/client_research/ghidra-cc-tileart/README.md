@@ -34,6 +34,10 @@ legacy offsets describe the Enhanced Client's legacy textures, not art.mul.
   placeholders and UOP mounts, the alternate animation on the layer 2 weapon of a 0x10000 body.
 - Tile effects are dropped at parse time; Classic never plays them.
 
+Dynamapper's Classic gump paperdoll follows this rule since 2026-11-27 (`uocf::classic::paperdoll_gump`, its tables in
+`tilemeta.uddp`); replayed over the 7,882 body and wearable pairs it gives the gumps the study's script gives, and
+also applies `gump.def` (results section 6).
+
 Findings, addresses and measurements are in [results/cc_tileart.md](results/cc_tileart.md). Each result is marked
 **confirmed** (read in the code) or **probable** (inferred).
 

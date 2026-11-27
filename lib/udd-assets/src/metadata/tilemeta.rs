@@ -4,7 +4,9 @@ use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
 use udd_container::UddpReader;
 
+pub mod classic_paperdoll;
 pub mod item_definitions;
+pub use classic_paperdoll::{TileMetaClassicPaperdoll, TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH};
 pub use item_definitions::{TileMetaItemDefinition, TileMetaItemDefinitions};
 
 pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
@@ -17,7 +19,7 @@ pub const TILEMETA_ITEM_TEXTURE_REF_MAGIC: [u8; 4] = *b"TMTR";
 /// Size of the `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH` header: the magic and the `u32` version.
 const TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE: usize = TILEMETA_ITEM_TEXTURE_REF_MAGIC.len() + std::mem::size_of::<u32>();
 pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
-/// The `tileart.uop` records the Enhanced paperdoll reads ([`TileMetaItemDefinitions`]).
+/// The `tileart.uop` records the paperdolls read ([`TileMetaItemDefinitions`]).
 pub const TILEMETA_ITEM_DEFINITION_ENTRY_PATH: &str = "metadata/item_definitions.bin";
 /// The light sprites of the Enhanced and KR clients ([`encode_item_lights`]). Required; empty without EC tileart.
 pub const TILEMETA_ITEM_LIGHT_ENTRY_PATH: &str = "metadata/item_lights.bin";
@@ -775,6 +777,7 @@ pub struct TileMetaPackage {
     item_definitions: TileMetaItemDefinitions,
     item_lights: Vec<TileMetaItemLight>,
     tileart_records: TileMetaTileArtRecords,
+    classic_paperdoll: TileMetaClassicPaperdoll,
 }
 
 impl TileMetaPackage {
@@ -815,6 +818,9 @@ impl TileMetaPackage {
         let tileart_record_bytes = read_path_entry_cow(&package, TILEMETA_TILEART_RECORD_ENTRY_PATH)
             .wrap_err("tilemeta missing the tileart records; repack with the current udd-cli")?;
         let tileart_records = TileMetaTileArtRecords::from_bytes(tileart_record_bytes.as_ref())?;
+        let classic_paperdoll_bytes = read_path_entry_cow(&package, TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH)
+            .wrap_err("tilemeta missing the Classic paperdoll tables; repack with the current udd-cli")?;
+        let classic_paperdoll = TileMetaClassicPaperdoll::from_bytes(classic_paperdoll_bytes.as_ref())?;
 
         Ok(Self {
             package,
@@ -826,6 +832,7 @@ impl TileMetaPackage {
             item_definitions,
             item_lights,
             tileart_records,
+            classic_paperdoll,
         })
     }
 
@@ -876,10 +883,16 @@ impl TileMetaPackage {
         &self.item_lights
     }
 
-    /// The `tileart.uop` records the Enhanced paperdoll reads: the lookup of `uocf::enhanced::paperdoll` runs on
-    /// `&TileMetaItemDefinitions`.
+    /// The `tileart.uop` records the paperdolls read: the lookups of `uocf::enhanced::paperdoll` and
+    /// `uocf::classic::ui::paperdoll_gump` run on `&TileMetaItemDefinitions`.
     pub fn item_definitions(&self) -> &TileMetaItemDefinitions {
         &self.item_definitions
+    }
+
+    /// The Classic client's tables its paperdoll gump reads besides tileart: `mobtypes.txt`'s UOP-frame bodies,
+    /// `Equipconv.def` and `gump.def`.
+    pub fn classic_paperdoll(&self) -> &TileMetaClassicPaperdoll {
+        &self.classic_paperdoll
     }
 
     pub fn land_tiles(&self) -> &[TileMetaLandTile] {
@@ -1335,7 +1348,9 @@ mod tests {
 
     fn package_with_tileart_records(refs: &[u8], lights: Option<&[u8]>, records: Option<&[u8]>) -> eyre::Result<TileMetaPackage> {
         let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
+        let classic_paperdoll = TileMetaClassicPaperdoll::default().to_bytes();
         let entries = [
+            (TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH, classic_paperdoll.as_slice()),
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
             (TILEMETA_ITEM_ENTRY_PATH, b"".as_slice()),
             (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),
@@ -1473,8 +1488,10 @@ mod tests {
             let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
             let (refs, lights) = (encode_item_texture_refs(&[]), encode_item_lights(&[light]));
             let tileart = TileMetaTileArtRecords::default().to_bytes();
+            let classic_paperdoll = TileMetaClassicPaperdoll::default().to_bytes();
             let record = record.map(TileMetaOverridesRecord::to_bytes);
             let entries = [
+                (TILEMETA_CLASSIC_PAPERDOLL_ENTRY_PATH, classic_paperdoll.as_slice()),
                 (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
                 (TILEMETA_ITEM_ENTRY_PATH, bytemuck::cast_slice(&items)),
                 (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),

@@ -29,12 +29,14 @@ pub struct PaperdollProfile {
     pub id: String,
     /// The name shown; the id when the file gives none.
     pub label: String,
-    /// Added to an item's tiledata anim id: the gump the item draws.
+    /// Added to an item's tiledata anim id: the gump the item draws on the Enhanced gump paperdoll. The Classic one
+    /// follows the Classic client's rule instead (`classic::paperdoll_gump`).
     pub equipment_offset: u32,
     /// The offset of the gump drawn when the one at `equipment_offset` is missing: the female profiles fall back to the
     /// male gumps, as ClassicUO and the Enhanced Client's gump paperdoll do. `None`: no fallback.
     pub fallback_equipment_offset: Option<u32>,
-    /// The server body: Dynamapper's 3D paperdoll draws its frame, and its race picks the overrides of the draw order.
+    /// The server body: Dynamapper's 3D paperdoll draws its frame, the Classic gump rule reads it as the paperdoll body,
+    /// and its race picks the overrides of the draw order.
     pub body: u32,
     /// The minimum size of the composed paperdoll.
     pub canvas_width: u32,

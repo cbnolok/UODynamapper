@@ -5,4 +5,5 @@ pub mod fonts;
 pub mod gump;
 pub mod gump_write;
 pub mod help_index;
+pub mod paperdoll_gump;
 pub mod paperdoll_profiles;

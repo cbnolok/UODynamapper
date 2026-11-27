@@ -340,6 +340,15 @@ appearance: the male whips 41610/41611/41618/41619 take 1490/1494 instead of 148
     matching type 2 filter
   - the body type and alternate animation of UOP animation (0x10000 bodies, UOP mounts)
 - string_dictionary.uop is needed only to resolve tileart names and texture paths. Classic reads neither for art.
+- **The Classic gump paperdoll.** Done 2026-11-27: Dynamapper's Classic gump paperdoll follows section 3.1
+  (`uocf::classic::paperdoll_gump`). `tilemeta.uddp` carries the type 2 filters (`metadata/item_definitions.bin`
+  kind 2) and the Classic folder's `mobtypes.txt` UOP-frame bodies, `Equipconv.def` and `gump.def`
+  (`metadata/classic_paperdoll.bin`). Replayed over the 7 paperdoll bodies and the 1,126 wearables (7,882 pairs) of
+  the plain Classic folder against this script's rule, the anim is the same for all and the gump for all but the 109
+  whose gump is missing and has a `gump.def` row, which the script does not apply (e.g. 1253 on 12652: 50760 → 50524).
+  Where `gump.def` lists several targets the client picks one at random; Dynamapper takes the first. The paperdoll
+  bodies come from the profile (`PaperdollProfiles.kdl`), so `body.def` is not applied. The Enhanced gump paperdoll
+  keeps the tiledata anim and the profile offsets.
 
 ## 7. Missing files
 
@@ -369,6 +378,6 @@ returns null, and:
 - Which packets reach `BuildItemGumpForRace` 0x004cde80, and what `0x005189e0` is for (it keeps gumps 50001..115000
   per layer; probably the paperdoll hit test).
 - `0x00515df0`, called with the gump id between the female step and the record check in `DrawPaperdollGumpLayers`
-  (0x0051ac6f), was not read; it may change the gump.
+  (0x0051ac6f), was not read; it may change the gump. Dynamapper's Classic paperdoll does not apply it.
 - Whether anything calls `UOAnimationFrameSet` slot 0 virtually.
 - The missing-file behaviour of section 7 was read, not run.

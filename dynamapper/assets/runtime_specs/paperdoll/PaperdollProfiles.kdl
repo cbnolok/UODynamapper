@@ -1,11 +1,12 @@
 // Classic Client paperdoll composition profiles.
 //
-// equipment_offset is added to tiledata/item tile anim_id to select the wearable gump.
+// equipment_offset is added to tiledata/item tile anim_id to select the wearable gump of the Enhanced gump paperdoll.
 // fallback_equipment_offset (optional) selects the gump drawn when that one is missing: the female profiles fall back to
 // the male gumps, as ClassicUO and the Enhanced Client's gump paperdoll do. A gump missing after that leaves out only its
-// layer, with a log line.
-// body is the server body: the Enhanced 3D paperdoll draws its frame, and its race picks the race overrides of the
-// WearableRules.kdl draw order.
+// layer, with a log line. The Classic gump paperdoll does not read either: it picks each gump by the Classic client's
+// rule on the body (tileart appearance, Equipconv.def, the female gumps, gump.def; uocf::classic::paperdoll_gump).
+// body is the server body: the Enhanced 3D paperdoll draws its frame, the Classic rule reads it as the paperdoll body,
+// and its race picks the race overrides of the WearableRules.kdl draw order.
 // canvas_* is the minimum output surface size. body_* and equipment_* are draw origins.
 // Custom shards can add body/race variants here without changing renderer code.
 //

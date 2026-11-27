@@ -12,7 +12,7 @@ use crate::settings::runtime_specs::SpecFiles;
 use crate::render::view::camera::UiCameraResource;
 use crate::settings::GumpClient;
 use crate::content::{gumps::GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
-use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
+use udd_assets::tilemeta::{TileMetaClassicPaperdoll, TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{
     app::paths,
@@ -21,7 +21,9 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle};
 use std::collections::HashSet;
+use uocf::classic::paperdoll_gump::{item_anim, item_gump, paperdoll_body};
 use uocf::classic::paperdoll_profiles::{decode_paperdoll_profiles, PaperdollProfile};
+use uocf::enhanced::mobile_body::DEFAULT_GENDER;
 use uocf::enhanced::paperdoll::{
     body_frame, item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME,
 };
@@ -311,6 +313,16 @@ mod tests {
         TileMetaItemDefinitions::from_tileart([(BEARD, &beard)]).unwrap()
     }
 
+    fn any_gump(_: u32) -> bool {
+        true
+    }
+
+    /// The Classic rule with no `mobtypes.txt`, `Equipconv.def` or `gump.def` rows, and every gump present: the
+    /// tiledata anim + 50,000, + 10,000 for a woman.
+    fn every_classic_gump() -> ClassicGumpSources<'static> {
+        ClassicGumpSources { tables: Box::leak(Box::default()), has_gump: &any_gump }
+    }
+
     fn request(items: &[u32]) -> PaperdollRequest {
         PaperdollRequest {
             profile: bundled_profiles().profile("human_male").unwrap().clone(),
@@ -327,7 +339,8 @@ mod tests {
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let none = StoredDressDecisions::none();
-        let layers = gump_paperdoll_layers(request, client, tile, &beard_definition(), &bundled_order(), &none)?;
+        let layers =
+            gump_paperdoll_layers(request, client, tile, &beard_definition(), every_classic_gump(), &bundled_order(), &none)?;
         Ok(layers.iter().map(|layer| (layer.gump_id, layer.partial_hue)).collect())
     }
 
@@ -370,8 +383,10 @@ mod tests {
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let dressed = request(&[SHIRT, PLATE_CHEST, NECKLACE, ROBE]);
         let gumps = |stored: &StoredDressDecisions| -> Vec<u32> {
-            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), stored)
-                .unwrap()
+            gump_paperdoll_layers(
+                &dressed, GumpClient::Classic, tile, &beard_definition(), every_classic_gump(), &bundled_order(), stored,
+            )
+            .unwrap()
                 .iter()
                 .map(|layer| layer.gump_id)
                 .collect()
@@ -389,8 +404,8 @@ mod tests {
         assert_eq!(gumps(&StoredDressDecisions::none()), [BODY_GUMP, gump(2), gump(6), gump(3)]);
     }
 
-    /// A female profile's item falls back to its male gump when its own is missing; a gump missing after that leaves
-    /// out only its layer, while the body is never left out.
+    /// With Enhanced gumps, a female profile's item falls back to its male gump when its own is missing; a gump
+    /// missing after that leaves out only its layer, while the body is never left out.
     #[test]
     fn a_missing_female_gump_falls_back_to_the_male_one() {
         let profiles = bundled_profiles();
@@ -404,9 +419,10 @@ mod tests {
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let none = StoredDressDecisions::none();
-        let layers =
-            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), &none)
-                .unwrap();
+        let layers = gump_paperdoll_layers(
+            &dressed, GumpClient::Enhanced, tile, &beard_definition(), every_classic_gump(), &bundled_order(), &none,
+        )
+        .unwrap();
         let (shirt, necklace) = (&layers[1], &layers[2]);
         assert_eq!((shirt.gump_id, shirt.fallback_gump_id), (female.equipment_offset + 1, Some(male.equipment_offset + 1)));
         assert_eq!(layers[0].fallback_gump_id, None, "the body gump has no fallback");
@@ -419,6 +435,47 @@ mod tests {
         assert_eq!(layer_gump(&layers[0], has_gump), None);
         assert_eq!(layers[0].item, None, "the body is never left out");
         assert_eq!(describe_item(shirt.item.unwrap()), format!("item {SHIRT} (0x{SHIRT:04X}) on torso"));
+    }
+
+    /// Classic gumps follow the Classic client's rule on the profile's body: a woman's shirt takes the male gump when
+    /// her own is missing, and her necklace the gump of its `Equipconv.def` row; neither has a fallback left.
+    #[test]
+    fn classic_gumps_follow_the_classic_client_rule() {
+        use udd_assets::tilemeta::classic_paperdoll::TileMetaEquipConvRow;
+        use uocf::classic::paperdoll_gump::{GUMP_FEMALE_OFFSET, GUMP_ITEM_BASE, HUMAN_FEMALE_BODY};
+        const SHIRT_ANIM: u32 = 1;
+        const NECKLACE_ANIM: u32 = 3;
+        const NECKLACE_GUMP: u32 = 61_250;
+        let tables = TileMetaClassicPaperdoll::from_client_rows(
+            [],
+            [TileMetaEquipConvRow {
+                body: HUMAN_FEMALE_BODY,
+                equipment: NECKLACE_ANIM,
+                gump: NECKLACE_GUMP as i32,
+                ..TileMetaEquipConvRow::default()
+            }],
+            [],
+        )
+        .unwrap();
+        let present = [SHIRT_ANIM + GUMP_ITEM_BASE, NECKLACE_GUMP];
+        let has_gump = |gump_id: u32| present.contains(&gump_id);
+        let classic = ClassicGumpSources { tables: &tables, has_gump: &has_gump };
+        let mut dressed = request(&[SHIRT, NECKLACE]);
+        dressed.profile = bundled_profiles().profile("human_female").unwrap().clone();
+        let tiles = worn_tiles();
+        let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
+        let none = StoredDressDecisions::none();
+        let layers =
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), classic, &bundled_order(), &none)
+                .unwrap();
+        let gumps: Vec<_> = layers[1..].iter().map(|layer| (layer.gump_id, layer.fallback_gump_id)).collect();
+        assert_eq!(gumps, [(SHIRT_ANIM + GUMP_ITEM_BASE, None), (NECKLACE_GUMP, None)]);
+        // With her own gump present, she takes it.
+        let classic = ClassicGumpSources { tables: &tables, has_gump: &any_gump };
+        let layers =
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), classic, &bundled_order(), &none)
+                .unwrap();
+        assert_eq!(layers[1].gump_id, SHIRT_ANIM + GUMP_ITEM_BASE + GUMP_FEMALE_OFFSET);
     }
 
     fn profiles_error(content: &str) -> String {
@@ -1094,11 +1151,14 @@ fn draw_open_gump_content(
                 tilemeta.item_definitions(),
                 request.profile.body,
             );
+            let gump_map = sources.gump_map()?;
+            let has_classic_gump = |gump_id: u32| gump_map.has_gump(GumpClient::Classic, gump_id);
             let (layers, taken) = gump_paperdoll_layers_taking_off(
                 request,
                 client,
                 |item_id| tilemeta.item_tile(item_id).copied(),
                 tilemeta.item_definitions(),
+                ClassicGumpSources { tables: tilemeta.classic_paperdoll(), has_gump: &has_classic_gump },
                 sources.order,
                 &stored,
             )?;
@@ -1353,7 +1413,8 @@ fn open_gump_by_id(
 
 struct PaperdollLayer {
     gump_id: u32,
-    /// The gump drawn when `gump_id` is missing: an item's gump at the profile's `fallback_equipment_offset`.
+    /// The gump drawn when `gump_id` is missing: an Enhanced item's gump at the profile's `fallback_equipment_offset`.
+    /// The Classic rule picks its fallbacks itself, so a Classic item has none.
     fallback_gump_id: Option<u32>,
     /// The worn item's layer and id; `None` for the body.
     item: Option<(usize, u32)>,
@@ -1477,6 +1538,9 @@ impl<'a> StoredDressDecisions<'a> {
 /// (`content::paperdoll::taken_off`); a taken-off item counts as not worn and the order is taken again. Classic gumps
 /// find an item's layer in tiledata; Enhanced gumps, as the 3D paperdoll does, in the item's `tileart.uop`
 /// record first. The overrides of the draw order follow the race of the profile's body.
+/// An item's gump: Classic gumps follow the Classic client's rule (`uocf::classic::paperdoll_gump`: the tiledata anim,
+/// or tileart's appearance, `Equipconv.def`, the female gump, `gump.def`) on the profile's body; Enhanced gumps take
+/// the profile's offsets on the tiledata anim.
 /// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
 #[cfg(test)]
 fn gump_paperdoll_layers(
@@ -1484,10 +1548,20 @@ fn gump_paperdoll_layers(
     client: GumpClient,
     item_tile: impl Fn(u32) -> Option<TileMetaItemTile>,
     definitions: &TileMetaItemDefinitions,
+    classic: ClassicGumpSources,
     order: &PaperdollOrder,
     stored: &StoredDressDecisions,
 ) -> color_eyre::eyre::Result<Vec<PaperdollLayer>> {
-    gump_paperdoll_layers_taking_off(request, client, item_tile, definitions, order, stored).map(|(layers, _)| layers)
+    gump_paperdoll_layers_taking_off(request, client, item_tile, definitions, classic, order, stored)
+        .map(|(layers, _)| layers)
+}
+
+/// What the Classic rule reads besides tiledata and tileart: tilemeta.uddp's Classic tables, and whether the Classic
+/// gumps have a gump.
+#[derive(Clone, Copy)]
+struct ClassicGumpSources<'a> {
+    tables: &'a TileMetaClassicPaperdoll,
+    has_gump: &'a dyn Fn(u32) -> bool,
 }
 
 /// [`gump_paperdoll_layers`], and every item taken off, in the order taken.
@@ -1496,6 +1570,7 @@ fn gump_paperdoll_layers_taking_off(
     client: GumpClient,
     item_tile: impl Fn(u32) -> Option<TileMetaItemTile>,
     definitions: &TileMetaItemDefinitions,
+    classic: ClassicGumpSources,
     order: &PaperdollOrder,
     stored: &StoredDressDecisions,
 ) -> color_eyre::eyre::Result<(Vec<PaperdollLayer>, Vec<TakenOff>)> {
@@ -1515,13 +1590,24 @@ fn gump_paperdoll_layers_taking_off(
         y: profile.body_y,
     }];
 
+    let wearer = Wearer::new(definitions, profile.body);
+    let classic_body = paperdoll_body(profile.body, wearer.race, wearer.gender != DEFAULT_GENDER);
     let mut worn = [None; LAYER_COUNT];
     let mut worn_layers: [Option<PaperdollLayer>; LAYER_COUNT] = std::array::from_fn(|_| None);
     for item in items {
         let Some(tile) = item_tile(item.item_id) else {
             color_eyre::eyre::bail!("Unknown equipment item ID: {}", item.item_id);
         };
-        if tile.anim_id == 0 {
+        let (anim, classic_body) = match client {
+            GumpClient::Classic => {
+                let body = classic_body.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("Body {} has no Classic paperdoll body.", profile.body)
+                })?;
+                (item_anim(definitions, classic.tables, body.body, item.item_id, u32::from(tile.anim_id)), Some(body))
+            }
+            GumpClient::Enhanced => (u32::from(tile.anim_id), None),
+        };
+        if anim == 0 {
             color_eyre::eyre::bail!("Equipment item {} has no paperdoll anim_id.", item.item_id);
         }
         // A tiledata layer of 0 is no layer.
@@ -1539,19 +1625,28 @@ fn gump_paperdoll_layers_taking_off(
             );
         }
         worn[layer] = Some(item.item_id);
-        let (gump_id, fallback_gump_id) = profile.equipment_gumps(tile.anim_id);
+        let (gump_id, fallback_gump_id, hue_id) = match classic_body {
+            Some(body) => {
+                let (gump_id, hue_id) = item_gump(classic.tables, body, anim, item.hue, classic.has_gump);
+                (gump_id, None, hue_id)
+            }
+            None => {
+                let (gump_id, fallback_gump_id) = profile.equipment_gumps(tile.anim_id);
+                (gump_id, fallback_gump_id, item.hue)
+            }
+        };
         worn_layers[layer] = Some(PaperdollLayer {
             gump_id,
             fallback_gump_id,
             item: Some((layer, item.item_id)),
-            hue_id: item.hue,
+            hue_id,
             partial_hue: tile.flags & TaeFlag::PartialHue.bits() != 0,
             x: profile.equipment_x,
             y: profile.equipment_y,
         });
     }
 
-    let race = Wearer::new(definitions, profile.body).race;
+    let race = wearer.race;
     let mut taken_in_all = Vec::new();
     loop {
         let drawn_layers = order.rules.paperdoll_order(&worn, race);
