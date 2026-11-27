@@ -11,13 +11,9 @@ use crate::content::{
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::platform::collections::{HashMap, HashSet};
-use std::collections::BTreeSet;
-use super::static_placement::CC_TILE_PIXEL_WIDTH;
 use super::static_batches::STATIC_FLAG_LAND_GRADE;
 
 pub(super) const CLASSIC_STATIC_ART_ID_OFFSET: u32 = 0x4000;
-const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
-const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum StaticVisualKind {
     CcRegular { art_id: u32, fallback_art_id: u32 },
@@ -80,13 +76,16 @@ pub(super) fn static_tile_uses_tex_land_ec_surface_path(
     static_tile_is_surface_like(tilemeta, renders_wet)
 }
 
+/// The terrain liquid an Enhanced surface-like static of `tile_id` is drawn with: the water-class terrain material
+/// whose sampler identities its original item material shares (`source_liquid_payload_for_item`). Every other item
+/// draws its own art. The texture-ref, terrain-provenance, wet-water and Classic-texture routes to a terrain slot,
+/// which no item of the installed packages reached, are gone (user decision 2026-11-02).
 fn resolve_surface_like_tex_land_ec_slot_id(
     tile_id: u32,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<SurfaceLikeTexLandEcResolution> {
-    let meta = tilemeta?;
     // This path is Enhanced-only: wetness is the water shader for items with an EC material.
     let renders_wet = static_tile_renders_wet(tilemeta, tilemeta_package, tile_id, Some(ClientTextureSource::Ec));
     if !static_tile_uses_tex_land_ec_surface_path(tilemeta, renders_wet) {
@@ -94,169 +93,20 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     }
 
     let package = tex_land_ec?;
+    let tilemeta_package = tilemeta_package?;
 
     // Match the original item material's sampler identities to the terrain
     // material graph, rather than treating an item graphic as a land tile id.
-    if let Some(tilemeta_package) = tilemeta_package {
-        let refs = tilemeta_package.item_texture_refs(tile_id);
-        if let Some(material) = tilemeta_package.item_material(tile_id, 0) {
-            if let Some(payload) = package.source_liquid_payload_for_item(material, refs) {
-                if let Some(base) = package.resolve_material_render_layers(payload)[0] {
-                    if let Some(runtime_slot_id) = base.runtime_slot_id {
-                        return Some(SurfaceLikeTexLandEcResolution {
-                            runtime_slot_id,
-                            texture_repetition: base.texture_repetition,
-                            liquid_payload: Some(payload),
-                            kingdom_reborn: false,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    let main_ec_texture_id = tilemeta_package
-        .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, renders_wet, package))
-        .map(|texture_ref| texture_ref.texture_id)
-        .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta, renders_wet));
-    let Some(main_ec_texture_id) = main_ec_texture_id else {
-        if let Some(resolution) = wet_surface_like_water_resolution(renders_wet, package) {
-            return Some(resolution);
-        }
-
-        return package
-            .resolve_runtime_slot_id(meta.cc_texture_id)
-            .map(|runtime_slot_id| {
-                surface_like_tex_land_ec_resolution(package, runtime_slot_id, None)
-            });
-    };
-
-    if package.present_slot(main_ec_texture_id).is_some() {
-        return Some(surface_like_tex_land_ec_resolution(
-            package,
-            main_ec_texture_id,
-            Some(main_ec_texture_id),
-        ));
-    }
-
-    let mut canonical_slots = BTreeSet::new();
-    let mut alias_slots = BTreeSet::new();
-    for record in package
-        .terrain_provenance()
-        .iter()
-        .filter(|record| record.selected_texture_id == main_ec_texture_id)
-    {
-        if record.canonical_slot_id != 0
-            && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
-            && package.present_slot(record.canonical_slot_id).is_some()
-        {
-            canonical_slots.insert(record.canonical_slot_id);
-        }
-
-        if record.alias_slot_id != 0
-            && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
-            && package.present_slot(record.alias_slot_id).is_some()
-        {
-            alias_slots.insert(record.alias_slot_id);
-        }
-    }
-
-    if canonical_slots.len() == 1 {
-        return canonical_slots.into_iter().next().map(|runtime_slot_id| {
-            surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
-        });
-    }
-
-    if canonical_slots.is_empty() && alias_slots.len() == 1 {
-        return alias_slots.into_iter().next().map(|runtime_slot_id| {
-            surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
-        });
-    }
-
-    if let Some(resolution) = wet_surface_like_water_resolution(renders_wet, package) {
-        return Some(resolution);
-    }
-
-    package
-        .resolve_runtime_slot_id(meta.cc_texture_id)
-        .map(|runtime_slot_id| {
-            surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
-        })
-}
-
-fn surface_like_visible_ec_texture_ref<'a>(
-    tile_id: u32,
-    renders_wet: bool,
-    package: &'a udd_assets::tilemeta::TileMetaPackage,
-) -> Option<&'a udd_assets::tilemeta::TileMetaItemTextureRef> {
-    if !renders_wet {
-        return package.main_ec_texture_ref(tile_id);
-    }
-
-    choose_visible_surface_texture_ref(package.item_texture_refs(tile_id), tile_id)
-}
-
-pub(super) fn choose_visible_surface_texture_ref(
-    refs: &[udd_assets::tilemeta::TileMetaItemTextureRef],
-    tile_id: u32,
-) -> Option<&udd_assets::tilemeta::TileMetaItemTextureRef> {
-    visible_surface_texture_ref_candidates(refs, tile_id)
-        .find(|texture_ref| texture_ref.is_primary_selected())
-        .or_else(|| visible_surface_texture_ref_candidates(refs, tile_id).next())
-}
-
-fn visible_surface_texture_ref_candidates<'a>(
-    refs: &'a [udd_assets::tilemeta::TileMetaItemTextureRef],
-    tile_id: u32,
-) -> impl Iterator<Item = &'a udd_assets::tilemeta::TileMetaItemTextureRef> {
-    refs.iter().filter(move |texture_ref| {
-        !texture_ref.is_auxiliary()
-            && texture_ref.texture_id != tile_id
-            && matches!(
-                texture_ref.stable_role(),
-                udd_assets::tilemeta::EcMaterialStableRole::Base
-                    | udd_assets::tilemeta::EcMaterialStableRole::SecondaryBase
-            )
+    let refs = tilemeta_package.item_texture_refs(tile_id);
+    let material = tilemeta_package.item_material(tile_id, 0)?;
+    let payload = package.source_liquid_payload_for_item(material, refs)?;
+    let base = package.resolve_material_render_layers(payload)[0]?;
+    Some(SurfaceLikeTexLandEcResolution {
+        runtime_slot_id: base.runtime_slot_id?,
+        texture_repetition: base.texture_repetition,
+        liquid_payload: Some(payload),
+        kingdom_reborn: false,
     })
-}
-
-pub(super) fn surface_like_legacy_ec_texture_id_fallback(
-    tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
-    renders_wet: bool,
-) -> Option<u32> {
-    if tilemeta.ec_texture_id == 0 || renders_wet {
-        return None;
-    }
-
-    Some(tilemeta.ec_texture_id)
-}
-
-/// The classic-water land fallback for a surface-like static that renders wet in Enhanced mode
-/// (`static_tile_renders_wet`), not merely one with the IsWet property.
-fn wet_surface_like_water_resolution(
-    renders_wet: bool,
-    package: &udd_assets::tex_land_ec::TexLandEcPackage,
-) -> Option<SurfaceLikeTexLandEcResolution> {
-    if !renders_wet {
-        return None;
-    }
-
-    if let Some(layer) =
-        package.resolve_material_layer_slot(CLASSIC_WATER_LAND_TILE_ID, EC_WATER_BASE_LAYER_INDEX)
-    {
-        if let Some(runtime_slot_id) = layer.runtime_slot_id {
-            return Some(SurfaceLikeTexLandEcResolution {
-                runtime_slot_id,
-                texture_repetition: valid_texture_repetition(layer.texture_repetition),
-                liquid_payload: None,
-                kingdom_reborn: false,
-            });
-        }
-    }
-
-    package
-        .resolve_runtime_slot_id(CLASSIC_WATER_LAND_TILE_ID)
-        .map(|runtime_slot_id| surface_like_tex_land_ec_resolution(package, runtime_slot_id, None))
 }
 
 pub(super) fn valid_texture_repetition(repetition: f32) -> f32 {
@@ -276,63 +126,8 @@ pub(crate) struct SurfaceLikeTexLandEcResolution {
     pub(crate) kingdom_reborn: bool,
 }
 
-fn surface_like_tex_land_ec_resolution(
-    package: &udd_assets::tex_land_ec::TexLandEcPackage,
-    runtime_slot_id: u32,
-    selected_texture_id: Option<u32>,
-) -> SurfaceLikeTexLandEcResolution {
-    let texture_repetition = selected_texture_id
-        .and_then(|texture_id| {
-            package
-                .terrain_provenance()
-                .iter()
-                .filter(|record| record.selected_texture_id == texture_id)
-                .find(|record| {
-                    provenance_record_matches_runtime_slot(package, record, runtime_slot_id)
-                })
-                .map(|record| record.selected_texture_repetition)
-        })
-        .filter(|repetition| repetition.is_finite() && *repetition > 0.0)
-        .or_else(|| {
-            package.present_slot(runtime_slot_id).map(|slot| {
-                let width = f32::from(slot.width).max(1.0);
-                width / CC_TILE_PIXEL_WIDTH
-            })
-        })
-        .unwrap_or(1.0);
-
-    SurfaceLikeTexLandEcResolution {
-        runtime_slot_id,
-        texture_repetition,
-        liquid_payload: None,
-        kingdom_reborn: false,
-    }
-}
-
 pub(super) fn surface_like_ground_material_payload(liquid_payload: Option<u32>) -> (u32, u32) {
     liquid_payload.map_or((0, 0), |payload| (payload, 1))
-}
-
-fn provenance_record_matches_runtime_slot(
-    package: &udd_assets::tex_land_ec::TexLandEcPackage,
-    record: &udd_assets::tex_land_ec::TexLandEcTerrainProvenanceRecord,
-    runtime_slot_id: u32,
-) -> bool {
-    if record.canonical_slot_id != 0
-        && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
-        && package.present_slot(record.canonical_slot_id).is_some()
-    {
-        return record.canonical_slot_id == runtime_slot_id;
-    }
-
-    if record.alias_slot_id != 0
-        && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
-        && package.present_slot(record.alias_slot_id).is_some()
-    {
-        return record.alias_slot_id == runtime_slot_id;
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -723,14 +518,14 @@ pub(super) fn resolve_ec_static_visual_kind(
         // Walkable sprites (stairs, bridges, furniture) still own their art.
         // The Surface tiledata flag does not make their graphic id a land id.
         StaticVisualKind::EcRegular { art_id: tile_graphic as u32 }
-    } else if let Some(resolution) = surface_like_land_resolution.filter(|r| r.liquid_payload.is_some()) {
+    } else if let Some(resolution) = surface_like_land_resolution {
+        // A terrain liquid, the only resolution `resolve_surface_like_tex_land_ec_slot_id` makes: it takes the
+        // place of the item's own surface art.
         StaticVisualKind::TexLandEc { resolution }
     } else if has_tex_art_ec_surface_slot {
         // Tileart owns this image and its sampling window. A terrain texture with
         // the same source id cannot replace an authored item-owned surface.
         StaticVisualKind::EcSurface { art_id: tile_graphic as u32 }
-    } else if let Some(resolution) = surface_like_land_resolution {
-        StaticVisualKind::TexLandEc { resolution }
     } else {
         StaticVisualKind::EcRegular {
             art_id: tile_graphic as u32,

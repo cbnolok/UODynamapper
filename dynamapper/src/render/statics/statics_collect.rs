@@ -2769,26 +2769,6 @@ mod tests {
     }
 
     #[test]
-    fn wet_surface_like_tiles_consider_visible_tileart_refs_before_water_fallback() {
-        let refs = [
-            texture_ref_with_role(
-                200,
-                udd_assets::tilemeta::EcMaterialStableRole::WaterBump,
-                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-            ),
-            texture_ref_with_role(
-                201,
-                udd_assets::tilemeta::EcMaterialStableRole::Base,
-                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-            ),
-        ];
-
-        let chosen = choose_visible_surface_texture_ref(&refs, 42).expect("visible ref");
-
-        assert_eq!(chosen.texture_id, 201);
-    }
-
-    #[test]
     fn wet_surface_like_ground_payload_does_not_force_ec_water_material() {
         let (material_payload, material_flags) = surface_like_ground_material_payload(None);
 
@@ -2809,34 +2789,6 @@ mod tests {
         assert_eq!(valid_texture_repetition(4.0), 4.0);
         assert_eq!(valid_texture_repetition(0.0), 1.0);
         assert_eq!(valid_texture_repetition(f32::NAN), 1.0);
-    }
-
-    #[test]
-    fn wet_surface_like_tiles_do_not_use_legacy_ec_texture_fallback() {
-        let mut tile = item_tile_with_flags(
-            TILE_FLAG_WET,
-            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
-        );
-        tile.ec_texture_id = 12_345;
-
-        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile, tile.is_wet()), None);
-    }
-
-    #[test]
-    fn non_wet_surface_like_tiles_can_use_legacy_ec_texture_fallback() {
-        let mut tile =
-            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
-        tile.ec_texture_id = 12_345;
-
-        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile, tile.is_wet()), Some(12_345));
-    }
-
-    #[test]
-    fn tileart_owned_surfaces_keep_their_own_atlas_slot() {
-        let resolution = test_surface_like_resolution();
-        let visual_kind = resolve_ec_static_visual_kind(196, false, true, Some(resolution));
-
-        assert_eq!(visual_kind, StaticVisualKind::EcSurface { art_id: 196 });
     }
 
     #[test]
@@ -2874,10 +2826,18 @@ mod tests {
             udd_assets::tilemeta::EcMaterialStableRole::BlendAlpha,
             udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
         );
-        let resolution = test_surface_like_resolution();
+        let resolution = SurfaceLikeTexLandEcResolution {
+            liquid_payload: Some(168),
+            ..test_surface_like_resolution()
+        };
         assert_eq!(
             resolve_ec_static_visual_kind(6038, false, tileart_surface_has_visible_primary(&[primary]), Some(resolution)),
             StaticVisualKind::TexLandEc { resolution },
+        );
+        // Without a terrain liquid the item draws its own art.
+        assert_eq!(
+            resolve_ec_static_visual_kind(6038, false, tileart_surface_has_visible_primary(&[primary]), None),
+            StaticVisualKind::EcRegular { art_id: 6038 },
         );
         let base = texture_ref_with_role(200, udd_assets::tilemeta::EcMaterialStableRole::Base, 0);
         assert!(!tileart_surface_has_visible_primary(&[primary, base]));
@@ -2918,15 +2878,6 @@ mod tests {
             assert!(!static_tile_renders_wet(Some(&dry), None, ART_ID, source));
             assert!(!static_tile_renders_wet(None, None, ART_ID, source));
         }
-    }
-
-    #[test]
-    fn terrain_surface_resolution_remains_available_without_tileart_material() {
-        let resolution = test_surface_like_resolution();
-        assert_eq!(
-            resolve_ec_static_visual_kind(196, false, false, Some(resolution)),
-            StaticVisualKind::TexLandEc { resolution },
-        );
     }
 
     #[test]
@@ -3006,49 +2957,6 @@ mod tests {
         let cache = world.resource::<StaticChunkRenderCache>();
         assert!(cache.last_visible_chunk_keys.is_empty());
         assert!(cache.chunks.contains_key(&key), "decoded chunks remain reusable after enabling");
-    }
-
-    #[test]
-    fn wet_surface_like_visible_ref_rejects_normal_maps() {
-        let refs = [
-            texture_ref_with_role(
-                200,
-                udd_assets::tilemeta::EcMaterialStableRole::WaterBump,
-                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-            ),
-            texture_ref_with_role(201, udd_assets::tilemeta::EcMaterialStableRole::Base, 0),
-        ];
-
-        let chosen = choose_visible_surface_texture_ref(&refs, 42).expect("visible ref");
-
-        assert_eq!(chosen.texture_id, 201);
-    }
-
-    #[test]
-    fn wet_surface_like_visible_ref_prefers_primary_base() {
-        let refs = [
-            texture_ref_with_role(200, udd_assets::tilemeta::EcMaterialStableRole::Base, 0),
-            texture_ref_with_role(
-                201,
-                udd_assets::tilemeta::EcMaterialStableRole::Base,
-                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-            ),
-        ];
-
-        let chosen = choose_visible_surface_texture_ref(&refs, 42).expect("visible ref");
-
-        assert_eq!(chosen.texture_id, 201);
-    }
-
-    #[test]
-    fn wet_surface_like_visible_ref_rejects_exact_tile_id_support_fallback() {
-        let refs = [texture_ref_with_role(
-            42,
-            udd_assets::tilemeta::EcMaterialStableRole::Base,
-            udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-        )];
-
-        assert!(choose_visible_surface_texture_ref(&refs, 42).is_none());
     }
 
     #[test]
