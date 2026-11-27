@@ -1,10 +1,11 @@
 // ============================================================================
 // land::bump — The land bump: a texture's relief tilting the terrain normal.
 //
-//  Enhanced and KR land materials with a bump layer (only snow ships one) use
-//  that map (sampling::sample_ec_material_normal_world). Every other land
-//  texture, the Classic texmaps included, derives its bump from its own
-//  luminance read as a height field: central differences of bilinear taps of
+//  Every land texture, the Classic texmaps and the Enhanced and KR bump layer
+//  (snow) included, derives its bump from its own luminance read as a height
+//  field; the client's bump layer has no normal map, its item 3 moves the
+//  environment map it adds (sampling::sample_ec_bump_environment). The height
+//  field's slopes are central differences of bilinear taps of
 //  the already bound texture, one footprint apart. No land texture has mips,
 //  so the taps widen with the screen footprint and the derived bump fades out
 //  once a pixel covers more texels than the taps can stand for.

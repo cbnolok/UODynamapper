@@ -558,7 +558,7 @@ magnified noise and grunge, and the planar terrain UV on slopes (see P2.3). Ther
 | `art_fake_normal` (side slope, bevel), highlight, rim, specular on art | `world/art/shading.wesl` | none |
 | geometric land normal (mode 0) | `world/land/normals.wesl` | partial: the client computes a normal from the corner heights, but per vertex, then Gouraud |
 | bicubic land normal (mode 1), bent normals | `world/land/normals.wesl` | none |
-| land normal map (`enable_normal_maps`, strength 0.45, `sample_ec_material_normal_world`) | `world/land/sampling.wesl` | none for diffuse lighting; only the snow EMBM bump and the water layers use extra maps |
+| land bump (`enable_normal_maps`, strength 0.45, derived from the texture; the snow normal map `sample_ec_material_normal_world` was removed 2026-11-27) | `world/land/bump.wesl` | none for diffuse lighting; only the snow EMBM bump (now drawn, `sample_ec_bump_environment`) and the water layers use extra maps |
 | wrapped Lambert with wrap 0.5 (mode 2) | `world/land/shading.wesl` | the same curve as the client's half-Lambert, but per pixel and from `BAKED_GLOBAL_LIGHT` (-1, 2.5, -1) instead of D |
 
 ### P2.6 Reference images (`docs/images/kr_reference/`)

@@ -43,7 +43,7 @@ import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::land::sampling::{
   LandGradients, ec_tile_gradients, ec_world_uv,
   ec_material_has_liquid_normal,
-  sample_ec_material_normal_world,
+  sample_ec_bump_environment,
   sample_tile_albedo,
   sample_tile_albedo_filtered,
   sample_tile_albedo_grad,
@@ -65,6 +65,7 @@ import package::shaders::world::effects::surface_effects::{apply_water_animation
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::texture_data::texture_color_rgb;
+import package::shaders::world::srgb::{encode_srgb, decode_srgb};
 import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
@@ -669,24 +670,15 @@ fn shade_land(in: LandVertexOutput, tile: TileUniform, ordered_coverage: bool, w
   let V = world_view_direction(in.world_position.xyz);
 
   // ---- Bump ----
-  // A material's bump map where it has one, else the bump derived from the texture (land/bump.wesl). Liquids keep
-  // a flat surface: their light must match the water statics along their edges, the Enhanced liquid perturbs its
-  // own colour, and a water texture's luminance draws waves, not relief. Classic shading and the clients'
-  // per-vertex model scale their vertex light by `bump_light`; the per-pixel models light Nw directly.
+  // The bump derived from the texture (land/bump.wesl), for every land material: the client's bump layer (snow) has
+  // no normal map, its item 3 moves the environment map added after the shading (`sample_ec_bump_environment`).
+  // Liquids keep a flat surface: their light must match the water statics along their edges, the Enhanced liquid
+  // perturbs its own colour, and a water texture's luminance draws waves, not relief. Classic shading and the
+  // clients' per-vertex model scale their vertex light by `bump_light`; the per-pixel models light Nw directly.
   var bump_light = 1.0;
   if (effects.enable_normal_maps == 1u && !use_ec_liquid && tile.is_wet == 0u && !reviewed_liquid) {
     let bump_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
-    var bump_mapped = false;
-    if (tile.texture_size == 2u) {
-      let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, world_gradients);
-      if (normal_map.w > 0.5) {
-        Nw = normalize(mix(Nw, normal_map.xyz, bump_strength));
-        bump_mapped = true;
-      }
-    }
-    if (!bump_mapped) {
-      Nw = normalize(Nw + bump_strength * land_derived_bump_tilt(in.world_position.xz, tile, world_gradients));
-    }
+    Nw = normalize(Nw + bump_strength * land_derived_bump_tilt(in.world_position.xz, tile, world_gradients));
     if (shading_mode == 0u || land_light.terrain_shading_model == TERRAIN_SHADING_CLIENT_PER_VERTEX) {
       bump_light = land_bump_light_ratio(surface_normal, Nw, L, shading_mode != 0u);
     }
@@ -814,6 +806,15 @@ fn shade_land(in: LandVertexOutput, tile: TileUniform, ordered_coverage: bool, w
   // accepted output). The Enhanced liquid material has no land-light buffer.
   if (!use_ec_liquid) {
     hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
+  }
+  // The bump layer's stage 5, ADD(item 4, CURRENT), over the lit material: the client adds the encoded colours and
+  // saturates at 1, so the sum is taken encoded, and a colour already above 1 (lights, HDR) keeps its value. Every
+  // other material adds black and skips the encoding.
+  if (tile.texture_size == 2u && !use_ec_liquid) {
+    let environment = sample_ec_bump_environment(tile.texture_payload, in.world_position.xz, in.uv);
+    if (any(environment > vec3<f32>(0.0))) {
+      hdr_rgb = max(hdr_rgb, decode_srgb(min(encode_srgb(hdr_rgb) + environment, vec3<f32>(1.0))));
+    }
   }
   hdr_rgb = apply_kr_color_wash(
     hdr_rgb,

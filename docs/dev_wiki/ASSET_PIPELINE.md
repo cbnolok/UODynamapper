@@ -148,14 +148,14 @@ EC land materials are role-based, not single-texture records. The runtime lookup
 | `0` | base colour | 0 (colour A, the primary) | 1 (fallback colour, the primary) |
 | `1` | detail | 1 (colour B) | - |
 | `2` | mask/alpha | 2 (blend alpha) | - |
-| `3` | normal | bump only: 3 (luminance bump) | 0 (distortion du/dv) |
-| `4` | animated liquid | - | 2 (main colour) |
+| `3` | normal | bump only: 3 (luminance bump, du/dv) | 0 (distortion du/dv) |
+| `4` | animated liquid / environment map | bump only: 4 (environment map) | 2 (main colour) |
 
-The source item behind each role depends on the material's layer class, which comes from its shader name (`TerrainLayerClass`; `UOWaterTerrainLayer`/`UOWaterShader` water, `UOBumpMapTerrainLayer` bump, anything else default). Positions are the client's (`docs/client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md`); names and stretch never pick a layer, and stretch is only a UV divisor. Default and bump colour is `item0 * a + item1 * (1 - a)` with `a` from item 2; item 3 of a default material is never read, and item 4 of the bump material (environment map) is not drawn yet. Edge softness is the material's `coverage_exponent` (0: hard edge, point filtering; larger: soft, bilinear), not a KDL policy.
+The source item behind each role depends on the material's layer class, which comes from its shader name (`TerrainLayerClass`; `UOWaterTerrainLayer`/`UOWaterShader` water, `UOBumpMapTerrainLayer` bump, anything else default). Positions are the client's (`docs/client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md`); names and stretch never pick a layer, and stretch is only a UV divisor. Default and bump colour is `item0 * a + item1 * (1 - a)` with `a` from item 2; item 3 of a default material is never read. The bump material (8, snow) adds item 4, the environment map, over the lit colour, its coordinates the camera-space reflection vector moved by item 3's du/dv and its colour scaled by item 3's luminance, as the client's stages 4 and 5 do (`sample_ec_bump_environment` in `land/sampling.wesl`). Edge softness is the material's `coverage_exponent` (0: hard edge, point filtering; larger: soft, bilinear), not a KDL policy.
 
 The default build is the lossy one, BC7 without RDO at Zstd 19 (9.0 MB against 17.2 MB lossless; since 2026-11-22), and reaches the GPU as BC7 blocks; `--land-raw --land-zstd=19` builds the lossless RGBA8888 pages. Classic land has no lossy build. Format details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.4.
 
-Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC land textures, either as RGBA8888 pages or BC7/BC7-RDO GPU payloads depending on the package build. Do not assume a separate normal-map atlas exists at runtime. Original-client DDS files are source evidence only: for example, `01000013.dds` from a KR unpack is `256x256` DXT1, which shows the source normal map is RGB tangent-space data rather than BC5/ATI2 two-channel data. The renderer samples the repacked UDDP atlas and decodes its RGB channels as the normal.
+Role 3 images (the water du/dv maps and the bump layer's luminance bump) are stored in the same UDDP page-atlas infrastructure as visible EC land textures, either as RGBA8888 pages or BC7/BC7-RDO GPU payloads depending on the package build. Do not assume a separate atlas exists at runtime. Original-client DDS files are source evidence only: for example, `01000013.dds` (the water du/dv, also the bump layer's item 3) is `256x256` unsigned DXT1, not a signed bump or BC5/ATI2 format. The renderer reads its red and green as the du/dv offsets, unexpanded, and its blue as the luminance; no land material has a tangent-space normal map.
 
 ### The Kingdom Reborn sections
 

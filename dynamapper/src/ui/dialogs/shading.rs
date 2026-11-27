@@ -1263,8 +1263,8 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     changed |= slider_en(ui, gates.is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5, tips::KR_MATERIAL_CONTRAST);
     changed |= toggle_slider(ui, gates.is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, &mut u.effects.kr_transition_grime_strength, 0.0..=1.0, tips::KR_TRANSITION_GRIME);
 
-    // Every land source and style takes a bump: an Enhanced or KR material's bump map where it has one (snow), else
-    // the one derived from the texture (land/bump.wesl). The per-pixel lighting reads the bumped normal, Classic
+    // Every land source and style takes a bump, the one derived from the texture (land/bump.wesl); the Enhanced and KR
+    // snow's bump map moves its environment map instead (land/sampling.wesl `sample_ec_bump_environment`). The per-pixel lighting reads the bumped normal, Classic
     // shading and the client per-vertex model scale their vertex light by it, and Grunge's shading reads it too.
     changed |= toggle_slider(ui, true, "Bump Maps", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
     // KR-like, Enhanced and UOD-Painterly, one setting for the style; Classic draws no KR or Enhanced materials.

@@ -900,6 +900,23 @@ settings = { world_rendering = { show_only_player_floor = true } }
 # ---------------------------------------------------------------------------------------------------------------
 
 [[fixture]]
+name = "dagger-isle-snow-environment-map"
+guards = """The snow of Dagger Isle (map 1), Enhanced and KR land material 8, the client's one bump terrain layer \
+(UOBumpMapTerrainLayer): it adds its environment map (item 4) over the lit snow, at the camera-space reflection \
+coordinates moved by item 3's du/dv (2026-11-27). Before, the land drew items 0..2 alone and read item 3 as a normal \
+map the client does not have."""
+tier = "full"
+tags = ["snow", "terrain", "bump"]
+map = 1
+x = 4086
+y = 590
+z = 0
+times = ["afternoon", "night"]
+[fixture.reference]
+path = "docs/images/ec_reference/20260517_130849.png"
+note = "Enhanced client, snow by pines and a cliff (place unknown): white with blue-grey shading and bright glints"
+
+[[fixture]]
 name = "lava-dirt-local-lights"
 guards = """Dirt and lava fields (map 1): lava's local lights reach farther in KR-like and Enhanced through the light \
 scale file (3ad6fc2e); lava and obsidian repetition broken up (eb71a329); Enhanced art draws lava statics from \

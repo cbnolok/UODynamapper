@@ -109,6 +109,8 @@ const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
+/// A water material's main colour, or the bump layer's environment map (`LAND_PAGE_LOOKUP_ROLE_ENVIRONMENT` in
+/// land/sampling.wesl).
 const LAND_PAGE_LOOKUP_ROLE_ANIMATED: u32 = 4;
 const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
 const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6;
@@ -2064,7 +2066,7 @@ import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_l
 import package::shaders::world::land::sampling::{
     LandGradients, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     sample_classic_land_art, sample_ec_material_albedo,
-    sample_ec_material_normal_world, sample_tile_albedo,
+    sample_ec_bump_environment, sample_tile_albedo,
 };
 
 @fragment
@@ -2081,11 +2083,12 @@ fn fragment() -> @location(0) vec4<f32> {
     if (classic_land_art_is_present(0u)) {
         color += sample_classic_land_art(uv, 0u);
     }
-    let normal = sample_ec_material_normal_world(uv, tile, gradients);
+    let normal = vec4<f32>(0.0, 1.0, 0.0, 1.0);
     color *= client_vertex_terrain_shade(vec3<f32>(0.5), normal.xyz);
     let bumped = normalize(normal.xyz + land_derived_bump_tilt(uv, tile, gradients));
     color *= land_bump_light_ratio(normal.xyz, bumped, vec3<f32>(0.0, 1.0, 0.0), true);
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
+    color += sample_ec_bump_environment(tile.texture_payload, uv, reflection_uv);
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
         0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
     let liquid = apply_ec_item_liquid(vec4<f32>(color, normal.w),

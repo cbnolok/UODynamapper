@@ -95,6 +95,13 @@ bright level terrain. An isolated Enhanced receiver pair with diffuse strength
 no normal input or preset is replaced to obtain that control. The original
 morning lighting and its weak snow response remain unchanged.
 
+Update 2026-11-27: the bump layer's item 3 is no normal map either. The client's
+Draw `0x00597f00` binds it as a luminance bump (du/dv) that moves item 4, the
+environment map, added over the lit colour; the land shader now does that
+(`sample_ec_bump_environment`, `land/sampling.wesl`) and the snow takes the derived
+bump like every other land texture. The measurements above are of the removed
+normal-map path.
+
 Temporary evidence uses `effects-audit-*`, `effects-snow-before-*` and
 `effects-role-after-*` under `/tmp/uodynamapper-ec-followup`. The source-role
 inventory identifies exactly seventeen removed false normal bindings, with

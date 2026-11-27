@@ -33,6 +33,7 @@ import package::shaders::world::land::land_bindings::{TileUniform, tex_small, te
 import package::shaders::world::pixel_art_filters::{pixel_art_uv_iq, pixel_art_uv_iq_grad};
 import package::shaders::world::client_filter::{client_filtered_rect_sampled, TEXTURE_FILTER_CLIENT_BILINEAR};
 import package::shaders::world::texture_data::texture_color_rgb;
+import package::shaders::world::ec_liquid::{ec_liquid_slot, ec_liquid_sample, ec_liquid_texture_uv, ec_liquid_world_uv};
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.
@@ -40,6 +41,13 @@ const CC_TILE_PX: f32 = 44.0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1u;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2u;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3u;
+// The water's main colour, or the bump layer's environment map (item 4).
+const LAND_PAGE_LOOKUP_ROLE_ENVIRONMENT: u32 = 4u;
+// The bump layer's stage 4 states (UOBumpMapTerrainLayer::Draw 0x00597f00): BUMPENVMAT00..11 the identity,
+// BUMPENVLSCALE 1, BUMPENVLOFFSET 0.
+const EC_BUMP_ENVIRONMENT_MATRIX: mat2x2<f32> = mat2x2<f32>(1.0, 0.0, 0.0, 1.0);
+const EC_BUMP_LUMINANCE_SCALE: f32 = 1.0;
+const EC_BUMP_LUMINANCE_OFFSET: f32 = 0.0;
 // The smallest texture blur radius in screen pixels: a smaller one blurs exactly as this one does.
 const BLUR_RADIUS_MIN_PIXELS: f32 = 0.5;
 
@@ -170,8 +178,8 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
 // brighter sample, so that the blend keeps the texture's contrast. The blend mask (item 2) moves through a coarser
 // grid of its own, so its blobs keep their size but no longer repeat with the colours. Every tap keeps explicit
 // gradients turned with it, so the filters see the same footprint as the plain tiling and draw no mip seams. The
-// transform depends on the world position alone: transitions, coverage layers, blur, sharpening, the bump and the
-// normal map follow it. The variation fades out between two zooms; past the second every land sample takes the
+// transform depends on the world position alone: transitions, coverage layers, blur, sharpening and the bump follow
+// it. The variation fades out between two zooms; past the second every land sample takes the
 // plain tiling at no extra cost.
 //
 // Every consumer walks the same four taps: the three hex vertices, then the plain tiling (LAND_VARIATION_PLAIN_TAP),
@@ -205,9 +213,6 @@ const LAND_VARIATION_SKEW_Y: f32 = 1.15470054;
 // does not fade, so it ends where shade_land's level of detail drops blur and sharpening (zoom 10, main.wesl).
 const LAND_VARIATION_FADE_START_ZOOM: f32 = 8.0;
 const LAND_VARIATION_FADE_END_ZOOM: f32 = 10.0;
-// A pixel keeps a material's normal map where the taps reading one weigh more than this, else it takes the derived
-// bump (main.wesl), as the plain tiling does where its tap reads none.
-const LAND_VARIATION_MAPPED_HALF: f32 = 0.5;
 // The taps of a variation frame: three hex vertices, then the plain tiling.
 const LAND_VARIATION_TAP_COUNT: u32 = 4u;
 const LAND_VARIATION_PLAIN_TAP: u32 = 3u;
@@ -407,14 +412,6 @@ fn land_variation_tap_gradients(tap: LandVariationTap, world: LandGradients) -> 
   return LandGradients(tap.turn * world.dx, tap.turn * world.dy);
 }
 
-// A world direction a tap reads, back in world axes: the transpose of its turn.
-fn land_variation_tap_unturn(tap: LandVariationTap, v: vec2<f32>) -> vec2<f32> {
-  if (tap.plain) {
-    return v;
-  }
-  return transpose(tap.turn) * v;
-}
-
 // How much a hex vertex's colour counts in the blend: brighter samples more, keeping the texture's contrast.
 fn land_variation_luma_weight(color: vec3<f32>) -> f32 {
   return mix(1.0, dot(color, LAND_VARIATION_LUMA_WEIGHTS), LAND_VARIATION_LUMA_CONTRAST);
@@ -501,45 +498,32 @@ fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
   return read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL).present;
 }
 
-// The static (non-water) normal map. Water materials take the original
-// UOWaterShader path (`ec_liquid::sample_ec_liquid`), which scrolls item 0 by
-// the material's tweaks; this sampler never animates.
-// With the land texture variation, each tap of the colour layers' frame reads the map at its moved and turned point,
-// turns its normal back into world axes and weighs it as the colour; the pixel keeps the map where taps reading
-// one outweigh those that read none.
-fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec4<f32> {
-  let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
-  if (!normal.present) {
-    return vec4<f32>(0.0, 1.0, 0.0, 0.0);
+// The bump layer's environment map (UOBumpMapTerrainLayer::Draw 0x00597f00, material 8, snow; uosa_terrain_layers.md,
+// §2): with six stages the client sets stage 4 to BUMPENVMAPLUMINANCE on item 3 (identity matrix, LSCALE 1,
+// LOFFSET 0; the colour of stages 0..3 passes through) and stage 5 to ADD(item 4, CURRENT), item 4's coordinates
+// the camera-space reflection vector. Item 3's (R, G) move item 4's coordinates after its texture transform, and its
+// luminance, clamped to [0, 1] after the scale and offset, scales item 4's colour. Returns the encoded colour stage 5
+// adds to the lit material, black for every material without both items (only the bump class binds role 4 outside
+// the liquids, which take `ec_liquid::sample_ec_liquid`). Item 3 is unsigned DXT1, read unexpanded as the water's
+// du/dv is (ec_liquid.wesl); it stays still (the bump layer sets no texture translation) and keeps the plain tiling
+// under the land texture variation, which only the colour layers take. The luminance is item 3's blue, the L of
+// Direct3D's bump-luminance formats; the shipped item 3 is blue 255 in every texel, so it is 1.
+fn sample_ec_bump_environment(payload: u32, world_xz: vec2<f32>, reflection_uv: vec2<f32>) -> vec3<f32> {
+  let environment = ec_liquid_slot(land_page_lookup, payload, LAND_PAGE_LOOKUP_ROLE_ENVIRONMENT);
+  if (!environment.present) {
+    return vec3<f32>(0.0);
   }
-
-  let frame = land_variation_frame(world_xz, LAND_VARIATION_HEX_EDGE_CELLS, vec2<i32>(0), land_texture_variation(tile));
-  var normal_sum = vec3<f32>(0.0);
-  var mapped_weight = 0.0;
-  // One call site in a loop: every land sample inlines its texture reads.
-  for (var i = land_variation_first_tap(frame); i < land_variation_end_tap(frame); i++) {
-    if (land_variation_tap_active(frame, i)) {
-      let tap = land_variation_tap(frame, i);
-      let normal_uv = ec_slot_world_uv(land_variation_tap_point(tap, world_xz), normal);
-      let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal, land_variation_tap_gradients(tap, world)).rgb;
-      if (normal_sample.b >= 0.35) {
-        let tangent_normal = normal_sample * 2.0 - vec3<f32>(1.0);
-        let world_normal = normalize(vec3<f32>(
-          tangent_normal.x,
-          max(tangent_normal.z, 0.08),
-          tangent_normal.y,
-        ));
-        let world_xz_normal = land_variation_tap_unturn(tap, world_normal.xz);
-        normal_sum += vec3<f32>(world_xz_normal.x, world_normal.y, world_xz_normal.y) * tap.weight;
-        mapped_weight += tap.weight;
-      }
-    }
+  let bump = ec_liquid_slot(land_page_lookup, payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
+  if (!bump.present) {
+    return vec3<f32>(0.0);
   }
-  if (mapped_weight <= LAND_VARIATION_MAPPED_HALF) {
-    return vec4<f32>(0.0, 1.0, 0.0, 0.0);
-  }
-  // The plain tiling alone is its one normal, as it is.
-  return vec4<f32>(select(normalize(normal_sum), normal_sum, frame.fade <= 0.0), 1.0);
+  let linear = effects.enable_linear_filtering == 1u;
+  let bump_uv = ec_liquid_texture_uv(ec_liquid_world_uv(world_xz), bump.stretch, vec2<f32>(0.0));
+  let bump_texel = ec_liquid_sample(land_page_atlas, tex_small_sampler, bump, bump_uv, linear, true);
+  let environment_uv = ec_liquid_texture_uv(reflection_uv, environment.stretch, vec2<f32>(0.0))
+    + EC_BUMP_ENVIRONMENT_MATRIX * bump_texel.rg;
+  let luminance = clamp(bump_texel.b * EC_BUMP_LUMINANCE_SCALE + EC_BUMP_LUMINANCE_OFFSET, 0.0, 1.0);
+  return ec_liquid_sample(land_page_atlas, tex_small_sampler, environment, environment_uv, linear, true).rgb * luminance;
 }
 
 // ============================================================================

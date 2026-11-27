@@ -793,8 +793,9 @@ impl TexLandEcPackage {
         self.resolve_material_layer_slot_by_material(material_id, cc_tile_id, layer_index)
     }
 
-    /// Shader roles `[fallback/base, detail, mask, normal, animated liquid]`,
-    /// distinct from source layer indices. Water materials bind by position.
+    /// Shader roles `[fallback/base, detail, mask, normal, animated liquid or environment map]`,
+    /// distinct from source layer indices. Water materials bind by position; the bump class
+    /// binds its luminance bump (item 3) as the normal and its environment map (item 4) last.
     pub fn resolve_material_render_layers(
         &self,
         cc_tile_id: u32,
@@ -826,7 +827,20 @@ impl TexLandEcPackage {
                     texture_repetition: layer.texture_repetition,
                 });
             }
-            if index == 4 { return None; }
+            if index == 4 {
+                // The bump class's item 4, the environment map its stage 5 adds (`TerrainLayerRole::EnvironmentMap`);
+                // no other class draws a fifth item.
+                let source = source_texture.filter(|texture| texture.layer_class() == TerrainLayerClass::Bump)?;
+                let material_id = decision.material_id?;
+                let source_index = TerrainLayerClass::Bump.position_of(TerrainLayerRole::EnvironmentMap)?;
+                let layer = source.layers.get(source_index)?;
+                let texture_id = layer.texture_id?;
+                return Some(TexLandEcResolvedMaterialLayer {
+                    material_id, layer_index: source_index as u32, texture_id,
+                    runtime_slot_id: self.resolve_texture_id_slot(material_id, texture_id),
+                    texture_repetition: layer.texture_repetition,
+                });
+            }
             // A fourth default-terrain source can be ordinary artwork (for
             // example swamp/blue-floor tiles), not a tangent normal map.
             // Only the authored bump family or an explicit normal override
@@ -2035,6 +2049,32 @@ mod tests {
         let normal = package.resolve_material_render_layers(500)[3].unwrap();
         assert_eq!(normal.texture_id, 2000520);
         assert_eq!(normal.runtime_slot_id, Some(100));
+    }
+
+    #[test]
+    fn bump_terrain_binds_its_environment_map_last() {
+        const ENVIRONMENT_TEXTURE_ID: u32 = 2000510;
+        const ENVIRONMENT_REPETITION: f32 = 2.0;
+        let mut package = test_package_with_source_map(Some(b"legacyId,newId,newSubType\n500,52,0\n"));
+        package.set_terrain_overrides(&EcTerrainOverrides { terrains: Vec::new() });
+        let texture = package.source_materials.get_mut(&52).unwrap().texture.as_mut().unwrap();
+        texture.shader_name = Some("UODefaultTerrainLayer".to_owned());
+        for (texture_id, texture_repetition) in [(2000520, 12.0), (ENVIRONMENT_TEXTURE_ID, ENVIRONMENT_REPETITION)] {
+            texture.layers.push(uocf::enhanced::terrain_definition::TerrainDefinitionTextureLayer {
+                texture_id: Some(texture_id), texture_repetition, ..Default::default()
+            });
+        }
+        // A default layer never reads a fifth item.
+        assert!(package.resolve_material_render_layers(500)[4].is_none());
+
+        package.source_materials.get_mut(&52).unwrap().texture.as_mut().unwrap()
+            .shader_name = Some("UOBumpMapTerrainLayer".to_owned());
+        let environment = package.resolve_material_render_layers(500)[4].unwrap();
+        assert_eq!(environment.texture_id, ENVIRONMENT_TEXTURE_ID);
+        assert_eq!(environment.layer_index, 4);
+        assert_eq!(environment.texture_repetition, ENVIRONMENT_REPETITION);
+        assert_eq!(environment.runtime_slot_id, package.resolve_texture_id_slot(52, ENVIRONMENT_TEXTURE_ID));
+        assert!(environment.runtime_slot_id.is_some());
     }
 
     #[test]
