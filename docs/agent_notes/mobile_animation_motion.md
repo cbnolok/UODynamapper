@@ -1424,6 +1424,10 @@ outside: the card is one depth, the roof tiles lie on cells behind the mobile's 
   the depth a projected shadow lying on that cell takes. Flat land (z - 2), Background floors (z - 1) and flat items
   (z, levels up to 8) there stay under it, a static standing there at the mobile's z (z + 1, level 1 or more) and land
   rising there more than 3 z cover it. Above the anchor the hit lies behind the card's row, so the card keeps its depth.
+  The plane is taken 2 z over the base (`MOBILE_GROUND_LIFT_Z`, added 2026-11-27): on the base's own plane, land
+  rising 1 or 2 z in the next row, or an Enhanced rug's fringe overhanging its diamond, covered a sliver of a hoof or
+  a claw along each cell edge (the mine at 2578,478; the upper floor at 1412,1601; the ophidians' tails at 2093,790).
+  The price is the foot of a static standing on the cell behind such an edge, up to 8 pixels of it, under the frame.
   One rule for both sources and every facing; the 8 px Enhanced cut over the anchor is gone, and with it the strip
   constants and `MobileGroundStrips`. A mounted mobile's plane is its own base, whatever its layer's offset; the mount's
   and the rider's pixels below the anchor lie level, and the rider, drawn after its mount, shows (the opaque depth test

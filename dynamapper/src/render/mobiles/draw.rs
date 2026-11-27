@@ -552,6 +552,11 @@ mod tests {
         (hit.x.floor(), hit.z.floor())
     }
 
+    /// The z of the plane where a mobile's pixels at `z` meet the ground (art/depth.wesl `MOBILE_GROUND_LIFT_Z`).
+    fn ground_plane_z(z: f32) -> f32 {
+        z + wesl_f32_const(DEPTH_WESL, "MOBILE_GROUND_LIFT_Z")
+    }
+
     /// The logical distance (static_placement.rs `logical_draw_distance`, which the GPU's depth follows:
     /// depth_tests.rs) of a surface lying on the cell (`x`, `y`) at `priority_z`, tie level 0.
     fn cell_distance((x, y): (f32, f32), priority_z: f32) -> f64 {
@@ -561,7 +566,7 @@ mod tests {
 
     /// art/depth.wesl `mobile_fragment_view_z` in the isometric camera, as a logical distance: the pixel
     /// (`right_px`, `below_px`) of a frame of tie level `tie_level` of a mobile at (`x`, `y`) and `z`, under the ceiling
-    /// plane at z `ceiling_z` if any.
+    /// plane at z `ceiling_z` if any. The ground point is on the plane `MOBILE_GROUND_LIFT_Z` over the base.
     fn mobile_pixel_distance(x: f32, y: f32, z: f32, (right_px, below_px): (f32, f32), tie_level: u32,
         ceiling_z: Option<f32>) -> f64 {
         let ceiling_offset = wesl_f32_const(DEPTH_WESL, "MOBILE_CEILING_PRIORITY_Z_OFFSET");
@@ -570,7 +575,7 @@ mod tests {
         let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x, depth_y);
         let priority_z = z + MOBILE_PRIORITY_Z_OFFSET;
         let card = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(priority_z), tie_level);
-        let mut distance = card.max(cell_distance(plane_cell(point, z), priority_z));
+        let mut distance = card.max(cell_distance(plane_cell(point, ground_plane_z(z)), priority_z));
         if let Some(ceiling_z) = ceiling_z
             && point.y > crate::world::coords::scale_uo_z_to_bevy_units(ceiling_z) {
             distance = distance.min(cell_distance(plane_cell(point, ceiling_z), ceiling_z + ceiling_offset));
@@ -607,9 +612,9 @@ mod tests {
         }
     }
 
-    /// A static standing at the mobile's z covers the pixels below the anchor that lie on its cell, and land rising
-    /// there more than 3 z over the mobile covers them too: a planter one row in front hides the tail behind it. Above
-    /// the anchor the frame keeps its card's depth, and so do the pixels below it on its own cell.
+    /// A static standing at the mobile's z covers the pixels below the anchor that lie on its cell (where their line of
+    /// sight meets the ground plane), and land rising there more than 3 z over the mobile covers them too: a planter
+    /// one row in front hides the tail behind it. The frame keeps its card's depth on its own row and behind it.
     #[test]
     fn what_stands_in_front_covers_the_pixels_that_lie_on_its_cell() {
         const Z: f32 = 10.0;
@@ -626,7 +631,7 @@ mod tests {
             let mut covered = 0;
             for pixel in frame_pixels() {
                 let mobile = mobile_pixel_distance(x, y, Z, pixel, RIDER_TIE_LEVEL, None);
-                let cell = plane_cell(card_point(x, y, Z, pixel.0, pixel.1), Z);
+                let cell = plane_cell(card_point(x, y, Z, pixel.0, pixel.1), ground_plane_z(Z));
                 if cell.0 + cell.1 <= depth_x + depth_y {
                     assert_eq!(mobile, card, "({x}, {y}): {pixel:?} lies behind or on the mobile's row");
                     continue;
@@ -639,6 +644,26 @@ mod tests {
                 covered += 1;
             }
             assert!(covered > 0);
+        }
+    }
+
+    /// Land rising in front by as much as stays under the mobile on its own cell (its priority z - 2: 2 z, as at 3 z
+    /// it ties the mobile) covers no pixel of the frame along the cells' edges either, where the line of sight meets
+    /// the raised land a row nearer than the base: no seam over a hoof on uneven ground.
+    #[test]
+    fn land_rising_a_little_in_front_leaves_no_seam_over_the_frame() {
+        const Z: f32 = 0.0;
+        const HIGHEST_RISE: u32 = 2;
+        let land_offset = wesl_f32_const(DEPTH_WESL, "LAND_PRIORITY_Z_OFFSET");
+        for (x, y) in MOBILE_POSITIONS {
+            for pixel in frame_pixels() {
+                let point = card_point(x, y, Z, pixel.0, pixel.1);
+                let mobile = mobile_pixel_distance(x, y, Z, pixel, MOUNT_TIE_LEVEL, None);
+                for rise in (1..=HIGHEST_RISE).map(|rise| rise as f32) {
+                    let land = cell_distance(plane_cell(point, Z + rise), Z + rise + land_offset);
+                    assert!(mobile > land, "({x}, {y}): land {rise} z up covers {pixel:?}");
+                }
+            }
         }
     }
 
