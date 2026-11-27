@@ -13,6 +13,8 @@
 //! A sheet shows the frame 4x, nearest, over 50% grey: the source, then each encoding of [`SHEET_FORMATS`] the frame
 //! takes; below each encoding, its difference from the source over the grey, amplified [`DIFF_GAIN`] times.
 
+mod span_frames;
+
 use super::*;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

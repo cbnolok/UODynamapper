@@ -1361,6 +1361,59 @@ Observations:
 - BC1's colour noise on Classic's dithered art is visible at 4× in the sheets, and BC7 UltraFast's is much smaller.
   The user chose BC7 for Classic too.
 
+### BC7 profiles on SPAN 2x frames (measured 2026-11-27)
+
+Whether the SPAN 2x frames should encode slower than UltraFast. Frames: the run-time upscales themselves
+(`FrameUpscaler::upscale_on` on the workspace canvas of the clip's largest frame, Classic alpha snapped), 2–3 frames
+of the stand and walk of direction 5 of Enhanced human 400, daemon 9 and dragon 12 and Classic horse 200 and daemon 9,
+from the 2026-11-27 test packages; encoded on the Radeon 880M, each frame alone. Harness:
+`block_encode::tests::span_frames::evaluate_span_frame_profiles` (ignored), then
+[`span_bc7_sheets.py`](mobile_animation_motion/span_bc7_sheets.py) for the composited errors, the sheets and the
+crowd's backlog. "Over ground" blends in linear light over a grass crop of an Enhanced capture at 2×.
+
+| frames | 2x px | profile | GPU ms/frame | RGB PSNR (α>0) | premult. PSNR / max | over ground PSNR / max | alpha max | halo (max α) |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| Enhanced human 400 | 8k | UltraFast | 0.21 | 32.1 | 36.2 / 46 | 37.2 / 50 | 41 | 798 (28) |
+| | | VeryFast | 1.02 | 32.8 | 36.6 / 66 | 37.4 / 81 | 67 | 725 (32) |
+| | | Fast / Slow | 1.51 / 8.0 | 32.9 / 33.0 | 36.6 / 66 | 37.4 / 81 | 67 | 710 (32) |
+| Enhanced daemon 9 | 113k | UltraFast | 0.34 | 29.4 | 39.1 / 90 | 38.5 / 91 | 47 | 3780 (40) |
+| | | VeryFast | 2.05 | 32.7 | 41.1 / 84 | 40.8 / 108 | 96 | 3058 (93) |
+| | | Fast / Slow | 3.0 / 15.9 | 32.8 / 33.0 | 41.2 / 84–100 | 40.9 / 108 | 96–104 | 3009 (93) |
+| Enhanced dragon 12 | 147k | UltraFast | 0.35 | 30.5 | 39.1 / 101 | 38.9 / 102 | 49 | 4475 (28) |
+| | | VeryFast | 2.05 | 33.5 | 40.4 / 115 | 40.6 / 98 | 119 | 3967 (89) |
+| | | Fast / Slow | 3.1 / 16.1 | 33.6 / 33.8 | 40.6 / 115 | 40.8 / 98 | 119 | 3972 (89) |
+| Classic horse 200 | 30k | UltraFast | 0.19 | 40.3 | 44.8 / 25 | 44.7 / 25 | 1 | 1455 (1) |
+| | | VeryFast / Fast / Slow | 1.05 / 1.57 / 8.1 | 40.7 / 40.9 / 41.0 | 45.1 / 27 | 43.8–44.1 / 27 | 4 | ~2100 (4) |
+| Classic daemon 9 | 143k | UltraFast | 0.37 | 38.1 | 42.1 / 61 | 42.1 / 61 | 1 | 4449 (1) |
+| | | VeryFast / Fast / Slow | 2.9 / 4.2 / 22.8 | 39.9 / 40.4 / 40.5 | 43.8–44.4 / 58–63 | 43.3–43.8 / 58–63 | 4 | ~6900 (4) |
+
+Encode time fit (ms = fixed + per 2x megapixel): UltraFast 0.19 + 1.2, VeryFast 0.89 + 9.5, Fast 1.33 + 13.9,
+Basic 2.09 + 21.7, Slow 6.9 + 75.6. Basic sits between Fast and Slow in time and matches them in error.
+
+- **Gain**: VeryFast is where the gain is; Fast, Basic and Slow add at most 0.25 dB more. On the large Enhanced
+  bodies VeryFast gains 1.7–2.3 dB of the shown image (3 dB of RGB under alpha), on the human 0.2–0.4 dB. On Classic
+  frames the shown image gains 1–1.7 dB over grey, and loses up to 0.8 dB over the ground: the slower profiles' alpha
+  is off by up to 4 (opaque texels at 251), UltraFast's by 1.
+- **Worse in places**: the slower profiles' largest alpha errors and halos are larger (alpha max 47 → 96 on the
+  daemon, a transparent texel decoding to α 93 instead of 40), in blocks the outline then covers or not.
+- **Where the difference is**: block-sized colour shifts along the silhouette and on thin bright details (claws,
+  horns) that UltraFast's modes 4/5/6 cannot split; inside the bodies the profiles look alike. Visible in the 4×
+  crops; at 1:1 (a 2x view) the sheets show nothing a viewer would pick out.
+- **Cost**: the encode is one step of the frame's finish (`upscales/render.rs`), so a step longer than the 2 ms budget
+  runs alone in a frame: VeryFast 2.3 ms, Fast 3.4 ms, Slow 18 ms on a dragon frame, against 0.37 ms. The backlog of
+  32 creatures' clips (SPAN by the cost model ×1.15 plus the encode) drains 9–10 % slower with VeryFast for the large
+  bodies (SPAN is 98 % of it), 27–34 % slower for the human; at 60 fps 32 Enhanced daemons' walk takes 45 s with
+  UltraFast, 49 s with VeryFast. VeryFast/Fast also compile in 14.5 s cold against UltraFast's 5.7 s
+  (shader_compile_progress.md), and the RIFE in-betweens share `MOBILE_BLOCK_FORMAT`.
+- **In game** (outline on; human, daemon, dragon and horse at a 4x view and the four at a 2x view, Classic, Enhanced
+  and KR-like, each profile through a temporary SPAN-only switch, diffs against Slow since the game has no RGBA8
+  reference): pixels off Slow by more than 8 are 0.5–18k with UltraFast, 0.1–3.9k with VeryFast, max 107 against 76.
+  UltraFast's lie along the outline (its alpha moves the outline's edge by a texel in places), VeryFast's are
+  scattered texels inside the body. Side by side at 4x, nearest-zoomed further, the three read the same.
+- **Kept UltraFast** (pending the user's look at the sheets): see the 2026-11-27 report for the sheet paths.
+  `BC7_ENCODE_MS*` (0.25 ms + 4 ms per megapixel) overestimates UltraFast on these frames (0.19 + 1.2); the timed cost
+  scale absorbs it.
+
 ## Ground, collision and draw order of a walking body (2026-11-22)
 
 The user saw the stygian dragon (Enhanced 826) sink into the ground while it walked, and the human, on foot and
