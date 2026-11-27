@@ -1225,3 +1225,19 @@ sources = ["ec/ec"]
 mobiles = [{ x = 2111, y = 790, z = 0, body = 400, facing = 3 },
            { x = 2113, y = 790, z = 0, body = 9, facing = 4 },
            { x = 2112, y = 792, z = 0, body = 200, facing = 2 }]
+
+[[fixture]]
+name = "mobiles-ground-lift-price-daemon-behind-post"
+guards = """The price of the 2 z ground lift below a mobile's anchor (art/depth.wesl MOBILE_GROUND_LIFT_Z, 6fe5fcb3): a \
+daemon (9) standing west of a Britain hitching post (map 1, post z 20, 15 high, on flat land 20) draws its hoof over \
+the post's foot, up to 8 pixels of it, where with the lift at 0 the post passes in front. Accepted for the slivers \
+it removes; a change here means the lift or the rule below the anchor changed."""
+tier = "full"
+tags = ["mobiles", "depth", "britain"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 1459
+y = 1622
+z = 20
+styles = ["classic", "enhanced"]
+mobiles = [{ x = 1458, y = 1622, z = 20, body = 9, facing = 3 }]
