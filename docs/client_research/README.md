@@ -107,6 +107,10 @@ The login flow, packet table, login/game ciphers and the patch sites of the ECLO
 
 The `tileart.uop` load path, its record format as the client reads it and the code
 using tile definitions are named and documented in [`ghidra-tileart`](ghidra-tileart/README.md).
+What the Classic Client (7.0.102.3) reads from its own copy of `tileart.uop` (the same version 4 records as the
+Enhanced Client's: only animation appearance, body type, the alternate animation, the paperdoll appearance and
+sitting; never art ids, offsets, flags or heights, which come from `tiledata.mul`) is traced in
+[`ghidra-cc-tileart`](ghidra-cc-tileart/README.md).
 The effect definitions at the end of tileart records, which share their format with
 `EffectDefinitionCollection.uop`, are decoded in [`ghidra-effects`](ghidra-effects/README.md). The
 Chaos particle engine that plays `.ems` effects is documented in
