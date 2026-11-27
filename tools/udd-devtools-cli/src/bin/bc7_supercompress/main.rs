@@ -29,7 +29,6 @@
 //! `backends.rs` for the names).
 
 mod backends;
-mod bc7block;
 mod condition;
 mod corpus;
 mod ladder;

@@ -1,6 +1,7 @@
 //! Lossy conditioning of the BC7 pages, measured against the source frames: the packer's own pages in RGBA8888 (a
 //! `--raw` package packed beside the BC7 one, so both share one layout), encoded here with the converter's BC7
-//! encoder, then changed by a chain of steps that trade error for a smaller coded page. Measurement only: nothing
+//! encoder, then changed by a chain of steps that trade error for a smaller coded page (the steps are
+//! `uot_texture_codecs::bc7::condition`'s, which the mobile animation packers apply as `--bc7-lossy`). Measurement only: nothing
 //! here writes a package (`--store` writes the pages, which `condition` puts into a copy of the package, and
 //! `--ladder-dir` the visual comparison videos, see `ladder.rs`). The findings are in
 //! `docs/agent_notes/bc7_anim_supercompression.md`, "Lossy conditioning".
@@ -41,10 +42,9 @@ use color_eyre::eyre::{self, WrapErr};
 use ssimulacra2::{ColorPrimaries, LinearRgb, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use udd_assets::animation::move_actions::{GROUP_PEACE, MOVE_ACTION_GROUPS, MOVE_RUN, MOVE_STAND, MOVE_WALK};
 use udd_assets::animation::{mobile_anim_cc, mobile_anim_ec};
-use uot_texture_codecs::bc7::rdo::{Bc7RdoParams, reduce_entropy_bc7_with_progress};
+use uot_texture_codecs::bc7::condition::{Coder, DEFAULT_REUSE_RADIUS, PageConditioner, Placement, Step};
 use uot_texture_codecs::bc7::{Bc7EncoderBackend, ImageExtent, RawImageFormat, decode_bc7_to_rgba8888, encode_to_bc7};
 
-use crate::bc7block::{Block, MODE_4, MODE_6, Rgba, TEXELS};
 use crate::corpus::{Anim, BLOCK_SIDE, Kind, Package};
 use crate::ladder;
 use crate::repack::{self, SlotFrame};
@@ -53,11 +53,7 @@ use crate::transforms::BLOCK_BYTES;
 use crate::{Method, PERCENT, mib, store};
 
 const RGBA_BYTES: usize = 4;
-const BLOCK_BITS: u32 = 128;
-/// Index bits of modes 4, 5 and 6 (`transforms.rs`, `INDEX_BITS`).
-const INDEX_RECORD_BITS: [u32; 3] = [78, 62, 63];
 const ALPHA: usize = 3;
-const BLOCK_EDGE: usize = BLOCK_SIDE as usize;
 const PEAK: f64 = 255.0;
 const COLOUR_CHANNELS: f64 = 3.0;
 /// Pages built and measured at once: each holds its source pages, its pixels and every variant's blocks.
@@ -66,29 +62,9 @@ const PAGE_THREADS: usize = 20;
 const PROGRESS_PAGES: usize = 20;
 /// The level `--store` holds a variant's pages at, as the crowd study holds built pages (`study.rs`).
 const STORE_ZSTD_LEVEL: i32 = 1;
-/// Levels a step may move a texel's alpha from the plain encode's: none, so silhouettes and coverage stay as they are.
-const ALPHA_TOLERANCE: u8 = 0;
 /// The SSIMULACRA2 canvas: frames are composited over grey on at least this many pixels a side (as `gumps.rs`).
 const SSIM_MIN_SIDE: usize = 64;
 const SSIM_BACKGROUND: f32 = 128.0 / 255.0;
-/// The model of Zstd's costs the coder-aware steps price a block with, in bits: a literal byte of BC7 data (its
-/// Huffman code over nearly random bytes), the codes of a new match beyond its offset bits, and a match that only
-/// extends the one before it at the same offset (a repeat offset).
-const LITERAL_BYTE_BITS: f64 = 7.0;
-const MATCH_OVERHEAD_BITS: f64 = 12.0;
-const REPEAT_MATCH_BITS: f64 = 2.0;
-/// The LZ4 block format: literals are stored raw, a sequence's token is one byte, a match's offset two, a literal run
-/// or match longer than the token's 4 bits holds adds a byte per 255, and a match reaches back at most 65 535 bytes.
-const LZ4_BYTE_BITS: f64 = 8.0;
-const LZ4_TOKEN_BITS: f64 = 8.0;
-const LZ4_OFFSET_BITS: f64 = 16.0;
-const LZ4_LENGTH_BYTE_SPAN: f64 = 255.0;
-const LZ4_WINDOW_BYTES: usize = 65_535;
-/// Earlier blocks of one mode and mean kept per hash bucket by `zrdo`, and the bits of the mean per channel.
-const BUCKET_DEPTH: usize = 8;
-const BUCKET_MEAN_SHIFT: u32 = 4;
-/// A temporal candidate's default reach beside the co-located block, in blocks.
-const DEFAULT_REUSE_RADIUS: i32 = 1;
 /// The clip videos: the upscale, the playback rate, the loops and the gap between panels in source pixels.
 const VIDEO_SCALE: usize = 4;
 const VIDEO_FPS: u32 = 8;
@@ -495,62 +471,6 @@ fn build(page: &LaidPage, frames: &Frames, gutter: u16, aligned: bool, position:
     pixels
 }
 
-/// The pixels in block order: each block's 16 texels, row by row.
-fn block_pixels(rgba: &[u8], width: u32, height: u32) -> Vec<[Rgba; TEXELS]> {
-    let (wide, high) = ((width / BLOCK_SIDE) as usize, (height / BLOCK_SIDE) as usize);
-    (0..wide * high).map(|block| {
-        let (bx, by) = (block % wide, block / wide);
-        std::array::from_fn(|texel| {
-            let (x, y) = (bx * BLOCK_EDGE + texel % BLOCK_EDGE, by * BLOCK_EDGE + texel / BLOCK_EDGE);
-            let at = (y * width as usize + x) * RGBA_BYTES;
-            rgba[at..at + RGBA_BYTES].try_into().expect("a pixel")
-        })
-    }).collect()
-}
-
-fn decode_block(bytes: &[u8; 16]) -> [Rgba; TEXELS] {
-    if let Some(block) = Block::unpack(bytes) {
-        return block.decode();
-    }
-    let extent = ImageExtent::new(BLOCK_SIDE, BLOCK_SIDE).expect("a block");
-    let rgba = decode_bc7_to_rgba8888(bytes, extent).expect("a block decodes");
-    std::array::from_fn(|texel| rgba[texel * RGBA_BYTES..][..RGBA_BYTES].try_into().expect("a pixel"))
-}
-
-/// The squared error over the visible texels (source alpha above 0), all four channels, and their count.
-fn visible_error(decoded: &[Rgba; TEXELS], pixels: &[Rgba; TEXELS]) -> (u32, u32) {
-    let mut error = 0;
-    let mut count = 0;
-    for (a, b) in decoded.iter().zip(pixels) {
-        if b[ALPHA] == 0 {
-            continue;
-        }
-        count += 1;
-        error += (0..RGBA_BYTES).map(|channel| (i32::from(a[channel]) - i32::from(b[channel])).unsigned_abs().pow(2))
-            .sum::<u32>();
-    }
-    (error, count)
-}
-
-fn rms(error: u32, count: u32) -> f64 {
-    if count == 0 { 0.0 } else { (f64::from(error) / f64::from(count * RGBA_BYTES as u32)).sqrt() }
-}
-
-/// Whether `candidate` keeps every texel's alpha as `reference` decodes it.
-fn same_alpha(candidate: &[Rgba; TEXELS], reference: &[Rgba; TEXELS]) -> bool {
-    candidate.iter().zip(reference).all(|(a, b)| a[ALPHA].abs_diff(b[ALPHA]) <= ALPHA_TOLERANCE)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Step {
-    Rdo { lambda: f32, lookback: Option<usize> },
-    Reuse { rms: f64, radius: i32 },
-    Zrdo { lambda: f64, rms: f64, coder: Coder },
-    Fields { lambda: f64, rms: f64, coder: Coder },
-    Coarse { bits: u32, rms: f64 },
-    Flat { rms: f64 },
-}
-
 fn parse_variant(text: &str) -> eyre::Result<Vec<Step>> {
     text.split('+').map(|step| {
         let parts: Vec<&str> = step.split(':').collect();
@@ -579,21 +499,6 @@ fn parse_variant(text: &str) -> eyre::Result<Vec<Step>> {
     }).collect()
 }
 
-/// A laid page ready for the steps: its blocks' pixels, the plain encode and its decode, and which placement owns
-/// each block, with the block's place relative to the placement's anchor.
-struct PageContext<'a> {
-    wide: usize,
-    pixels: Vec<[Rgba; TEXELS]>,
-    base: Vec<[u8; 16]>,
-    base_decoded: Vec<[Rgba; TEXELS]>,
-    base_error: Vec<(u32, u32)>,
-    owner: Vec<Option<u32>>,
-    /// Per placement on the page: the block holding its anchor (relative coordinates are against it) and its
-    /// allocation in blocks.
-    anchor_block: HashMap<usize, (i32, i32)>,
-    frames: &'a Frames,
-}
-
 #[derive(Debug, Default, Clone)]
 struct StepStats {
     taken: BTreeMap<Action, u64>,
@@ -602,347 +507,6 @@ struct StepStats {
     visible_by: BTreeMap<Action, u64>,
     seconds: f64,
     rdo_modified: u64,
-}
-
-impl PageContext<'_> {
-    fn high(&self) -> usize {
-        self.base.len() / self.wide
-    }
-
-    fn visible(&self, block: usize) -> bool {
-        self.base_error[block].1 > 0
-    }
-
-    /// Earlier blocks of the adjacent frames at `block`'s place relative to its anchor, within `radius`, with the
-    /// clip's action.
-    fn temporal(&self, block: usize, radius: i32, out: &mut Vec<(usize, Action)>) {
-        out.clear();
-        let Some(slot) = self.owner[block] else { return };
-        let slot = slot as usize;
-        let Some(&(ax, ay)) = self.anchor_block.get(&slot) else { return };
-        let (bx, by) = ((block % self.wide) as i32, (block / self.wide) as i32);
-        for &(other, action) in &self.frames.adjacent[slot] {
-            let Some(&(ox, oy)) = self.anchor_block.get(&other) else { continue };
-            for dy in -radius..=radius {
-                for dx in -radius..=radius {
-                    let (x, y) = (bx - ax + ox + dx, by - ay + oy + dy);
-                    if x < 0 || y < 0 || x as usize >= self.wide || y as usize >= self.high() {
-                        continue;
-                    }
-                    let candidate = y as usize * self.wide + x as usize;
-                    if candidate < block && self.owner[candidate] == Some(other as u32) {
-                        out.push((candidate, action));
-                    }
-                }
-            }
-        }
-    }
-
-    fn accept(&self, block: usize, decoded: &[Rgba; TEXELS], limit: f64) -> Option<u32> {
-        if !same_alpha(decoded, &self.base_decoded[block]) {
-            return None;
-        }
-        let (error, count) = visible_error(decoded, &self.pixels[block]);
-        let (base_error, _) = self.base_error[block];
-        (rms(error, count) <= rms(base_error, count) + limit).then_some(error)
-    }
-
-    fn action_of(&self, block: usize) -> Action {
-        self.owner[block].and_then(|slot| self.frames.adjacent[slot as usize].first().map(|&(_, action)| action))
-            .unwrap_or(Action::Other)
-    }
-
-    fn apply(&self, step: Step, blocks: &mut [[u8; 16]], stats: &mut StepStats) {
-        let start = Instant::now();
-        for block in (0..blocks.len()).filter(|&block| self.visible(block)) {
-            stats.visible += 1;
-            *stats.visible_by.entry(self.action_of(block)).or_default() += 1;
-        }
-        match step {
-            Step::Rdo { lambda, lookback } => {
-                let lookback = lookback.unwrap_or(blocks.len());
-                let params = Bc7RdoParams { lambda, lookback_window_size: lookback * BLOCK_BYTES,
-                    skip_zero_mse_blocks: true, ..Default::default() };
-                let pixels: Vec<[u8; 4]> = self.pixels.iter().flatten().copied().collect();
-                // One window over the whole page, on this page's thread (the packer splits a page into row chunks
-                // of at least the look-back each, which changes a few blocks at the chunk edges).
-                stats.rdo_modified += u64::from(reduce_entropy_bc7_with_progress(blocks, &pixels, self.wide, self.high(),
-                    &params, |_| {}));
-            }
-            Step::Reuse { rms, radius } => self.reuse(blocks, rms, radius, stats),
-            Step::Zrdo { lambda, rms, coder } => self.zrdo(blocks, lambda, rms, coder.model(), stats),
-            Step::Fields { lambda, rms, coder } => self.fields(blocks, lambda, rms, coder.model(), stats),
-            Step::Coarse { bits, rms } => {
-                for block in 0..blocks.len() {
-                    let Some(mut fields) = Block::unpack(&blocks[block]).filter(|_| self.visible(block)) else { continue };
-                    fields.coarsen_endpoints(bits, &self.pixels[block]);
-                    if self.accept(block, &fields.decode(), rms).is_some() {
-                        blocks[block] = fields.pack();
-                        *stats.taken.entry(self.action_of(block)).or_default() += 1;
-                    }
-                }
-            }
-            Step::Flat { rms } => {
-                for block in 0..blocks.len() {
-                    if !self.visible(block) {
-                        continue;
-                    }
-                    let Some(solid) = solid_block(&self.pixels[block]) else { continue };
-                    if self.accept(block, &solid.decode(), rms).is_some() {
-                        blocks[block] = solid.pack();
-                        *stats.taken.entry(self.action_of(block)).or_default() += 1;
-                    }
-                }
-            }
-        }
-        stats.seconds += start.elapsed().as_secs_f64();
-    }
-
-    fn reuse(&self, blocks: &mut [[u8; 16]], limit: f64, radius: i32, stats: &mut StepStats) {
-        let mut candidates = Vec::new();
-        let mut last_offset = 0usize;
-        for block in 0..blocks.len() {
-            if !self.visible(block) {
-                continue;
-            }
-            self.temporal(block, radius, &mut candidates);
-            let mut best: Option<(bool, u32, usize, Action)> = None;
-            for &(candidate, action) in &candidates {
-                if blocks[candidate] == blocks[block] {
-                    best = Some((true, 0, candidate, action));
-                    break;
-                }
-                let Some(error) = self.accept(block, &decode_block(&blocks[candidate]), limit) else { continue };
-                let repeat = block - candidate == last_offset;
-                if best.is_none_or(|(best_repeat, best_error, _, _)| (repeat, std::cmp::Reverse(error))
-                    > (best_repeat, std::cmp::Reverse(best_error))) {
-                    best = Some((repeat, error, candidate, action));
-                }
-            }
-            if let Some((_, _, candidate, action)) = best {
-                if blocks[candidate] != blocks[block] {
-                    *stats.taken.entry(action).or_default() += 1;
-                }
-                blocks[block] = blocks[candidate];
-                last_offset = block - candidate;
-            }
-        }
-    }
-
-    fn zrdo(&self, blocks: &mut [[u8; 16]], lambda: f64, limit: f64, model: CoderModel, stats: &mut StepStats) {
-        let mut buckets: HashMap<u32, Vec<usize>> = HashMap::new();
-        let mut temporal = Vec::new();
-        let mut last_offset = 0usize;
-        let mut previous_matched = false;
-        let literal_bits = BLOCK_BYTES as f64 * model.literal_byte;
-        let match_bits = |offset: usize, extends: bool| -> f64 {
-            if extends {
-                model.extend
-            } else {
-                model.match_overhead + model.offset_log_weight * ((offset * BLOCK_BYTES) as f64).log2()
-            }
-        };
-        for block in 0..blocks.len() {
-            if self.visible(block) {
-                let key = bucket_key(&self.pixels[block], &blocks[block]);
-                let mut candidates: Vec<(usize, Action)> = Vec::new();
-                if last_offset > 0 && last_offset <= block {
-                    candidates.push((block - last_offset, Action::Other));
-                }
-                if block >= 1 {
-                    candidates.push((block - 1, Action::Other));
-                }
-                if block >= self.wide {
-                    candidates.push((block - self.wide, Action::Other));
-                }
-                self.temporal(block, DEFAULT_REUSE_RADIUS, &mut temporal);
-                candidates.extend(temporal.iter().copied());
-                if let Some(bucket) = buckets.get(&key) {
-                    candidates.extend(bucket.iter().map(|&candidate| (candidate, Action::Other)));
-                }
-                candidates.retain(|&(candidate, _)| (block - candidate) * BLOCK_BYTES <= model.window);
-                let (own_error, _) = visible_error(&decode_block(&blocks[block]), &self.pixels[block]);
-                // The block as it is: a literal, or a match when an earlier block is the same.
-                let own_match = candidates.iter().find(|&&(candidate, _)| blocks[candidate] == blocks[block]);
-                let own_bits = own_match.map_or(literal_bits, |&(candidate, _)| {
-                    let offset = block - candidate;
-                    match_bits(offset, previous_matched && offset == last_offset)
-                });
-                let mut best = (f64::from(own_error) + lambda * own_bits, None::<(usize, Action)>);
-                if own_match.is_none() {
-                    for &(candidate, action) in &candidates {
-                        let Some(error) = self.accept(block, &decode_block(&blocks[candidate]), limit) else { continue };
-                        let offset = block - candidate;
-                        let cost = f64::from(error) + lambda * match_bits(offset, previous_matched && offset == last_offset);
-                        if cost < best.0 {
-                            best = (cost, Some((candidate, action)));
-                        }
-                    }
-                }
-                match (best.1, own_match) {
-                    (Some((candidate, action)), _) => {
-                        blocks[block] = blocks[candidate];
-                        let kind = if action == Action::Other { self.action_of(block) } else { action };
-                        *stats.taken.entry(kind).or_default() += 1;
-                        last_offset = block - candidate;
-                        previous_matched = true;
-                    }
-                    (None, Some(&(candidate, _))) => {
-                        last_offset = block - candidate;
-                        previous_matched = true;
-                    }
-                    (None, None) => previous_matched = false,
-                }
-            } else if block > 0 && blocks[block - 1] == blocks[block] {
-                // A run of the one transparent encoding: a match at the offset of one block.
-                last_offset = 1;
-                previous_matched = true;
-            } else {
-                previous_matched = false;
-            }
-            let key = bucket_key(&self.pixels[block], &blocks[block]);
-            let bucket = buckets.entry(key).or_default();
-            if bucket.len() == BUCKET_DEPTH {
-                bucket.remove(0);
-            }
-            bucket.push(block);
-        }
-    }
-
-    fn fields(&self, blocks: &mut [[u8; 16]], lambda: f64, limit: f64, model: CoderModel, stats: &mut StepStats) {
-        // The last block of each mode (and mode 4 index selector) in raster order: the previous record of its stream.
-        let mut previous: HashMap<(u8, u8), usize> = HashMap::new();
-        let mut temporal = Vec::new();
-        for block in 0..blocks.len() {
-            let Some(own) = Block::unpack(&blocks[block]) else { continue };
-            let stream = (own.mode, own.index_mode);
-            if !self.visible(block) {
-                previous.insert(stream, block);
-                continue;
-            }
-            let (field_bits, index_bits) = record_bits(&own);
-            let mut candidates: Vec<usize> = previous.get(&stream).copied().into_iter().collect();
-            if block >= 1 {
-                candidates.push(block - 1);
-            }
-            if block >= self.wide {
-                candidates.push(block - self.wide);
-            }
-            self.temporal(block, 0, &mut temporal);
-            candidates.extend(temporal.iter().map(|&(candidate, _)| candidate));
-            // A record's stream holds at most one record a block, so a block's distance bounds the record's.
-            candidates.retain(|&candidate| (block - candidate) * (field_bits.div_ceil(8) as usize) <= model.window);
-            let (own_error, _) = visible_error(&own.decode(), &self.pixels[block]);
-            let literal = |bits: u32| f64::from(bits.div_ceil(8)) * model.literal_byte;
-            let mut best = (f64::from(own_error) + lambda * (literal(field_bits) + literal(index_bits)), None::<Block>);
-            for &candidate in &candidates {
-                let Some(other) = Block::unpack(&blocks[candidate]) else { continue };
-                if (other.mode, other.index_mode) != stream {
-                    continue;
-                }
-                // Its endpoint fields, the indices picked again.
-                let mut endpoints = other;
-                endpoints.pick_indices(&self.pixels[block]);
-                // Its indices, the endpoints fitted again (modes 4 and 5 keep their own rotation and alpha endpoints,
-                // so only a candidate of the same rotation counts).
-                let mut indices = own;
-                indices.colour_index = other.colour_index;
-                indices.alpha_index = other.alpha_index;
-                indices.fit_endpoints(&self.pixels[block]);
-                let indices_kept = other.rotation == own.rotation && indices.colour_index == other.colour_index
-                    && indices.alpha_index == other.alpha_index;
-                for (trial, bits) in [(endpoints, model.record_match + literal(index_bits)),
-                    (indices, literal(field_bits) + if indices_kept { model.record_match } else { literal(index_bits) })] {
-                    let Some(error) = self.accept(block, &trial.decode(), limit) else { continue };
-                    let cost = f64::from(error) + lambda * bits;
-                    if cost < best.0 {
-                        best = (cost, Some(trial));
-                    }
-                }
-            }
-            if let Some(trial) = best.1 {
-                blocks[block] = trial.pack();
-                *stats.taken.entry(self.action_of(block)).or_default() += 1;
-            }
-            let mode = Block::unpack(&blocks[block]).map_or(stream, |fields| (fields.mode, fields.index_mode));
-            previous.insert(mode, block);
-        }
-    }
-}
-
-/// The coder a coder-aware step prices its matches for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Coder {
-    Zstd,
-    Lz4,
-}
-
-/// A coder's costs in bits, as the coder-aware steps price a block or a `fields` record.
-#[derive(Debug, Clone, Copy)]
-struct CoderModel {
-    literal_byte: f64,
-    /// A new match: its fixed codes, plus this weight times log2 of its offset in bytes.
-    match_overhead: f64,
-    offset_log_weight: f64,
-    /// A block's worth of a match that extends the one before it at the same offset.
-    extend: f64,
-    /// A `fields` record taken whole from an earlier record of its stream.
-    record_match: f64,
-    /// The farthest a match reaches back, in bytes.
-    window: usize,
-}
-
-impl Coder {
-    fn model(self) -> CoderModel {
-        match self {
-            Self::Zstd => CoderModel { literal_byte: LITERAL_BYTE_BITS, match_overhead: MATCH_OVERHEAD_BITS,
-                offset_log_weight: 1.0, extend: REPEAT_MATCH_BITS, record_match: MATCH_OVERHEAD_BITS, window: usize::MAX },
-            // A literal run's length bytes add one per 255 literals; a new match is a token and an offset (the block's
-            // 16 bytes fit the token's match length), and extending one adds one length byte per 255 bytes.
-            Self::Lz4 => CoderModel { literal_byte: LZ4_BYTE_BITS + LZ4_BYTE_BITS / LZ4_LENGTH_BYTE_SPAN,
-                match_overhead: LZ4_TOKEN_BITS + LZ4_OFFSET_BITS, offset_log_weight: 0.0,
-                extend: BLOCK_BYTES as f64 * LZ4_BYTE_BITS / LZ4_LENGTH_BYTE_SPAN,
-                record_match: LZ4_TOKEN_BITS + LZ4_OFFSET_BITS, window: LZ4_WINDOW_BYTES },
-        }
-    }
-}
-
-/// The bits of a block's two `fields` records: the fields between the mode bits and the indices, and the indices.
-fn record_bits(block: &Block) -> (u32, u32) {
-    let index = INDEX_RECORD_BITS[usize::from(block.mode - MODE_4)];
-    (BLOCK_BITS - index - u32::from(block.mode) - 1, index)
-}
-
-fn bucket_key(pixels: &[Rgba; TEXELS], bytes: &[u8; 16]) -> u32 {
-    let mut mean = [0u32; RGBA_BYTES];
-    for pixel in pixels {
-        for channel in 0..RGBA_BYTES {
-            mean[channel] += u32::from(pixel[channel]);
-        }
-    }
-    let mode = u32::from(Block::mode_of(bytes).unwrap_or(0));
-    mean.iter().fold(mode, |key, &sum| (key << 8) ^ ((sum / TEXELS as u32) >> BUCKET_MEAN_SHIFT))
-}
-
-/// An opaque block (every texel's alpha the same) as one mode 6 colour: the mean, its p-bit the one nearer.
-fn solid_block(pixels: &[Rgba; TEXELS]) -> Option<Block> {
-    let alpha = pixels[0][ALPHA];
-    if pixels.iter().any(|pixel| pixel[ALPHA] != alpha) {
-        return None;
-    }
-    let mean: [f64; RGBA_BYTES] = std::array::from_fn(|channel| {
-        pixels.iter().map(|pixel| f64::from(pixel[channel])).sum::<f64>() / TEXELS as f64
-    });
-    let best = (0..2u8).map(|pbit| {
-        let values: [u8; RGBA_BYTES] = std::array::from_fn(|channel| {
-            (((mean[channel] - f64::from(pbit)) / 2.0).round()).clamp(0.0, 127.0) as u8
-        });
-        let error: f64 = (0..RGBA_BYTES).map(|channel| (f64::from(values[channel] << 1 | pbit) - mean[channel]).powi(2)).sum();
-        (error, pbit, values)
-    }).min_by(|a, b| a.0.total_cmp(&b.0))?;
-    let (_, pbit, values) = best;
-    Some(Block { mode: MODE_6, rotation: 0, index_mode: 0, colour: [[values[0], values[1], values[2]]; 2],
-        alpha: [values[ALPHA]; 2], pbits: [pbit; 2], colour_index: [0; TEXELS], alpha_index: [0; TEXELS] })
 }
 
 /// Quality over one class of bodies (or all).
@@ -1193,35 +757,45 @@ pub fn lossy(args: &LossyArgs) -> eyre::Result<()> {
                 counts.1 += u64::from(reference.len() != plain.len());
             }
             let wide = (page.width / BLOCK_SIDE) as usize;
-            let base: Vec<[u8; 16]> = plain.chunks_exact(BLOCK_BYTES).map(|block| block.try_into().expect("a block")).collect();
-            let block_rgba = block_pixels(&rgba, page.width, page.height);
-            let base_decoded: Vec<[Rgba; TEXELS]> = base.iter().map(decode_block).collect();
-            let base_error = base_decoded.iter().zip(&block_rgba).map(|(a, b)| visible_error(a, b)).collect();
-            let mut owner = vec![None; base.len()];
-            let mut anchor_block = HashMap::new();
+            // The page's placements in its order, their neighbours on the page by local index.
             let mut on_page = HashMap::new();
-            for &(slot, x, y) in &page.placed {
+            let mut local = HashMap::new();
+            let mut placements = Vec::with_capacity(page.placed.len());
+            for (at, &(slot, x, y)) in page.placed.iter().enumerate() {
                 let info = &frames.slots[slot];
                 on_page.insert(slot, (x, y));
-                let (rx, ry, rw, rh) = allocation(info, x, y, package.gutter, aligned);
-                for by in ry / BLOCK_SIDE..(ry + rh) / BLOCK_SIDE {
-                    for bx in rx / BLOCK_SIDE..(rx + rw) / BLOCK_SIDE {
-                        owner[by as usize * wide + bx as usize] = Some(slot as u32);
-                    }
-                }
-                let side = BLOCK_SIDE as i32;
-                anchor_block.insert(slot, ((x as i32 + info.anchor.0).div_euclid(side),
-                    (y as i32 + info.anchor.1).div_euclid(side)));
+                local.insert(slot, at);
+                placements.push(Placement { allocation: allocation(info, x, y, package.gutter, aligned),
+                    anchor: (x as i32 + info.anchor.0, y as i32 + info.anchor.1) });
             }
-            let context = PageContext { wide, pixels: block_rgba, base, base_decoded, base_error, owner, anchor_block,
-                frames: &frames };
+            let adjacent: Vec<Vec<(usize, Action)>> = page.placed.iter().map(|&(slot, _, _)| frames.adjacent[slot].iter()
+                .filter_map(|&(other, action)| local.get(&other).map(|&other| (other, action))).collect()).collect();
+            let context = PageConditioner::new(&rgba, page.width, page.height, &plain, &placements, &adjacent)?;
+            // A block's clip kind: the first clip of its placement's, over the whole package.
+            let action_of = |block: usize| context.owner(block)
+                .and_then(|at| frames.adjacent[page.placed[at].0].first().map(|&(_, action)| action)).unwrap_or(Action::Other);
             let mut results: Vec<(Vec<u8>, Vec<StepStats>)> = vec![(plain.clone(), Vec::new())];
             for (_, steps) in &variants {
-                let mut blocks = context.base.clone();
+                let mut blocks = context.base_blocks();
                 let mut stats = Vec::new();
                 for &step in steps {
+                    let start = Instant::now();
                     let mut step_stats = StepStats::default();
-                    context.apply(step, &mut blocks, &mut step_stats);
+                    for block in (0..blocks.len()).filter(|&block| context.visible(block)) {
+                        step_stats.visible += 1;
+                        *step_stats.visible_by.entry(action_of(block)).or_default() += 1;
+                    }
+                    // Reuse counts a block under the clip it was taken through; Zrdo under that clip's unless it is
+                    // Other, then (as every other step) under its own placement's.
+                    let reuse = matches!(step, Step::Reuse { .. });
+                    let mut taken = |block: usize, action: Option<Action>| {
+                        let kind = action.filter(|&action| reuse || action != Action::Other)
+                            .unwrap_or_else(|| action_of(block));
+                        *step_stats.taken.entry(kind).or_default() += 1;
+                    };
+                    let modified = context.apply(step, &mut blocks, &mut taken);
+                    step_stats.rdo_modified += u64::from(modified);
+                    step_stats.seconds += start.elapsed().as_secs_f64();
                     stats.push(step_stats);
                 }
                 results.push((blocks.iter().flatten().copied().collect(), stats));

@@ -1,7 +1,8 @@
 //! The three BC7 modes the mobile animation pages use (4, 5 and 6: one subset each), as fields: unpacked from a
 //! block, packed back bit for bit, decoded as the format reference decodes them, and re-solved for given pixels
-//! (indices picked for fixed endpoints, or endpoints fitted to fixed indices). The lossy conditioning experiments
-//! (`lossy.rs`) edit blocks through it; the tests check the round trip and the decode against `udd_assets::bc7`.
+//! (indices picked for fixed endpoints, or endpoints fitted to fixed indices). The lossy conditioning
+//! ([`super::condition`]) edits blocks through it; the tests check the round trip and the decode against
+//! [`super::decode_bc7_to_rgba8888`].
 
 /// Texels of a block.
 pub const TEXELS: usize = 16;
@@ -457,8 +458,8 @@ mod tests {
                 let block = sample_block(mode, seed);
                 let bytes = block.pack();
                 assert_eq!(Block::unpack(&bytes), Some(block), "mode {mode} seed {seed}");
-                let extent = udd_assets::bc7::ImageExtent::new(4, 4).unwrap();
-                let reference = udd_assets::bc7::decode_bc7_to_rgba8888(&bytes, extent).unwrap();
+                let extent = crate::bc7::ImageExtent::new(4, 4).unwrap();
+                let reference = crate::bc7::decode_bc7_to_rgba8888(&bytes, extent).unwrap();
                 let decoded: Vec<u8> = block.decode().iter().flatten().copied().collect();
                 assert_eq!(decoded, reference, "mode {mode} seed {seed}");
             }

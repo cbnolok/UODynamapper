@@ -12,6 +12,12 @@ pub mod analytical;
 #[path = "bc7/analytical_wide.rs"]
 pub mod analytical_wide;
 #[cfg(feature = "bc7-encode")]
+#[path = "bc7/block_fields.rs"]
+pub mod block_fields;
+#[cfg(feature = "bc7-encode")]
+#[path = "bc7/condition.rs"]
+pub mod condition;
+#[cfg(feature = "bc7-encode")]
 #[path = "bc7/rdo.rs"]
 pub mod rdo;
 #[cfg(feature = "bc7-encode")]
