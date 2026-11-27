@@ -14,7 +14,7 @@ pub mod upscaling;
 pub use animation::{mobile_anim_cc, mobile_anim_ec, paperdoll_ec, paperdoll_ec_dress};
 use atlas::prefix_search;
 use atlas::rgba_bounds;
-pub use atlas::{bc7, page_compression};
+pub use atlas::{bc7, bc7_lossy, page_compression};
 pub use gumps::{cc_gumps, ec_gumps, gump_atlas, single_gumps};
 pub use maps::{cc_map, cc_radar, cc_statics, chunk_compression, classic_patches, classic_sources};
 pub use metadata::{hues, tilemeta, tilemeta_overrides, world_lights};

@@ -115,6 +115,14 @@ the card's Zstd level, 17 by default), Split + LZ4 HC (the level unused) or plai
 saved as `page_coding_mobile_anim_cc` and `page_coding_mobile_anim_ec` (`FieldsZstd`,
 `FieldsLz4Hc`, `Zstd`); Quick Convert always packs Split + Zstd at level 17.
 
+Their **BC7 Lossy** is `--bc7-lossy`: how much the BC7 pages are conditioned after the encode,
+before the page coding, so they code smaller, each texel's alpha kept. Minimal (the default,
+suggested: decent compression and the best quality with minimal loss, the package about 10 %
+Classic and 7 % Enhanced smaller), Slight (a slight quality loss, about 14 % and 12 %), Moderate
+(a moderate quality loss, about 21 % and 18 %) or Lossless (the blocks as encoded). It is saved as
+`bc7_lossy_mobile_anim_cc` and `bc7_lossy_mobile_anim_ec` (`Lossless`, `Minimal`, `Slight`,
+`Moderate`); a card writing raw RGBA8 pages ignores it, and Quick Convert always packs Minimal.
+
 When an upscale profile is selected in the GUI, it is loaded at conversion start
 and used only for image targets that match the profile. Existing GUI upscale
 filter controls remain the fallback for unmatched targets.

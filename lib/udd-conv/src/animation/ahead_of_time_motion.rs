@@ -191,7 +191,7 @@ fn pack_and_store(frames: Vec<DecodedMobileAnimEcFrame>, options: &MobileAnimEcA
     let (pages, _) = pack_frames_into_pages(frames, options)?;
     let pack = timer.elapsed().as_secs_f64();
     let timer = Instant::now();
-    let (encoded, _) = encode_mobile_anim_page_chunk(&pages, options, None, None)?;
+    let (encoded, _, _) = encode_mobile_anim_page_chunk(&pages, options, None, None)?;
     let bc7 = timer.elapsed().as_secs_f64();
     let raw: u64 = encoded.iter().map(|(_, bytes, _, _)| bytes.len() as u64).sum();
     let timer = Instant::now();

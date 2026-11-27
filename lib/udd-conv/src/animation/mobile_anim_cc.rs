@@ -42,6 +42,8 @@ use crate::bc7::{
     Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::bc7_lossy::{condition_page, Bc7LossyLevel, ClipNeighbours, PageClips, MOBILE_ANIM_BC7_LOSSY_LEVEL};
+use crate::bc7::condition::Placement;
 use crate::page_compression::mobile_anim_page_compression;
 use crate::package_progress::{
     build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress,
@@ -118,6 +120,9 @@ pub struct MobileAnimCcAtlasOptions {
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
+    /// The lossy conditioning of the BC7 pages after the encode ([`crate::bc7_lossy`]); ignored for RGBA8888 pages
+    /// and the 2x pages of `prescale`.
+    pub bc7_lossy: Bc7LossyLevel,
     pub upscale_passes: Vec<UpscalePass>,
     pub upscale_profile: Option<Arc<UpscaleProfile>>,
     /// The MobileFrameFilters.kdl to read; when unset, the copy shipped with the tools
@@ -140,6 +145,7 @@ impl Default for MobileAnimCcAtlasOptions {
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: MOBILE_ANIM_BC7_LOSSY_LEVEL,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -212,6 +218,8 @@ struct PlannedMobileAnimFrame {
 pub struct BuiltMobileAnimPage {
     pub record: MobileAnimCcPageRecord,
     pub pixels: Vec<u8>,
+    /// The page's frames and their clip neighbours, for the BC7 lossy conditioning; `None` leaves the page as encoded.
+    pub clips: Option<PageClips>,
 }
 
 struct PackedMobileAnimPages {
@@ -253,7 +261,7 @@ impl MobileAnimCcStageTimings {
         info!(
             "CC mobile animation stage timing: load sources {:.3}s, plan {:.3}s, trim {:.3}s, upscale {:.3}s, body records {:.3}s, \
              bucket selection {:.3}s, frame decode {:.3}s, page build/blit {:.3}s, page encode {:.3}s \
-             (thread time over the pages encoded at once: BC7 input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s), page registration {:.3}s, manifests {:.3}s, \
+             (thread time over the pages encoded at once: BC7 input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s, lossy conditioning {:.3}s), page registration {:.3}s, manifests {:.3}s, \
              package compression and write {:.3}s, total {:.3}s",
             seconds(self.load_sources),
             seconds(self.plan),
@@ -268,6 +276,7 @@ impl MobileAnimCcStageTimings {
             seconds(atlas.encode.bc7.encode),
             seconds(atlas.encode.bc7.rdo),
             seconds(atlas.encode.bc7.flatten),
+            seconds(atlas.encode.condition),
             seconds(atlas.encode.register_pages),
             seconds(self.manifests),
             seconds(self.package_write),
@@ -321,12 +330,15 @@ struct MobileAnimPageStats {
 #[derive(Debug, Clone, Copy, Default)]
 struct MobileAnimEncodeTimings {
     bc7: Bc7StageTimings,
+    /// The BC7 lossy conditioning, summed over the pages.
+    condition: Duration,
     register_pages: Duration,
 }
 
 impl MobileAnimEncodeTimings {
     fn add_assign(&mut self, other: Self) {
         self.bc7.add_assign(other.bc7);
+        self.condition += other.condition;
         self.register_pages += other.register_pages;
     }
 }
@@ -428,12 +440,14 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     let pack_timer = Instant::now();
+    let clip_neighbours = conditions_pages(options).then(|| clip_neighbours(&planned_frames, &animation_records));
     let packed_pages = pack_planned_frames_into_package(
         &mut package,
         planned_frames,
         &mut frame_records,
         &anim_map,
         options,
+        clip_neighbours.as_ref(),
         &payload_progress,
     )?;
     info!(
@@ -732,6 +746,57 @@ fn mob_type_group(type_name: &str) -> Option<u8> {
     }
 }
 
+/// Whether the pack conditions its BC7 pages (`options.bc7_lossy`).
+fn conditions_pages(options: &MobileAnimCcAtlasOptions) -> bool {
+    options.pixel_format == PagePixelFormat::Bc7 && options.bc7_lossy != Bc7LossyLevel::Lossless
+}
+
+/// The clips' consecutive frames for the BC7 lossy conditioning: a Classic frame record has its own placement, keyed by
+/// its global frame index; a frame without pixels has none.
+fn clip_neighbours(
+    planned_frames: &[PlannedMobileAnimFrame],
+    animation_records: &[MobileAnimCcAnimationRecord],
+) -> ClipNeighbours {
+    let placed: HashSet<u32> = planned_frames
+        .iter()
+        .filter(|frame| frame.width != 0 && frame.height != 0)
+        .map(|frame| frame.global_frame_index)
+        .collect();
+    ClipNeighbours::new(
+        animation_records.iter().map(|record| (record.frame_start, u32::from(record.frame_count))),
+        |frame| placed.contains(&frame).then_some(u64::from(frame)),
+    )
+}
+
+/// A packed page's frames (`page_frames`, by global frame index in the packer's order) as the conditioning takes them:
+/// their allocations with `options.gutter` around them, their anchors and their clip neighbours on the page.
+fn page_clips(
+    page_index: u32,
+    page_frames: &[u32],
+    frame_records: &[MobileAnimCcFrameRecord],
+    neighbours: &ClipNeighbours,
+    options: &MobileAnimCcAtlasOptions,
+) -> PageClips {
+    let mut keys = Vec::with_capacity(page_frames.len());
+    let mut placements = Vec::with_capacity(page_frames.len());
+    for &frame in page_frames {
+        let Some(record) = frame_records.get(frame as usize) else { continue };
+        if record.page_index != page_index || record.width == 0 || record.height == 0 {
+            continue;
+        }
+        keys.push(u64::from(frame));
+        placements.push(Placement::in_gutter(
+            u32::from(record.x),
+            u32::from(record.y),
+            u32::from(record.width),
+            u32::from(record.height),
+            options.gutter,
+            (i32::from(record.center_x), i32::from(record.height) + i32::from(record.center_y)),
+        ));
+    }
+    PageClips { adjacent: neighbours.on_page(&keys), placements }
+}
+
 fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("mobile animation atlas dimensions must be non-zero");
@@ -810,7 +875,7 @@ fn encode_and_add_mobile_anim_page_chunk(
             total: payload_total,
         });
     };
-    let (encoded_pages, bc7_timings) = encode_mobile_anim_page_chunk(
+    let (encoded_pages, bc7_timings, condition) = encode_mobile_anim_page_chunk(
         pages,
         options,
         None,
@@ -858,19 +923,21 @@ fn encode_and_add_mobile_anim_page_chunk(
     }
     Ok(MobileAnimEncodeTimings {
         bc7: bc7_timings,
+        condition,
         register_pages,
     })
 }
 
 /// Encodes the chunk's pages in parallel, one task per page, in page order. A page's BC7 encode and RDO split it as
 /// they would alone (the RDO by rows, sized from the pool's thread count, which a nested task sees unchanged), so the
-/// blocks are those of encoding the pages one after another; the timings are summed over the pages.
+/// blocks are those of encoding the pages one after another; a page with clips is then conditioned at
+/// `options.bc7_lossy` on its task. The timings (the conditioning's last) are summed over the pages.
 fn encode_mobile_anim_page_chunk(
     pages: &[BuiltMobileAnimPage],
     options: &MobileAnimCcAtlasOptions,
     pb: Option<&ProgressBar>,
     progress: Option<&(dyn Fn(Bc7ProgressStage, u64) + Sync)>,
-) -> eyre::Result<(Vec<(String, Vec<u8>, u32, u32)>, Bc7StageTimings)> {
+) -> eyre::Result<(Vec<(String, Vec<u8>, u32, u32)>, Bc7StageTimings, Duration)> {
     debug_assert!(options.pixel_format == PagePixelFormat::Bc7);
     let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
     let rdo_options = on_bc7_devices(Bc7RdoOptions::sparse_atlas(
@@ -900,23 +967,33 @@ fn encode_mobile_anim_page_chunk(
             .map_err(|e| {
                 eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
             })?;
+            let mut blocks = encoded.into_bytes().to_vec();
+            let condition_timer = Instant::now();
+            if let Some(clips) = &page.clips {
+                blocks = condition_page(options.bc7_lossy, &page.pixels, page.record.used_width,
+                    page.record.used_height, blocks, clips)
+                    .map_err(|e| eyre::eyre!("condition mobile animation page {}: {e}", page.record.page_index))?;
+            }
+            let condition = condition_timer.elapsed();
             let encoded_page = (
                 page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
-                encoded.into_bytes().to_vec(),
+                blocks,
                 page.record.used_width,
                 page.record.used_height,
             );
-            Ok((encoded_page, timings))
+            Ok((encoded_page, timings, condition))
         })
         .collect::<eyre::Result<Vec<_>>>()?;
     let mut encoded_pages = Vec::with_capacity(encoded.len());
     let mut bc7_timings = Bc7StageTimings::default();
-    for (encoded_page, timings) in encoded {
+    let mut condition = Duration::ZERO;
+    for (encoded_page, timings, page_condition) in encoded {
         bc7_timings.add_assign(timings);
+        condition += page_condition;
         encoded_pages.push(encoded_page);
     }
     flush_bc7_progress(pb, &pending_progress);
-    Ok((encoded_pages, bc7_timings))
+    Ok((encoded_pages, bc7_timings, condition))
 }
 
 fn mobile_anim_chunk_bc7_blocks(pages: &[BuiltMobileAnimPage]) -> u64 {
@@ -1935,6 +2012,7 @@ fn pack_planned_frames_into_package(
     frame_records: &mut [MobileAnimCcFrameRecord],
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
+    clip_neighbours: Option<&ClipNeighbours>,
     payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<PackedMobileAnimPages> {
     let mut remaining = frames;
@@ -1986,8 +2064,12 @@ fn pack_planned_frames_into_package(
         }
         let tail = remaining.split_off(prefix_len);
         let page_frames = std::mem::replace(&mut remaining, tail);
+        let page_frame_indices: Vec<u32> = match clip_neighbours {
+            Some(_) => page_frames.iter().map(|frame| frame.global_frame_index).collect(),
+            None => Vec::new(),
+        };
         let page_timer = Instant::now();
-        let (page, unplaced, filled_pixel_count) = build_planned_page(
+        let (mut page, unplaced, filled_pixel_count) = build_planned_page(
             page_index,
             page_size,
             page_frames,
@@ -1998,6 +2080,9 @@ fn pack_planned_frames_into_package(
             &mut previous_page_sources,
             &mut timings.frame_decode,
         )?;
+        if let Some(neighbours) = clip_neighbours {
+            page.clips = Some(page_clips(page_index, &page_frame_indices, frame_records, neighbours, options));
+        }
         atlas_build_time += page_timer.elapsed();
         if page.record.frame_count == 0 {
             eyre::bail!(
@@ -2347,6 +2432,7 @@ fn build_page(
                 pixel_format: options.pixel_format,
             },
             pixels,
+            clips: None,
         },
         leftovers,
         filled_pixel_count,
@@ -2648,6 +2734,7 @@ fn build_planned_page(
                 pixel_format: options.pixel_format,
             },
             pixels,
+            clips: None,
         },
         leftovers,
         filled_pixel_count,
@@ -3195,6 +3282,7 @@ mod tests {
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: PARALLEL_TEST_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3213,9 +3301,10 @@ mod tests {
                     pixel_format: PagePixelFormat::Bc7,
                 },
                 pixels: parallel_test_pixels(page_index),
+                clips: None,
             })
             .collect();
-        let (parallel, _) = encode_mobile_anim_page_chunk(&pages, &options, None, None).unwrap();
+        let (parallel, _, _) = encode_mobile_anim_page_chunk(&pages, &options, None, None).unwrap();
 
         let rdo_options =
             Bc7RdoOptions::sparse_atlas(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks);
@@ -3381,6 +3470,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3434,6 +3524,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3479,6 +3570,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3519,6 +3611,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3555,6 +3648,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3593,6 +3687,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,
@@ -3875,6 +3970,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            bc7_lossy: crate::bc7_lossy::Bc7LossyLevel::Lossless,
             upscale_passes: Vec::new(),
             upscale_profile: None,
             frame_filters_path: None,

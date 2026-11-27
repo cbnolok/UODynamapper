@@ -72,6 +72,31 @@ RGBA8888 pages (`--raw --zstd`) are not split: `fields-zstd` writes them with pl
 they refuse `--page-coding`. A repack keeps the measured strides either way; the measurements
 are in `docs/agent_notes/bc7_anim_supercompression.md`.
 
+### Mobile animation BC7 conditioning
+
+`pack-mobile-anims` and `pack-ec-mobile-anims` condition their BC7 pages after the encode
+(and `--bc7-rdo`) and before the page coding, as `--bc7-lossy` says, so that the page coding
+finds more to share. Each step keeps every texel's alpha exactly as encoded, so silhouettes stay
+the same, and keeps a block's colour error over its frame's visible texels within a few levels
+of the encode's; the pages decode as any BC7 page, and the package format and readers are
+unchanged.
+
+- `minimal`, the default and the suggested level: decent compression and the best quality with
+  minimal loss. A block takes the endpoints or the index bits of an earlier block of its mode
+  (one at the same place in an adjacent frame of its clip among them), so that one of its records
+  repeats in the field split, within 3 levels (`fields:30:3`). The packages are about 10 %
+  (Classic) and 7 % (Enhanced) smaller under `fields-zstd`.
+- `slight`: a slight quality loss. Colour endpoints are rounded to multiples of 4, then whole
+  earlier blocks are reused where a model of Zstd prices them cheaper (`coarse:2:2+zrdo:30:3`):
+  about 14 % and 12 % smaller.
+- `moderate`: a moderate quality loss (`coarse:2:4+zrdo:100:6`): about 21 % and 18 % smaller.
+- `lossless`: the blocks as encoded.
+
+The conditioning runs on each page's own encode task, so the output is the same at any thread
+count. The 2x pages of `--prescale` are not conditioned. RGBA8888 pages (`--raw`) have no BC7
+blocks: they take `lossless` (the default with `--raw`), and a lossy level with `--raw` is
+refused. The chains are those of the study in `docs/agent_notes/bc7_anim_supercompression.md`.
+
 ### Enhanced paperdoll: what a robe takes off
 
 `pack-ec-paperdoll` also reads `tileart.uop` and `string_dictionary.uop` and measures,

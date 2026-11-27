@@ -6,6 +6,7 @@ use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
 use udd_conv::hues::HueRampMode;
+use udd_conv::bc7_lossy::{Bc7LossyLevel, MOBILE_ANIM_BC7_LOSSY_LEVEL};
 use udd_conv::page_compression::{
     BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_CODING, MOBILE_ANIM_PAGE_ZSTD_LEVEL,
     MobileAnimPageCoding,
@@ -58,6 +59,42 @@ impl Default for MobilePageCoding {
             MobileAnimPageCoding::Zstd => Self::Zstd,
             MobileAnimPageCoding::FieldsZstd => Self::FieldsZstd,
             MobileAnimPageCoding::FieldsLz4Hc => Self::FieldsLz4Hc,
+        }
+    }
+}
+
+/// How much a mobile animation job conditions its BC7 pages after the encode (`--bc7-lossy`, [`Bc7LossyLevel`]); a
+/// job writing RGBA8888 pages ignores it.
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MobileBc7Lossy {
+    /// The blocks as encoded.
+    Lossless,
+    /// Decent compression and the best quality, with minimal loss: the default.
+    Minimal,
+    /// Slight quality loss.
+    Slight,
+    /// Moderate quality loss.
+    Moderate,
+}
+
+impl MobileBc7Lossy {
+    pub const fn level(self) -> Bc7LossyLevel {
+        match self {
+            Self::Lossless => Bc7LossyLevel::Lossless,
+            Self::Minimal => Bc7LossyLevel::Minimal,
+            Self::Slight => Bc7LossyLevel::Slight,
+            Self::Moderate => Bc7LossyLevel::Moderate,
+        }
+    }
+}
+
+impl Default for MobileBc7Lossy {
+    fn default() -> Self {
+        match MOBILE_ANIM_BC7_LOSSY_LEVEL {
+            Bc7LossyLevel::Lossless => Self::Lossless,
+            Bc7LossyLevel::Minimal => Self::Minimal,
+            Bc7LossyLevel::Slight => Self::Slight,
+            Bc7LossyLevel::Moderate => Self::Moderate,
         }
     }
 }
@@ -196,6 +233,9 @@ pub struct AppSettings {
     /// How each mobile animation package codes its pages' compression pass.
     pub page_coding_mobile_anim_cc: MobilePageCoding,
     pub page_coding_mobile_anim_ec: MobilePageCoding,
+    /// How much each mobile animation package conditions its BC7 pages.
+    pub bc7_lossy_mobile_anim_cc: MobileBc7Lossy,
+    pub bc7_lossy_mobile_anim_ec: MobileBc7Lossy,
     pub zstd_tex_aux_ec: i32,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
@@ -313,6 +353,8 @@ impl Default for AppSettings {
             zstd_mobile_anim_ec: MOBILE_ANIM_PAGE_ZSTD_LEVEL,
             page_coding_mobile_anim_cc: MobilePageCoding::default(),
             page_coding_mobile_anim_ec: MobilePageCoding::default(),
+            bc7_lossy_mobile_anim_cc: MobileBc7Lossy::default(),
+            bc7_lossy_mobile_anim_ec: MobileBc7Lossy::default(),
             zstd_tex_aux_ec: BC7_PAGE_ZSTD_LEVEL,
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
@@ -535,6 +577,8 @@ mod tests {
         assert_eq!(settings.zstd_mobile_anim_ec, MOBILE_ANIM_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.page_coding_mobile_anim_cc, MobilePageCoding::FieldsZstd);
         assert_eq!(settings.page_coding_mobile_anim_ec, MobilePageCoding::FieldsZstd);
+        assert_eq!(settings.bc7_lossy_mobile_anim_cc, MobileBc7Lossy::Minimal);
+        assert_eq!(settings.bc7_lossy_mobile_anim_ec, MobileBc7Lossy::Minimal);
     }
 
     #[test]

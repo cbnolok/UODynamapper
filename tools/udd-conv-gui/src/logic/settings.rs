@@ -120,6 +120,8 @@ mod tests {
         assert_eq!(settings.zstd_mobile_anim_ec, defaults.zstd_mobile_anim_ec);
         assert_eq!(settings.page_coding_mobile_anim_cc, defaults.page_coding_mobile_anim_cc);
         assert_eq!(settings.page_coding_mobile_anim_ec, defaults.page_coding_mobile_anim_ec);
+        assert_eq!(settings.bc7_lossy_mobile_anim_cc, defaults.bc7_lossy_mobile_anim_cc);
+        assert_eq!(settings.bc7_lossy_mobile_anim_ec, defaults.bc7_lossy_mobile_anim_ec);
     }
 
     #[test]

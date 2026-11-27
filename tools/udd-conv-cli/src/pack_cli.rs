@@ -38,6 +38,7 @@ use udd_conv::{
         BC7_PAGE_ZSTD_LEVEL, LOSSLESS_PAGE_ZSTD_LEVEL, MOBILE_ANIM_PAGE_CODING, MOBILE_ANIM_PAGE_ZSTD_LEVEL,
         MobileAnimPageCoding,
     },
+    bc7_lossy::{Bc7LossyLevel, MOBILE_ANIM_BC7_LOSSY_LEVEL},
     single_gumps::{default_single_gump_compression, GumpPixelFormat},
     cc_statics::{
         convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches,
@@ -120,6 +121,7 @@ const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), whic
 const MOBILE_ANIM_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) in the BC7 field split with Zstd 17; with --raw, --bc7 or --bc7-rdo, a file-level pass after that encoding (none without --zstd), coded as --page-coding says. A bare --zstd is level 17.";
 const MOBILE_ANIM_BC7_HELP: &str = "Write BC7 atlas pages without BC7 RDO and, without --zstd, uncompressed. The default is BC7 without RDO in the BC7 field split with Zstd 17.";
 const MOBILE_ANIM_PAGE_CODING_HELP: &str = "How the pages' compression pass codes them (the 2x pages of --prescale too): fields-zstd (the default) splits each BC7 page into its blocks' fields, then Zstd, about 8 % smaller than plain Zstd 9, and Dynamapper joins only a clip's blocks; fields-lz4hc splits them, then LZ4 HC, which takes no --zstd level: about 5 % larger than plain Zstd 9 and 2.4 times as fast to decode; zstd compresses the blocks as they are. RGBA8888 pages (--raw) aren't split: fields-zstd writes them with plain Zstd, fields-lz4hc with plain LZ4 HC. --bc7 or --raw without --zstd take no pass to code.";
+const MOBILE_ANIM_BC7_LOSSY_HELP: &str = "How much the BC7 pages are conditioned after the encode (and --bc7-rdo), before the page coding, so they code smaller: minimal (the default, suggested) gives decent compression and the best quality with minimal loss, the package about 10 % (Classic) and 7 % (Enhanced) smaller under fields-zstd; slight, a slight quality loss for about 14 % and 12 %; moderate, a moderate quality loss for about 21 % and 18 %; lossless keeps the blocks as encoded. Every level keeps each texel's alpha, so silhouettes stay exact, and the pages decode as any BC7 page. The 2x pages of --prescale are not conditioned. RGBA8888 pages (--raw) take only lossless.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888 instead of the lossy default, with Zstd 7 unless --zstd=LEVEL.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1, the default: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
 const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, the default, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
@@ -529,6 +531,19 @@ fn resolve_mobile_anim_output_format(
     Ok(format)
 }
 
+/// The mobile animation pages' BC7 conditioning: `level`, or [`MOBILE_ANIM_BC7_LOSSY_LEVEL`] on BC7 pages and none on
+/// RGBA8888 pages without it. A lossy level for RGBA8888 pages is refused.
+fn resolve_mobile_anim_bc7_lossy(level: Option<CliBc7Lossy>, pixel_format: PagePixelFormat)
+    -> eyre::Result<Bc7LossyLevel> {
+    let level = level.map(Bc7LossyLevel::from);
+    if pixel_format != PagePixelFormat::Bc7 {
+        eyre::ensure!(level.is_none_or(|level| level == Bc7LossyLevel::Lossless),
+            "--bc7-lossy conditions BC7 pages, which --raw does not write; only lossless goes with it");
+        return Ok(Bc7LossyLevel::Lossless);
+    }
+    Ok(level.unwrap_or(MOBILE_ANIM_BC7_LOSSY_LEVEL))
+}
+
 fn percent_string(part: u64, total: u64) -> String {
     if total == 0 {
         "0.00%".to_string()
@@ -753,6 +768,26 @@ pub enum CliMobilePageCoding {
     FieldsZstd,
     #[value(name = "fields-lz4hc")]
     FieldsLz4Hc,
+}
+
+/// `--bc7-lossy` of the mobile animation packers ([`Bc7LossyLevel`]).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CliBc7Lossy {
+    Lossless,
+    Minimal,
+    Slight,
+    Moderate,
+}
+
+impl From<CliBc7Lossy> for Bc7LossyLevel {
+    fn from(level: CliBc7Lossy) -> Self {
+        match level {
+            CliBc7Lossy::Lossless => Self::Lossless,
+            CliBc7Lossy::Minimal => Self::Minimal,
+            CliBc7Lossy::Slight => Self::Slight,
+            CliBc7Lossy::Moderate => Self::Moderate,
+        }
+    }
 }
 
 impl From<CliMobilePageCoding> for MobileAnimPageCoding {
@@ -1102,6 +1137,8 @@ enum Commands {
         bc7: bool,
         #[arg(long = "page-coding", value_enum, help = MOBILE_ANIM_PAGE_CODING_HELP)]
         page_coding: Option<CliMobilePageCoding>,
+        #[arg(long = "bc7-lossy", value_enum, help = MOBILE_ANIM_BC7_LOSSY_HELP)]
+        bc7_lossy: Option<CliBc7Lossy>,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
@@ -1142,6 +1179,8 @@ enum Commands {
         bc7: bool,
         #[arg(long = "page-coding", value_enum, help = MOBILE_ANIM_PAGE_CODING_HELP)]
         page_coding: Option<CliMobilePageCoding>,
+        #[arg(long = "bc7-lossy", value_enum, help = MOBILE_ANIM_BC7_LOSSY_HELP)]
+        bc7_lossy: Option<CliBc7Lossy>,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
@@ -1799,6 +1838,7 @@ where
             zstd,
             bc7,
             page_coding,
+            bc7_lossy,
             bc7_rdo,
             bc7_rdo_lambda,
             bc7_rdo_lookback_blocks,
@@ -1822,6 +1862,7 @@ where
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )?;
+            let bc7_lossy = resolve_mobile_anim_bc7_lossy(bc7_lossy, output_format.pixel_format)?;
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
                 &paths,
@@ -1834,6 +1875,7 @@ where
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
+                    bc7_lossy,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
                     frame_filters_path: frame_filters_kdl,
@@ -1846,9 +1888,10 @@ where
                 udd_conv::animation::mobile_strides::keep_strides_from(&out_file, &previous)?;
             }
             info!(
-                "Wrote {} pages ({}) for {} packed frames out of {} total frames across {} animations to '{}'.",
+                "Wrote {} pages ({}, BC7 lossy {}) for {} packed frames out of {} total frames across {} animations to '{}'.",
                 summary.page_count,
                 output_format.label,
+                bc7_lossy.name(),
                 summary.packed_frame_count,
                 summary.frame_count,
                 summary.animation_count,
@@ -1880,6 +1923,7 @@ where
             zstd,
             bc7,
             page_coding,
+            bc7_lossy,
             bc7_rdo,
             bc7_rdo_lambda,
             bc7_rdo_lookback_blocks,
@@ -1904,6 +1948,7 @@ where
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )?;
+            let bc7_lossy = resolve_mobile_anim_bc7_lossy(bc7_lossy, output_format.pixel_format)?;
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
                 &paths,
@@ -1916,6 +1961,7 @@ where
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
+                    bc7_lossy,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
                     frame_filters_path: resolve_frame_filters_kdl(frame_filters_kdl, tables.as_deref()),
@@ -1930,9 +1976,10 @@ where
                 udd_conv::animation::mobile_strides::keep_strides_from(&out_file, &previous)?;
             }
             info!(
-                "Wrote {} pages ({}) from {} EC animation UOPs for {} packed frames out of {} logical frames across {} EC animations from {} bodies with {} metadata items and {} source hints to '{}'.",
+                "Wrote {} pages ({}, BC7 lossy {}) from {} EC animation UOPs for {} packed frames out of {} logical frames across {} EC animations from {} bodies with {} metadata items and {} source hints to '{}'.",
                 summary.page_count,
                 output_format.label,
+                bc7_lossy.name(),
                 summary.source_uop_count,
                 summary.packed_frame_count,
                 summary.frame_count,
@@ -3240,6 +3287,36 @@ mod tests {
                 _ => panic!("unexpected command parsed"),
             };
             assert_eq!(zstd, Some(MOBILE_ANIM_PAGE_ZSTD_LEVEL), "{command:?}");
+        }
+    }
+
+    /// Both mobile animation packers condition their BC7 pages at `minimal` unless `--bc7-lossy` says otherwise;
+    /// RGBA8888 pages take only lossless.
+    #[test]
+    fn cli_defaults_mobile_animation_bc7_lossy_to_minimal() {
+        let level = |command: [&str; 3], args: &[&str]| -> eyre::Result<Bc7LossyLevel> {
+            let cli = Cli::try_parse_from(["uddpack"].iter().chain(&command).chain(args))?;
+            let (Commands::PackMobileAnims { raw, zstd, bc7, bc7_rdo, page_coding, bc7_lossy, .. }
+                | Commands::PackEcMobileAnims { raw, zstd, bc7, bc7_rdo, page_coding, bc7_lossy, .. }) = cli.command
+            else {
+                panic!("unexpected command parsed");
+            };
+            let format = resolve_mobile_anim_output_format(raw, zstd, bc7, bc7_rdo, page_coding, 0.0,
+                udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS)?;
+            resolve_mobile_anim_bc7_lossy(bc7_lossy, format.pixel_format)
+        };
+        assert_eq!(MOBILE_ANIM_BC7_LOSSY_LEVEL, Bc7LossyLevel::Minimal);
+        for command in [["pack-mobile-anims", "--ccdir", "/cc"], ["pack-ec-mobile-anims", "--ecdir", "/ec"]] {
+            assert_eq!(level(command, &[]).unwrap(), Bc7LossyLevel::Minimal, "{command:?}");
+            assert_eq!(level(command, &["--bc7-rdo"]).unwrap(), Bc7LossyLevel::Minimal, "{command:?}");
+            for (name, expected) in [("lossless", Bc7LossyLevel::Lossless), ("minimal", Bc7LossyLevel::Minimal),
+                ("slight", Bc7LossyLevel::Slight), ("moderate", Bc7LossyLevel::Moderate)] {
+                assert_eq!(level(command, &["--bc7-lossy", name]).unwrap(), expected, "{command:?}");
+                assert_eq!(expected.name(), name);
+            }
+            assert_eq!(level(command, &["--raw"]).unwrap(), Bc7LossyLevel::Lossless, "{command:?}");
+            assert_eq!(level(command, &["--raw", "--bc7-lossy", "lossless"]).unwrap(), Bc7LossyLevel::Lossless);
+            assert!(level(command, &["--raw", "--bc7-lossy", "minimal"]).is_err(), "{command:?}");
         }
     }
 

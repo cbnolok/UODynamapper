@@ -1,6 +1,7 @@
 //! Atlas compression, packing searches and pixel bounds.
 
 pub mod bc7;
+pub mod bc7_lossy;
 pub mod bc7_rdo_device;
 pub mod bc_encode_device;
 pub mod page_compression;

@@ -204,13 +204,16 @@ mod tests {
         }
         let mobile_cc = mobile_anim_cc::MobileAnimCcAtlasOptions::default();
         let mobile_ec = mobile_anim_ec::MobileAnimEcAtlasOptions::default();
-        for (package, pixel_format, compression, rdo_lambda) in [
-            ("mobile_anim_cc", mobile_cc.pixel_format, mobile_cc.compression, mobile_cc.bc7_rdo_lambda),
-            ("mobile_anim_ec", mobile_ec.pixel_format, mobile_ec.compression, mobile_ec.bc7_rdo_lambda),
+        for (package, pixel_format, compression, rdo_lambda, lossy) in [
+            ("mobile_anim_cc", mobile_cc.pixel_format, mobile_cc.compression, mobile_cc.bc7_rdo_lambda,
+                mobile_cc.bc7_lossy),
+            ("mobile_anim_ec", mobile_ec.pixel_format, mobile_ec.compression, mobile_ec.bc7_rdo_lambda,
+                mobile_ec.bc7_lossy),
         ] {
             assert_eq!(pixel_format, PagePixelFormat::Bc7, "{package}");
             assert_eq!(compression, MOBILE_ANIM_PAGE_COMPRESSION, "{package}");
             assert_eq!(rdo_lambda, NO_BC7_RDO_LAMBDA, "{package}");
+            assert_eq!(lossy, crate::bc7_lossy::MOBILE_ANIM_BC7_LOSSY_LEVEL, "{package}");
         }
         let gumps_cc = cc_gumps::CcGumpsOptions::default();
         let gumps_ec = ec_gumps::EcGumpsOptions::default();

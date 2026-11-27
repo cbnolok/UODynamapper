@@ -90,8 +90,9 @@ use udd_conv::animation::mobile_strides::{
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, GumpsEcSharing, LogLevel,
-    LogMessage, MobilePrescale, StrideMeasurement, TextureOptimization,
+    LogMessage, MobileBc7Lossy, MobilePrescale, StrideMeasurement, TextureOptimization,
 };
+use udd_conv::bc7_lossy::Bc7LossyLevel;
 
 struct ConvertingFlagReset {
     is_converting: std::sync::Arc<std::sync::Mutex<bool>>,
@@ -1105,6 +1106,14 @@ pub(crate) fn mobile_anim_cc_source_dirs(settings: &AppSettings) -> Vec<PathBuf>
     gather_cc_source_dirs(settings.cc_dir.as_ref())
 }
 
+/// A mobile animation card's BC7 conditioning: its choice on BC7 pages, none on RGBA8888 pages.
+fn mobile_bc7_lossy(optimization: TextureOptimization, lossy: MobileBc7Lossy) -> Bc7LossyLevel {
+    match optimization {
+        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => lossy.level(),
+        TextureOptimization::None => Bc7LossyLevel::Lossless,
+    }
+}
+
 fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetProgressReporter) -> eyre::Result<String> {
     let sources = mobile_anim_cc_source_dirs(settings);
     if sources.is_empty() { eyre::bail!("No Classic source dir configured"); }
@@ -1138,6 +1147,7 @@ fn pack_mobile_anim_cc(settings: &AppSettings, output: &Path, progress: &AssetPr
             },
             bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_mobile_anim_cc),
             bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+            bc7_lossy: mobile_bc7_lossy(settings.opt_mobile_anim_cc, settings.bc7_lossy_mobile_anim_cc),
             upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
             upscale_profile,
             frame_filters_path: Some(conversion_table(settings, MOBILE_FRAME_FILTERS_KDL)?),
@@ -1196,6 +1206,7 @@ fn pack_mobile_anim_ec(settings: &AppSettings, output: &Path, progress: &AssetPr
             },
             bc7_rdo_lambda: bc7_rdo_lambda(settings, settings.opt_mobile_anim_ec),
             bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(settings),
+            bc7_lossy: mobile_bc7_lossy(settings.opt_mobile_anim_ec, settings.bc7_lossy_mobile_anim_ec),
             upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
             upscale_profile,
             metadata_path,

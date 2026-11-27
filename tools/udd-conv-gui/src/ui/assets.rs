@@ -5,7 +5,7 @@ use crate::logic::tasks::{
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, ComputeDevice, GumpsEcSharing, HueRamp,
-    MobilePageCoding, MobilePrescale, StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
+    MobileBc7Lossy, MobilePageCoding, MobilePrescale, StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
 use crate::ui::layout::{card_title, draw_card_grid, page_heading, section_heading, CardGrid};
@@ -187,6 +187,7 @@ impl UddConvApp {
         );
         ui.add_enabled_ui(!is_busy, |ui| {
             draw_page_coding(ui, &mut self.settings.page_coding_mobile_anim_cc);
+            draw_bc7_lossy(ui, &mut self.settings.bc7_lossy_mobile_anim_cc);
             draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_cc);
             draw_prescale(ui, &mut self.settings.prescale_mobile_anim_cc);
         });
@@ -312,6 +313,7 @@ impl UddConvApp {
         );
         ui.add_enabled_ui(!is_busy, |ui| {
             draw_page_coding(ui, &mut self.settings.page_coding_mobile_anim_ec);
+            draw_bc7_lossy(ui, &mut self.settings.bc7_lossy_mobile_anim_ec);
             draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_ec);
             draw_prescale(ui, &mut self.settings.prescale_mobile_anim_ec);
         });
@@ -778,6 +780,35 @@ fn draw_page_coding(ui: &mut egui::Ui, coding: &mut MobilePageCoding) {
                     .clicked()
                 {
                     *coding = choice;
+                }
+            }
+        });
+    });
+}
+
+const BC7_LOSSY_CELL_WIDTH: f32 = 320.0;
+const BC7_LOSSY_TOOLTIP: &str = "How much the BC7 pages are conditioned after the encode, before the page coding \
+(--bc7-lossy), so they code smaller. Minimal, the default and suggested: decent compression and the best quality with \
+minimal loss, the package about 10 % (Classic) and 7 % (Enhanced) smaller under Split + Zstd. Slight: a slight quality \
+loss for about 14 % and 12 %. Moderate: a moderate quality loss for about 21 % and 18 %. Lossless: the blocks as \
+encoded. Every level keeps each texel's alpha, so silhouettes stay exact. Raw RGBA8 pages are not conditioned.";
+
+/// The BC7 conditioning of a mobile animation card.
+fn draw_bc7_lossy(ui: &mut egui::Ui, lossy: &mut MobileBc7Lossy) {
+    draw_control_cell(ui, "BC7 Lossy", BC7_LOSSY_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            for (choice, label) in [
+                (MobileBc7Lossy::Lossless, "Lossless"),
+                (MobileBc7Lossy::Minimal, "Minimal"),
+                (MobileBc7Lossy::Slight, "Slight"),
+                (MobileBc7Lossy::Moderate, "Moderate"),
+            ] {
+                if ui
+                    .add(egui::Button::selectable(*lossy == choice, label))
+                    .on_hover_text(BC7_LOSSY_TOOLTIP)
+                    .clicked()
+                {
+                    *lossy = choice;
                 }
             }
         });
