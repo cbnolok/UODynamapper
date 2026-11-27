@@ -3,10 +3,11 @@
 
 Usage: python3 -I -B measure_cc_tileart.py CLASSIC_CLIENT_DIR
 
-Reads tileart.uop, string_dictionary.uop and tiledata.mul of a Classic client folder (read only) and prints, as
-Markdown, the record counts and every comparison listed in results/cc_tileart_data.md. The record layout is the
-version 4 layout of ../ghidra-tileart/results/uosa_tileart.md, which the Classic parser
-(ParseObjectDefinition 0x00411c6e) reads in the same order. Effects end a record and are not decoded here: the
+Reads tileart.uop, string_dictionary.uop and tiledata.mul of a Classic client folder (read only) and prints the
+record counts and every comparison listed in results/cc_tileart.md section 5. With mobtypes.txt, Equipconv.def and
+gumpartLegacyMUL.uop present it also replays the paperdoll gump choice (section 3.1) for each paperdoll body. The
+record layout is the version 4 layout of ../ghidra-tileart/results/uosa_tileart.md, which the Classic parser
+(ParseTileDefinition 0x00411c6e) reads in the same order. Effects end a record and are not decoded here: the
 parse stops after the four shader blocks.
 """
 
@@ -45,7 +46,7 @@ FILTER_BY_BODY, FILTER_BY_GENDER, FILTER_ANIMATION_BY_BODY = 0, 1, 2
 WATER_SHADER = "UOWaterShader"
 WATER_PRIMARY_TEXTURE_POSITION = 1
 PLACEHOLDER_BASE = 10000000
-KEY_WEIGHT, KEY_HEIGHT, KEY_LAYER, KEY_APPEARANCE = 0, 3, 6, 8
+KEY_WEIGHT, KEY_HEIGHT, KEY_LAYER, KEY_APPEARANCE, KEY_GENDER = 0, 3, 6, 8, 10
 
 # tiledata.mul (new format, 64-bit flags) as LoadTiledata 0x005b2ce0 reads it
 LAND_COUNT = 0x4000
@@ -62,6 +63,16 @@ STATIC_ART_BASE = 0x4000
 ART_ID_SPAN = 0x14000
 ART_HEADER_FORMAT = "<IHH"
 TILE_WIDTH = 44  # a land tile's width; most legacy offsets centre wider art on it
+
+# Paperdoll gump choice (DrawPaperdollGumpLayers 0x0051a4a0, 0x004cde80, 0x005189e0)
+PAPERDOLL_BODIES = (400, 401, 605, 606, 666, 667, 1253)  # what the body switch at 0x0051a6d4 can yield
+FEMALE_PAPERDOLL_BODIES = (401, 606, 667)
+MOBTYPES_UOP_FRAMES = 0x10000  # BodyUsesUopFrames 0x005978a0
+GUMP_ITEM_BASE = 50000  # EquipConv 0x005624a0: no row, or a row with gump 0, gives anim + 50000
+GUMP_FEMALE_OFFSET = 10000  # used when the wearer is female and that gump exists (0x00567d40)
+EQUIPCONV_GUMP_FROM_CONVERTED = -1
+GUMP_ENTRY_NAME = "build/gumpartlegacymul/%08d.tga"
+GUMP_ID_SPAN = 0x10000 * 2
 
 MAX_LISTED = 12
 
@@ -266,6 +277,122 @@ def centring_offset(width):
     return -((width - TILE_WIDTH) // 2) if width > TILE_WIDTH else 0
 
 
+def read_mobtype_flags(path):
+    """Body -> flags column of mobtypes.txt (hex), as MobTypes_EnsureTable loads it."""
+    flags = {}
+    for line in open(path, encoding="latin-1"):
+        fields = line.split("#", 1)[0].split()
+        if len(fields) >= 3 and fields[0].isdigit():
+            flags[int(fields[0])] = int(fields[2], 16)
+    return flags
+
+
+def read_equipconv(path):
+    """(body, equipment id) -> (converted id, gump id) of Equipconv.def."""
+    rows = {}
+    for line in open(path, encoding="latin-1"):
+        fields = line.split("#", 1)[0].split()
+        if len(fields) >= 4:
+            body, equip, converted, gump = (int(v) for v in fields[:4])
+            rows[(body, equip)] = (converted, gump)
+    return rows
+
+
+def equipconv_gump(rows, body, anim):
+    """EquipConv 0x005624a0."""
+    row = rows.get((body, anim))
+    if row is None or row[1] == 0:
+        return anim + GUMP_ITEM_BASE
+    converted, gump = row
+    return converted + GUMP_ITEM_BASE if gump == EQUIPCONV_GUMP_FROM_CONVERTED else gump
+
+
+def filter_key(placeholder):
+    """What a body filter compares (filter Apply 0x0041717f / 0x00417287): property 8, else the stored id."""
+    return placeholder["props1"].get(KEY_APPEARANCE, placeholder["tile_id"])
+
+
+def get_appearance(tile, placeholder):
+    """TileDefinition_GetAppearance +0xbc (0x00405bf1): property 8 or the stored id, then the first matching
+    body (0) or gender (1) filter."""
+    key = filter_key(placeholder)
+    gender = placeholder["props1"].get(KEY_GENDER, 0)
+    for kind, data in tile["filters"]:
+        if kind == FILTER_BY_BODY:
+            for k, value in data:
+                if k == key:
+                    return value
+        elif kind == FILTER_BY_GENDER and data[0] == gender:
+            return data[1]
+    return tile["props1"].get(KEY_APPEARANCE, tile["tile_id"])
+
+
+def get_animation_appearance(tile, placeholder):
+    """TileDefinition_GetAnimationAppearance +0xc0 (0x00405ce4): the first matching animation filter (2), else 0."""
+    key = filter_key(placeholder)
+    for kind, data in tile["filters"]:
+        if kind == FILTER_ANIMATION_BY_BODY:
+            for k, value in data:
+                if k == key:
+                    return value
+    return 0
+
+
+def paperdoll(folder, items, placeholders, statics):
+    """Replays the paperdoll gump choice per paperdoll body and counts where tileart changes the outcome."""
+    paths = [os.path.join(folder, name) for name in ("mobtypes.txt", "Equipconv.def", "gumpartLegacyMUL.uop")]
+    if not all(os.path.exists(path) for path in paths):
+        return
+    flags = read_mobtype_flags(paths[0])
+    rows = read_equipconv(paths[1])
+    gump_names = {hashlittle2(GUMP_ENTRY_NAME % i): i for i in range(GUMP_ID_SPAN)}
+    gumps = {gump_names[h] for h, _ in uop_payloads(paths[2]) if h in gump_names}
+    limit = min(len(statics), CLASSIC_STATIC_COUNT)
+    wearables = [i for i in range(limit) if statics[i]["flags"] & WEARABLE_FLAG]
+    anim_filtered = sorted(i for i, rec in items.items()
+                           if any(k == FILTER_ANIMATION_BY_BODY for k, _ in rec["filters"]))
+    print(f"paperdoll: {len(wearables)} wearable tiledata items (< {limit}); gumps present {len(gumps)}")
+    for i in anim_filtered:
+        keys = [pair for k, data in items[i]["filters"] if k == FILTER_ANIMATION_BY_BODY for pair in data]
+        print(f"  animation filter on {i} (tiledata anim {statics[i]['anim']}, wearable "
+              f"{bool(statics[i]['flags'] & WEARABLE_FLAG)}): {keys}")
+    for body in PAPERDOLL_BODIES:
+        placeholder = placeholders.get(PLACEHOLDER_BASE + body)
+        uop = bool(flags.get(body, 0) & MOBTYPES_UOP_FRAMES)
+        female = body in FEMALE_PAPERDOLL_BODIES
+        switched, differ, gump_differ, visible, missing_def = [], [], [], 0, []
+        for i in wearables:
+            tile = items.get(i)
+            tiledata_anim = statics[i]["anim"]
+            if tile is None or placeholder is None:
+                anim = 0 if uop else tiledata_anim
+                missing_def.append(i)
+            elif uop:
+                anim = get_appearance(tile, placeholder)
+            elif get_animation_appearance(tile, placeholder):
+                anim = get_appearance(tile, placeholder)
+                switched.append(i)
+            else:
+                anim = tiledata_anim
+            gump = equipconv_gump(rows, body, anim)
+            if female and gump + GUMP_FEMALE_OFFSET in gumps:
+                gump += GUMP_FEMALE_OFFSET
+            plain = equipconv_gump(rows, body, tiledata_anim)
+            if female and plain + GUMP_FEMALE_OFFSET in gumps:
+                plain += GUMP_FEMALE_OFFSET
+            if anim != tiledata_anim:
+                differ.append(i)
+            if gump != plain:
+                gump_differ.append(i)
+                visible += gump in gumps or plain in gumps
+        key = filter_key(placeholder) if placeholder else None
+        print(f"body {body}: mobtypes 0x{flags.get(body, 0):x} {'UOP' if uop else 'MUL'} frames, placeholder key "
+              f"{key}, gender {placeholder['props1'].get(KEY_GENDER) if placeholder else None}; "
+              f"animation filter switches {len(switched)} [{listed(switched)}]; anim != tiledata anim "
+              f"{len(differ)} [{listed(differ)}]; gump differs {len(gump_differ)} (either gump present: {visible}) "
+              f"[{listed(gump_differ)}]; no definition {len(missing_def)}")
+
+
 def listed(values):
     values = sorted(values)
     shown = ", ".join(str(v) for v in values[:MAX_LISTED])
@@ -368,6 +495,8 @@ def main():
     offsets = [i for i in items if items[i]["legacy_window"][4] or items[i]["legacy_window"][5]]
     off_counter = collections.Counter((items[i]["legacy_window"][4], items[i]["legacy_window"][5]) for i in offsets)
     print(f"legacy window x/y offset non-zero: {len(offsets)}; most common {off_counter.most_common(8)}")
+
+    paperdoll(folder, items, placeholders, statics)
 
     art_path = os.path.join(folder, "artLegacyMUL.uop")
     if not os.path.exists(art_path):

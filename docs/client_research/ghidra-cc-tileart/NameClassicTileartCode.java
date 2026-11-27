@@ -1,7 +1,7 @@
 // Name the Classic client code (client.exe, PE version 7.0.102.3, Ghidra program classic_7.0.103.0_client.exe) that
 // mounts tileart.uop and string_dictionary.uop, parses the tile definitions (version 4, the UOSA layout) and reads
 // them: animation appearance and body type, the paperdoll appearance and the sitting data. tiledata.mul is loaded
-// unconditionally beside them (LoadTiledata).
+// unconditionally beside them (LoadTiledata). Effects are parsed and dropped (TileDefinition_AddEffect).
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
 // address is verified with the stated checks first; a failed check is reported, not named.
 // Findings: results/*.md.
@@ -44,6 +44,8 @@ public class NameClassicTileartCode extends GhidraScript {
     private static final String TILEART = "UOClassicTileArt";
     private static final String SITTING = "UOClassicSitting";
     private static final String FILES = "UOClassicFiles";
+    private static final String PAPERDOLL = "UOClassicPaperdoll";
+    private static final String ANIM = "UOClassicAnim";
 
     // Checks: "calls:ADDR" (the function references ADDR: call, pointer, jump or data),
     // "calledby:ADDR" (the function at ADDR references this one), "ref:ADDR" (the data or code at ADDR
@@ -87,7 +89,19 @@ public class NameClassicTileartCode extends GhidraScript {
         new Entry("00412818", TILEART, "ParseTileRadarColor", false, "four bytes, stored through the definition's"
             + " vtable +0xe0; never read back in this client", "calledby:00411c6e"),
         new Entry("004124aa", TILEART, "ParseTileEffects", true, "u8 count of effect definitions, added through the"
-            + " definition's vtable +0x144", "calledby:00411c6e"),
+            + " definition's vtable +0x144, which drops them (TileDefinition_AddEffect)", "calledby:00411c6e"),
+        new Entry("00404ffa", TILEART, "TileDefinition_AddEffect", false, "UOObjectDefinitionBase vtable +0x144: only"
+            + " releases the effect's shared pointer, so no tile effect is kept or played", "ref:006daa58",
+            "calls:00402455"),
+        new Entry("00405ee2", TILEART, "TileDefinition_GetGender", false, "UOObjectDefinitionBase vtable +0xd4:"
+            + " property 1 key 10, else 0; the gender filter compares it on the body placeholder", "ref:006da9e8",
+            "const:a"),
+        new Entry("0041717f", TILEART, "BodyFilter_Apply", false, "appearance filter type 0: the placeholder's"
+            + " property 8, else its stored id, looked up in the filter's (key, value) pairs", "ref:006db400"),
+        new Entry("0041723c", TILEART, "GenderFilter_Apply", false, "appearance filter type 1: the filter's value when"
+            + " the placeholder's gender (vtable +0xd4) equals the filter's gender byte", "ref:006db428"),
+        new Entry("00417287", TILEART, "AnimationBodyFilter_Apply", false, "appearance filter type 2 (animation"
+            + " appearance): same key as the body filter", "ref:006db414"),
         new Entry("00406001", TILEART, "GetTileDefinition", false, "the definition of a tile id: asset key id |"
             + " 6 << 24 (tileart.uop); null when the package or the record is missing", "const:6000000"),
         new Entry("005f0780", TILEART, "RequestTileDefinitionUnused", true, "a second type 6 asset request; nothing"
@@ -100,7 +114,7 @@ public class NameClassicTileartCode extends GhidraScript {
             + " sitting data (vtable +0xe4), else 0", "calls:00406001"),
         new Entry("005d6d30", SITTING, "FindSeat", false, "a human mobile (body 400..1999) is seated when an item at"
             + " |dz| < 2 on its cell has sitting data and the direction mask (+0xe8) allows it; keeps the seat"
-            + " graphic", "calls:005d6810"),
+            + " graphic; a seat with direction bit 0x10 only while the mobile stands (+0x1a8)", "calls:005d6810"),
         new Entry("005d6930", SITTING, "DrawSeatOverlay", true, "seated frame buffer: y shifted by sitting word 5"
             + " (+0xfc) for directions 0 and 6, else word 4 (+0xf8); for directions 0 and 6 the seat item is redrawn"
             + " over the mobile, clipped at its centre moved by 1 when word 3 (+0xf4) is non-zero (3 for 0x121a-0x121b,"
@@ -113,8 +127,23 @@ public class NameClassicTileartCode extends GhidraScript {
         new Entry("005d5450", SITTING, "HitTestSeatedMobile", true, "hit test of a seated mobile's 64x128 frame buffer"
             + " with the same y shift as DrawSeatOverlay (word 5 for directions 0 and 6, else word 4)",
             "calls:00406001"),
+        new Entry("005624a0", PAPERDOLL, "EquipConvGump", false, "the item gump of (body, anim): the Equipconv.def"
+            + " gump when > 0, the converted id + 50000 when -1, else anim + 50000", "calls:005623d0", "const:c350"),
+        new Entry("004cde80", PAPERDOLL, "BuildItemGumpForRace", true, "an item's equipment gump for a race (1 human,"
+            + " 2 elf, 3 gargoyle) and gender given by a packet handler; the paperdoll's tileart and tiledata rule",
+            "calls:00543000", "calls:005624a0"),
+        new Entry("005b8720", ANIM, "GetBodyTypeSequence", false, "the AnimationSequence asset (type 0xc) of the body"
+            + " placeholder's body type (vtable +0xb4), cached by body type", "calls:00406001", "calls:00409410"),
+        new Entry("005d3c10", ANIM, "MountItemToIndex", true, "mount item graphics 0x3e90.. to an index of the"
+            + " 41-entry mount table at 0x00744940, -1 otherwise", "calledby:005d4020"),
+        new Entry("005d4020", ANIM, "GetMountEntry", true, "the mount table entry (0x18 bytes, body at +0x12) of a"
+            + " mount item; built on first use", "calls:005d3c10", "calls:005d3e90"),
+        new Entry("005d3e90", ANIM, "MountEntry_LoadUopSequence", false, "for a mount body with UOP frames"
+            + " (BodyUsesUopFrames), its choreography and its body type's AnimationSequence", "calls:005978a0",
+            "calls:005b8720"),
         new Entry("005b2ce0", FILES, "LoadTiledata", false, "reads tiledata.mul: 0x4000 land entries and the statics"
-            + " (0x30 bytes each in memory, up to 0x2ff940 bytes); unconditional", "const:2ff940"),
+            + " (0x30 bytes each in memory, up to 0x2ff940 bytes); unconditional; a missing file is skipped silently"
+            + " and the tables keep their uncleared allocation", "const:2ff940"),
     };
 
     private static final Build[] BUILDS = {
