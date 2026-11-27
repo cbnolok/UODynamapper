@@ -6,7 +6,8 @@
 // - the contour darkens the rim and the outermost opaque texels towards a colour, as the Classic frames' outline,
 //   from the cross of taps the sharpening's window holds;
 // - the outline lays a line of that colour one texel wide outside the silhouette, under its rim, on the card the
-//   frame's filter pads by a texel each side.
+//   frame's filter pads by a texel each side; on an upscaled frame, by the outline width setting, two texels wide on
+//   a card padded by two (one art pixel, as wide on screen as at 1x).
 // The colours mix on their sRGB-encoded values, as the clients' 8-bit art.
 // ============================================================================
 
@@ -57,6 +58,16 @@ fn mobile_outline_on(frame_filter: MobileFrameFilter) -> bool {
     return frame_filter.outline > 0.0;
 }
 
+// The reach past the silhouette, in texels of the frame, of the wide outline: one art pixel of a 2x frame
+// (`OUTLINE_MAX_REACH_TEXELS`, render/mobiles/sharpening.rs).
+const MOBILE_OUTLINE_WIDE_REACH: u32 = 2u;
+
+// Whether the frame's outline reaches two texels past the silhouette (`MobileOutlineWidth`,
+// render/mobiles/sharpening.rs): its cross takes the taps one and two texels away. The card is padded by the reach.
+fn mobile_outline_wide(frame_filter: MobileFrameFilter) -> bool {
+    return frame_filter.padding_texels >= MOBILE_OUTLINE_WIDE_REACH;
+}
+
 // The contour's colour, sRGB-encoded.
 fn mobile_contour_encoded(frame_filter: MobileFrameFilter) -> vec3<f32> {
     return unpack4x8unorm(frame_filter.contour_color).rgb;
@@ -74,7 +85,7 @@ fn mobile_contour(color: vec4<f32>, cross_alpha: vec4<f32>, frame_filter: Mobile
 }
 
 // `color` (straight, linear) over the outline: the contour colour at the outline's opacity times the highest alpha
-// of the cross `cross_alpha`, under the texel, so a transparent texel beside the silhouette takes the line and the
+// of the cross `cross_alpha` (with a wide outline, the highest of each arm's two taps), under the texel, so a transparent texel beside the silhouette takes the line and the
 // rim lies over it.
 fn mobile_outline(color: vec4<f32>, cross_alpha: vec4<f32>, frame_filter: MobileFrameFilter) -> vec4<f32> {
     let nearest = max(max(cross_alpha.x, cross_alpha.y), max(cross_alpha.z, cross_alpha.w));

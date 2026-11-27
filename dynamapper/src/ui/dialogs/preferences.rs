@@ -4,7 +4,8 @@ use crate::{
     settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::{frame_limiter_for_options, FrameLimiterSettings},
     app::present_mode_for_vsync,
-    render::{mobiles::{in_between::MobileInBetweenFrames, upscales::MobileUpscale}, view::camera::UiCameraResource},
+    render::{mobiles::{in_between::MobileInBetweenFrames, sharpening::MobileOutlineWidth, upscales::MobileUpscale},
+        view::camera::UiCameraResource},
     world::mobile_motion::MobileStop,
     world::player_movement::MOVEMENT_SPEED_MULTIPLIER_RANGE,
     render::mobiles::pace::MobileWalkPace,
@@ -83,6 +84,7 @@ pub struct PreferencesDialogState {
     pub cave_surroundings: CaveSurroundings,
     pub mobile_in_between_frames: MobileInBetweenFrames,
     pub mobile_upscale: MobileUpscale,
+    pub mobile_outline_width: MobileOutlineWidth,
     pub mobile_stop: MobileStop,
     pub mobile_walk_pace: MobileWalkPace,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
@@ -138,6 +140,7 @@ impl Default for PreferencesDialogState {
             cave_surroundings: CaveSurroundings::Dimmed,
             mobile_in_between_frames: MobileInBetweenFrames::Crossfade,
             mobile_upscale: MobileUpscale::Off,
+            mobile_outline_width: MobileOutlineWidth::OneTexel,
             mobile_stop: MobileStop::HalfStepLater,
             mobile_walk_pace: MobileWalkPace::MatchTheGround,
             apply_timer: {
@@ -219,6 +222,7 @@ fn sys_sync_settings_to_state(
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
         state.mobile_in_between_frames = settings.world_rendering.mobile_in_between_frames;
         state.mobile_upscale = settings.world_rendering.mobile_upscale;
+        state.mobile_outline_width = settings.world_rendering.mobile_outline_width;
         state.mobile_stop = settings.world_rendering.mobile_stop;
         state.mobile_walk_pace = settings.world_rendering.mobile_walk_pace;
 
@@ -346,6 +350,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.mobile_upscale != state.mobile_upscale {
             settings.world_rendering.mobile_upscale = state.mobile_upscale;
+        }
+        if settings.as_ref().world_rendering.mobile_outline_width != state.mobile_outline_width {
+            settings.world_rendering.mobile_outline_width = state.mobile_outline_width;
         }
         if settings.as_ref().world_rendering.mobile_stop != state.mobile_stop {
             settings.world_rendering.mobile_stop = state.mobile_stop;
@@ -705,6 +712,31 @@ pub fn sys_render_preferences_dialog(
                                              (dragons, wyrms, daemons, great bodies). Always: every body but those \
                                              Upscale.kdl lists as never, the largest in tiles, which take seconds each. \
                                              Switching remakes the frame atlases.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Upscaled Outline:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_mobile_outline_width")
+                                        .selected_text(state.mobile_outline_width.label())
+                                        .show_ui(ui, |ui| {
+                                            for width in MobileOutlineWidth::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.mobile_outline_width, width,
+                                                        width.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "How wide the outline of an outlined body (runtime_specs/mobiles/\
+                                             Sharpening.kdl) is on its upscaled frames. One Texel: one texel of the 2x \
+                                             frame, half as wide on screen as on the frames as stored. Follows Upscale: \
+                                             two texels of the 2x frame, as wide on screen as at 1x.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

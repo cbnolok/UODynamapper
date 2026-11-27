@@ -368,8 +368,10 @@ pub fn sys_draw_mobiles(
                 }
                 let Some(frames) = layer_frames(in_between_mode, clip, pick) else { continue };
                 clip.touch_pages(&mut atlas, now);
-                // The body's filter; an outline's card has room for it around the frames.
-                let filter = sharpening.filter(source, drawn.key.body, &packages.0);
+                // The body's filter; an outline's card has room for it around the frames, as wide as the outline
+                // reaches on this clip's texels.
+                let filter = sharpening.filter(source, drawn.key.body, &packages.0)
+                    .for_frame(settings.world_rendering.mobile_outline_width, clip.texel_scale);
                 let frames = frames.padded(filter.padding_texels, clip.texel_scale);
                 // Both frames of an in-between come from the clip, so they share its mirroring.
                 instances.push(mobile_instance(transform.translation, frames, filter, mirrored, drawn.offset_px,

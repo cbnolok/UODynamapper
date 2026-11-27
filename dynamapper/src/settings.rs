@@ -164,6 +164,10 @@ pub struct SectWorldRendering {
     /// runtime_specs/mobiles/Upscale.kdl picks (balanced, written `span_x2` before), or all but those it lists as
     /// `never` (always).
     pub mobile_upscale: crate::render::mobiles::upscales::MobileUpscale,
+    /// How wide an outlined mobile's line is on an upscaled frame (render/mobiles/sharpening.rs): one texel of the
+    /// frame (`one_texel`, half as wide on screen as at 1x) or one art pixel (`follows_upscale`, two texels of a 2x
+    /// frame).
+    pub mobile_outline_width: crate::render::mobiles::sharpening::MobileOutlineWidth,
     /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
     /// (world/mobile_motion.rs).
     pub mobile_stop: crate::world::mobile_motion::MobileStop,
@@ -1599,6 +1603,31 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.mobile_upscale, MobileUpscale::Always);
+    }
+
+    /// A cache copy written before the outline width existed loads the bundled one-texel line, and the other width
+    /// round-trips.
+    #[test]
+    fn world_rendering_cache_without_mobile_outline_width_loads_one_texel() {
+        use crate::render::mobiles::sharpening::MobileOutlineWidth;
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        assert_eq!(bundled.mobile_outline_width, MobileOutlineWidth::OneTexel);
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("mobile_outline_width"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.mobile_outline_width, MobileOutlineWidth::OneTexel);
+
+        let mut picked = bundled.clone();
+        picked.mobile_outline_width = MobileOutlineWidth::FollowsUpscale;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("mobile_outline_width = \"follows_upscale\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.mobile_outline_width, MobileOutlineWidth::FollowsUpscale);
     }
 
     /// A cache copy written before the mobiles' stop existed loads it half a step later, and at once round-trips.

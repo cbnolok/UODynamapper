@@ -8,7 +8,8 @@
 // light texel. Each frame's alpha takes the frame filter's contrast before the blend (art/mobile_edges.wesl), so the
 // crossfade between two contrasted frames stays as soft as between two stored ones. A card padded for an outline reads
 // its one frame through the same rectangle test (`mobile_frame_alone_tap`), and the outline's taps of the frames' alpha
-// are gathered (`mobile_frames_cross_alpha`, `mobile_frames_bilinear_alpha`).
+// are gathered (`mobile_frames_cross_alpha`, `mobile_frames_bilinear_alpha`; for an outline two texels wide,
+// `mobile_frames_wide_cross_alpha` and `mobile_frames_bilinear_wide_cross_alpha`).
 // ============================================================================
 
 import package::shaders::world::art::art_bindings::{FrameCrossfade, MobileFrameFilter};
@@ -189,6 +190,58 @@ fn mobile_frames_cross_alpha(atlas: texture_2d_array<f32>, atlas_sampler: sample
     return mix(first, next, crossfade.next_weight);
 }
 
+// The alphas of a wide outline's cross (`mobile_outline_wide`, art/mobile_edges.wesl), one and two texels north, west,
+// east and south of a texel, each vector in that order.
+struct MobileWideCross {
+    inner: vec4<f32>,
+    outer: vec4<f32>,
+}
+
+// The wide cross around `texel` on page `layer`, each tap 0 outside the frame's texels `frame_min`..`frame_max`: four
+// gathers, each the 2 x 2 texels holding one arm's two taps.
+fn mobile_frame_wide_cross_alpha(atlas: texture_2d_array<f32>, atlas_sampler: sampler, layer: i32, texel: vec2<i32>,
+    atlas_size: vec2<f32>, frame_min: vec2<i32>, frame_max: vec2<i32>) -> MobileWideCross {
+    let north = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, texel + vec2<i32>(1, -1), atlas_size,
+        frame_min, frame_max);
+    let west = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, texel + vec2<i32>(-1, 0), atlas_size,
+        frame_min, frame_max);
+    let east = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, texel + vec2<i32>(2, 1), atlas_size,
+        frame_min, frame_max);
+    let south = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, texel + vec2<i32>(0, 2), atlas_size,
+        frame_min, frame_max);
+    return MobileWideCross(vec4<f32>(north.x, west.y, east.w, south.z), vec4<f32>(north.w, west.x, east.z, south.y));
+}
+
+// The highest alpha of each arm of the wide cross, the frames' wide crosses with the filter's alpha contrast, blended
+// tap by tap while they crossfade.
+fn mobile_frames_wide_cross_mix(first: MobileWideCross, next: MobileWideCross, crossfade: FrameCrossfade,
+    frame_filter: MobileFrameFilter) -> vec4<f32> {
+    let first_inner = mobile_alpha_contrast_alphas(first.inner, frame_filter);
+    let first_outer = mobile_alpha_contrast_alphas(first.outer, frame_filter);
+    if (!mobile_frames_blend(crossfade)) {
+        return max(first_inner, first_outer);
+    }
+    return max(mix(first_inner, mobile_alpha_contrast_alphas(next.inner, frame_filter), crossfade.next_weight),
+        mix(first_outer, mobile_alpha_contrast_alphas(next.outer, frame_filter), crossfade.next_weight));
+}
+
+// The highest alpha of each arm (north, west, east, south) of the nearest taps one and two texels from the card's texel
+// `texel`, as mobile_frames_cross_alpha takes the taps one texel away, for an outline two texels wide on a card padded
+// by two: four gathers a frame.
+fn mobile_frames_wide_cross_alpha(atlas: texture_2d_array<f32>, atlas_sampler: sampler, layer: i32, texel: vec2<i32>,
+    crossfade: FrameCrossfade, frame_filter: MobileFrameFilter) -> vec4<f32> {
+    let atlas_size = vec2<f32>(textureDimensions(atlas).xy);
+    let first = mobile_frame_wide_cross_alpha(atlas, atlas_sampler, layer, texel, atlas_size,
+        vec2<i32>(round(crossfade.frame_uv_min * atlas_size)), vec2<i32>(round(crossfade.frame_uv_max * atlas_size)));
+    var next = first;
+    if (mobile_frames_blend(crossfade)) {
+        next = mobile_frame_wide_cross_alpha(atlas, atlas_sampler, i32(crossfade.next_layer),
+            texel + vec2<i32>(round(crossfade.next_uv_offset * atlas_size)), atlas_size,
+            vec2<i32>(round(crossfade.next_uv_min * atlas_size)), vec2<i32>(round(crossfade.next_uv_max * atlas_size)));
+    }
+    return mobile_frames_wide_cross_mix(first, next, crossfade, frame_filter);
+}
+
 // The alpha of one bilinear tap of a frame on the card, as mobile_frame_bilinear's: the card's rectangle starts at
 // texel `origin` of page `layer`, `px` is in texels from it, the texels outside the frame transparent. One gather
 // reads the tap's four texels; the card's clamp to its own texels is left out, as an outlined card's edge texels lie
@@ -222,4 +275,62 @@ fn mobile_frames_bilinear_alpha(atlas: texture_2d_array<f32>, atlas_sampler: sam
         vec2<i32>(round(crossfade.next_uv_min * atlas_size)), vec2<i32>(round(crossfade.next_uv_max * atlas_size)), px,
         atlas_size)), frame_filter).a;
     return mix(first, next, crossfade.next_weight);
+}
+
+// The bilinear mix of four alphas by `weight`: upper left, upper right, lower left, lower right.
+fn mobile_bilinear_mix(upper_left: f32, upper_right: f32, lower_left: f32, lower_right: f32, weight: vec2<f32>) -> f32 {
+    return mix(mix(upper_left, upper_right, weight.x), mix(lower_left, lower_right, weight.x), weight.y);
+}
+
+// The wide cross of a frame's bilinear taps one and two texels from `px` (as mobile_frame_bilinear_alpha takes one),
+// the texels outside the frame transparent: five gathers, the tap's own 2 x 2 texels and those two texels away on each
+// side, which also hold the taps one texel away.
+fn mobile_frame_bilinear_wide_cross_alpha(atlas: texture_2d_array<f32>, atlas_sampler: sampler, layer: i32,
+    origin: vec2<i32>, frame_min: vec2<i32>, frame_max: vec2<i32>, px: vec2<f32>, atlas_size: vec2<f32>)
+    -> MobileWideCross {
+    let corner = px - vec2<f32>(0.5);
+    let weight = corner - floor(corner);
+    let base = origin + vec2<i32>(floor(corner)) + vec2<i32>(1);
+    // Each gather's texels: w upper left, z upper right, x lower left, y lower right.
+    let centre = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, base, atlas_size, frame_min, frame_max);
+    let north = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, base - vec2<i32>(0, 2), atlas_size, frame_min,
+        frame_max);
+    let west = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, base - vec2<i32>(2, 0), atlas_size, frame_min,
+        frame_max);
+    let east = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, base + vec2<i32>(2, 0), atlas_size, frame_min,
+        frame_max);
+    let south = mobile_frame_gathered_alpha(atlas, atlas_sampler, layer, base + vec2<i32>(0, 2), atlas_size, frame_min,
+        frame_max);
+    let inner = vec4<f32>(
+        mobile_bilinear_mix(north.x, north.y, centre.w, centre.z, weight),
+        mobile_bilinear_mix(west.z, centre.w, west.y, centre.x, weight),
+        mobile_bilinear_mix(centre.z, east.w, centre.y, east.x, weight),
+        mobile_bilinear_mix(centre.x, centre.y, south.w, south.z, weight));
+    let outer = vec4<f32>(
+        mobile_bilinear_mix(north.w, north.z, north.x, north.y, weight),
+        mobile_bilinear_mix(west.w, west.z, west.x, west.y, weight),
+        mobile_bilinear_mix(east.w, east.z, east.x, east.y, weight),
+        mobile_bilinear_mix(south.w, south.z, south.x, south.y, weight));
+    return MobileWideCross(inner, outer);
+}
+
+// The highest alpha of each arm (north, west, east, south) of the client filter's taps one and two texels from `uv`,
+// as mobile_frames_bilinear_alpha takes each (one bilinear tap, inside the client's view), for an outline two texels
+// wide on a card padded by two: five gathers a frame.
+fn mobile_frames_bilinear_wide_cross_alpha(atlas: texture_2d_array<f32>, atlas_sampler: sampler, layer: i32,
+    uv: vec2<f32>, uv_min: vec2<f32>, crossfade: FrameCrossfade, frame_filter: MobileFrameFilter) -> vec4<f32> {
+    let atlas_size = vec2<f32>(textureDimensions(atlas).xy);
+    let origin = vec2<i32>(round(uv_min * atlas_size));
+    let px = (uv - uv_min) * atlas_size;
+    let first = mobile_frame_bilinear_wide_cross_alpha(atlas, atlas_sampler, layer, origin,
+        vec2<i32>(round(crossfade.frame_uv_min * atlas_size)), vec2<i32>(round(crossfade.frame_uv_max * atlas_size)),
+        px, atlas_size);
+    var next = first;
+    if (mobile_frames_blend(crossfade)) {
+        next = mobile_frame_bilinear_wide_cross_alpha(atlas, atlas_sampler, i32(crossfade.next_layer),
+            origin + vec2<i32>(round(crossfade.next_uv_offset * atlas_size)),
+            vec2<i32>(round(crossfade.next_uv_min * atlas_size)), vec2<i32>(round(crossfade.next_uv_max * atlas_size)),
+            px, atlas_size);
+    }
+    return mobile_frames_wide_cross_mix(first, next, crossfade, frame_filter);
 }

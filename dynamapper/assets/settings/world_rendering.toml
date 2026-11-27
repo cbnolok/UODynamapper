@@ -8,6 +8,7 @@ caves = "hidden_until_entered"
 cave_surroundings = "dimmed"
 mobile_in_between_frames = "crossfade"
 mobile_upscale = "off"
+mobile_outline_width = "one_texel"
 mobile_stop = "half_step_later"
 mobile_walk_pace = "match_the_ground"
 

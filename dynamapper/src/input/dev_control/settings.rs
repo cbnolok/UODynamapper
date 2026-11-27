@@ -16,6 +16,7 @@ use crate::render::statics::static_source::StaticArtSourceState;
 use crate::world::caves::{CaveSurroundings, CaveView};
 use crate::render::mobiles::in_between::MobileInBetweenFrames;
 use crate::render::mobiles::upscales::MobileUpscale;
+use crate::render::mobiles::sharpening::MobileOutlineWidth;
 use crate::world::mobile_motion::MobileStop;
 use crate::render::mobiles::pace::MobileWalkPace;
 use crate::render::lighting::light_cover::LightCover;
@@ -41,6 +42,7 @@ pub(super) enum ControlSetting {
     CaveSurroundings(CaveSurroundings),
     MobileInBetweenFrames(MobileInBetweenFrames),
     MobileUpscale(MobileUpscale),
+    MobileOutlineWidth(MobileOutlineWidth),
     MobileStop(MobileStop),
     MobileWalkPace(MobileWalkPace),
     EnableStatics(bool),
@@ -131,7 +133,7 @@ impl ControlSettings<'_> {
         match setting {
             S::HidePlayer(_) | S::PlayerBody(_) | S::PlayerMountBody(_)
             | S::ShowOnlyPlayerFloor(_) | S::PlayerFloorBuildingOnly(_) | S::Caves(_) | S::CaveSurroundings(_) | S::EnableStatics(_)
-            | S::MobileInBetweenFrames(_) | S::MobileUpscale(_) | S::MobileStop(_) | S::MobileWalkPace(_) | S::EnableStaticLights(_) | S::ShowHiddenMultiParts(_) | S::CcTerrainTransitions(_)
+            | S::MobileInBetweenFrames(_) | S::MobileUpscale(_) | S::MobileOutlineWidth(_) | S::MobileStop(_) | S::MobileWalkPace(_) | S::EnableStaticLights(_) | S::ShowHiddenMultiParts(_) | S::CcTerrainTransitions(_)
             | S::EcTerrainTransitions(_) => {
                 let settings = self.settings.as_mut().ok_or("the settings are not loaded yet")?;
                 // Compared through a shared borrow first: a mutable one marks Settings changed even when equal.
@@ -151,6 +153,7 @@ impl ControlSettings<'_> {
                     S::CaveSurroundings(value) => world.cave_surroundings = value,
                     S::MobileInBetweenFrames(value) => world.mobile_in_between_frames = value,
                     S::MobileUpscale(value) => world.mobile_upscale = value,
+                    S::MobileOutlineWidth(value) => world.mobile_outline_width = value,
                     S::MobileStop(value) => world.mobile_stop = value,
                     S::MobileWalkPace(value) => world.mobile_walk_pace = value,
                     S::EnableStatics(value) => world.enable_statics = value,
@@ -220,6 +223,7 @@ impl ControlSettings<'_> {
             ControlSetting::CaveSurroundings(value) => world.cave_surroundings != value,
             ControlSetting::MobileInBetweenFrames(value) => world.mobile_in_between_frames != value,
             ControlSetting::MobileUpscale(value) => world.mobile_upscale != value,
+            ControlSetting::MobileOutlineWidth(value) => world.mobile_outline_width != value,
             ControlSetting::MobileStop(value) => world.mobile_stop != value,
             ControlSetting::MobileWalkPace(value) => world.mobile_walk_pace != value,
             ControlSetting::EnableStatics(value) => world.enable_statics != value,
@@ -245,7 +249,7 @@ impl ControlSettings<'_> {
                 "player_floor_building_only": world.player_floor_building_only, "caves": world.caves,
                 "cave_surroundings": world.cave_surroundings, "enable_statics": world.enable_statics,
                 "mobile_in_between_frames": world.mobile_in_between_frames, "mobile_upscale": world.mobile_upscale,
-                "mobile_stop": world.mobile_stop,
+                "mobile_outline_width": world.mobile_outline_width, "mobile_stop": world.mobile_stop,
                 "mobile_walk_pace": world.mobile_walk_pace,
                 "enable_static_lights": world.enable_static_lights,
                 "show_hidden_multi_parts": world.show_hidden_multi_parts,
@@ -294,6 +298,11 @@ mod tests {
             ControlSetting::MobileUpscale(MobileUpscale::Off));
         assert_eq!(ControlSetting::parse("mobile_stop", json!("at_once")).unwrap(),
             ControlSetting::MobileStop(MobileStop::AtOnce));
+        assert_eq!(ControlSetting::parse("mobile_outline_width", json!("follows_upscale")).unwrap(),
+            ControlSetting::MobileOutlineWidth(MobileOutlineWidth::FollowsUpscale));
+        assert_eq!(ControlSetting::parse("mobile_outline_width", json!("one_texel")).unwrap(),
+            ControlSetting::MobileOutlineWidth(MobileOutlineWidth::OneTexel));
+        assert!(ControlSetting::parse("mobile_outline_width", json!("two_texels")).is_err());
         assert_eq!(ControlSetting::parse("mobile_walk_pace", json!("client_timing")).unwrap(),
             ControlSetting::MobileWalkPace(MobileWalkPace::ClientTiming));
         assert_eq!(ControlSetting::parse("light_cover", json!("clients")).unwrap(),

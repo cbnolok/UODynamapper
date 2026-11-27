@@ -12,6 +12,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 use bevy::prelude::*;
 use bytemuck::{Pod, Zeroable};
+use serde::{Deserialize, Serialize};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::settings::runtime_specs::SpecFiles;
 use crate::world::mobile_motion::DIRECTION_COUNT;
@@ -26,6 +27,41 @@ const SHARPENING_FILE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// The texels an outlined frame's card grows by on each side: room for the outline, as the frames are stored cropped
 /// to their visible pixels.
 pub const OUTLINE_PADDING_TEXELS: u32 = 1;
+/// The widest outline the shader draws, in texels of the frame: one art pixel of a 2x frame (art/mobile_edges.wesl
+/// `MOBILE_OUTLINE_WIDE_REACH`).
+pub const OUTLINE_MAX_REACH_TEXELS: u32 = 2;
+
+/// How wide a mobile's outline is on an upscaled frame (SPAN 2x at run time, or 2x frames packed ahead of time), whose
+/// art pixel spans `Clip::texel_scale` texels. Kept in the app-written world rendering settings as
+/// `world_rendering.mobile_outline_width`; the bundled settings/world_rendering.toml holds the default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileOutlineWidth {
+    /// One texel of the frame drawn: on a 2x frame half as wide on screen as at 1x.
+    OneTexel,
+    /// One art pixel: as many texels as the frame's upscale (two on a 2x frame), as wide on screen as at 1x.
+    FollowsUpscale,
+}
+
+impl MobileOutlineWidth {
+    pub const ALL: [Self; 2] = [Self::OneTexel, Self::FollowsUpscale];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OneTexel => "One Texel",
+            Self::FollowsUpscale => "Follows Upscale",
+        }
+    }
+
+    /// The texels an outline reaches past the silhouette of a frame of `texel_scale` texels to an art pixel, the card
+    /// padded by as many: at most `OUTLINE_MAX_REACH_TEXELS`.
+    pub fn reach_texels(self, texel_scale: u32) -> u32 {
+        match self {
+            Self::OneTexel => OUTLINE_PADDING_TEXELS,
+            Self::FollowsUpscale => (OUTLINE_PADDING_TEXELS * texel_scale.max(1)).min(OUTLINE_MAX_REACH_TEXELS),
+        }
+    }
+}
 
 /// A mobile frame's filter, as the art sprite shader reads it after the frame's ground strips (`MobileSpriteInstance`,
 /// art/art_bindings.wesl `MobileFrameFilter`). All zeros (an instance not filled) leaves the frame as it is.
@@ -43,10 +79,11 @@ pub struct MobileFrameFilter {
     pub contour: f32,
     /// The contour's sRGB-encoded colour, red in the lowest byte (WGSL `unpack4x8unorm`).
     pub contour_color: u32,
-    /// The opacity of the one-texel outline outside the silhouette, 0 off.
+    /// The opacity of the outline outside the silhouette, 0 off.
     pub outline: f32,
     /// The texels the card grows by on each side beyond the frame (`OUTLINE_PADDING_TEXELS` with an outline, else
-    /// 0): its taps outside the frame read transparent.
+    /// 0): its taps outside the frame read transparent. The outline reaches as far past the silhouette
+    /// (`for_frame`: two texels on an upscaled frame with `MobileOutlineWidth::FollowsUpscale`).
     pub padding_texels: u32,
 }
 
@@ -63,6 +100,15 @@ impl MobileFrameFilter {
             outline: filter.outline,
             padding_texels: if filter.outline > 0.0 { OUTLINE_PADDING_TEXELS } else { 0 },
         }
+    }
+
+    /// The filter of a frame of a clip of `texel_scale` texels to an art pixel: an outline reaches, and the card is
+    /// padded, by `width`. A filter without an outline stays as it is.
+    pub fn for_frame(self, width: MobileOutlineWidth, texel_scale: u32) -> Self {
+        if self.padding_texels == 0 {
+            return self;
+        }
+        Self { padding_texels: width.reach_texels(texel_scale), ..self }
     }
 }
 
@@ -177,5 +223,24 @@ mod tests {
         assert_eq!(filter.padding_texels, OUTLINE_PADDING_TEXELS);
         assert_eq!(filter.contour_color.to_le_bytes(), [1, 2, 3, u8::MAX]);
         assert_eq!(MobileFrameFilter::of(FrameFilter::OFF).padding_texels, 0);
+    }
+
+    #[test]
+    fn an_outline_follows_the_upscale_only_when_chosen() {
+        const UPSCALED: u32 = 2;
+        let outlined = MobileFrameFilter::of(FrameFilter { outline: 1.0, ..FrameFilter::OFF });
+        for scale in [1, UPSCALED] {
+            assert_eq!(outlined.for_frame(MobileOutlineWidth::OneTexel, scale).padding_texels, OUTLINE_PADDING_TEXELS);
+        }
+        assert_eq!(outlined.for_frame(MobileOutlineWidth::FollowsUpscale, 1).padding_texels, OUTLINE_PADDING_TEXELS);
+        assert_eq!(outlined.for_frame(MobileOutlineWidth::FollowsUpscale, UPSCALED).padding_texels, UPSCALED);
+        // Past the shader's widest outline the reach stays at it.
+        assert_eq!(outlined.for_frame(MobileOutlineWidth::FollowsUpscale, 2 * UPSCALED).padding_texels,
+            OUTLINE_MAX_REACH_TEXELS);
+        // The rest of the filter stays; a frame without an outline is not padded.
+        let wide = outlined.for_frame(MobileOutlineWidth::FollowsUpscale, UPSCALED);
+        assert_eq!(MobileFrameFilter { padding_texels: OUTLINE_PADDING_TEXELS, ..wide }, outlined);
+        let plain = MobileFrameFilter::of(FrameFilter::OFF);
+        assert_eq!(plain.for_frame(MobileOutlineWidth::FollowsUpscale, UPSCALED), plain);
     }
 }
