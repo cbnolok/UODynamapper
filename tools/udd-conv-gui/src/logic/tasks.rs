@@ -89,7 +89,7 @@ use udd_conv::animation::mobile_strides::{
     clips_without_strides, measure_package_strides, MeasureOptions, StrideJobProgress, StrideProgress,
 };
 use crate::models::{
-    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, ClassicGumpsClient, GumpsEcSharing, LogLevel,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, LogLevel,
     LogMessage, MobileBc7Lossy, MobilePrescale, StrideMeasurement, TextureOptimization,
 };
 use udd_conv::bc7_lossy::Bc7LossyLevel;
@@ -437,13 +437,10 @@ fn gump_atlas_compression(zstd_level: Option<i32>) -> CompressionFlag {
 
 /// The folder the Classic gumps job reads: the Classic client's, or the Enhanced client's copy of the Classic gumps
 /// when that is chosen. Never both, so a Classic folder without gumps is reported missing rather than filled from the
-/// Enhanced client.
+/// Enhanced client (`ClassicGumpsClient::source_dir`, which `pack-gumps` shares).
 pub(crate) fn cc_gumps_source_dirs(settings: &AppSettings) -> Vec<PathBuf> {
-    let dir = match settings.gumps_cc_client {
-        ClassicGumpsClient::Classic => settings.cc_dir.as_ref(),
-        ClassicGumpsClient::EnhancedCopy => settings.ec_dir.as_ref(),
-    };
-    gather_single_source_dir(dir)
+    let dir = settings.gumps_cc_client.source_dir(settings.cc_dir.as_deref(), settings.ec_dir.as_deref());
+    dir.into_iter().map(Path::to_path_buf).collect()
 }
 
 /// The folder the Enhanced gumps job reads, as `pack-ec-gumps --ecdir` does: the extracted gumpart folder when one is
@@ -522,7 +519,7 @@ fn pack_gumps_cc(
     progress: &AssetProgressReporter,
 ) -> eyre::Result<CcGumpsBuildSummary> {
     let sources = cc_gumps_source_dirs(settings);
-    if sources.is_empty() { eyre::bail!("No Classic or Enhanced source dir configured"); }
+    if sources.is_empty() { eyre::bail!("No {} configured for the Classic gumps", settings.gumps_cc_client.folder_label()); }
     ensure_output_parent(output)?;
     format_log::asset_settings(settings, AssetPackTask::GumpsCc);
     let options = cc_gumps_options(settings, load_upscale_profile(settings)?);
@@ -1859,6 +1856,7 @@ impl UddConvApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ClassicGumpsClient;
 
     #[test]
     fn plain_bc7_does_not_apply_rdo() {

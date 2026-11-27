@@ -260,6 +260,7 @@ impl UddConvApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ClassicGumpsClient;
 
     #[test]
     fn quick_formats_keep_native_resolution_and_ignore_manual_overrides() {

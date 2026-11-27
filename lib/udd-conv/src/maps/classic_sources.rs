@@ -173,6 +173,38 @@ fn resolve_classic_art_source_for_format(
     })
 }
 
+/// Which client folder the Classic gumps are read from: the Classic client's, or the copy of the Classic gumps the
+/// Enhanced client ships (`gumpartLegacyMUL.uop`). Only the chosen folder is read, never the other as a fallback, so a
+/// Classic folder without gumps is reported missing rather than filled from the Enhanced client (the user,
+/// 2026-11-25 for the converter GUI, 2026-11-27 for `pack-gumps`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ClassicGumpsClient {
+    /// The Classic client folder (`pack-gumps --ccdir`).
+    #[default]
+    Classic,
+    /// The Enhanced client folder's copy of the Classic gumps (`pack-gumps --ecdir`).
+    EnhancedCopy,
+}
+
+impl ClassicGumpsClient {
+    /// The one folder this choice reads, of the Classic and Enhanced client folders; `None` when that one is not set,
+    /// whatever the other is.
+    pub fn source_dir<'a>(self, cc_dir: Option<&'a Path>, ec_dir: Option<&'a Path>) -> Option<&'a Path> {
+        match self {
+            Self::Classic => cc_dir,
+            Self::EnhancedCopy => ec_dir,
+        }
+    }
+
+    /// The folder this choice reads, as messages name it.
+    pub fn folder_label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic client folder",
+            Self::EnhancedCopy => "Enhanced client folder (its copy of the Classic gumps)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassicGumpSource {
     pub format: SourceFormat,
@@ -202,7 +234,8 @@ pub fn resolve_classic_gump_source(
         }
     }
 
-    eyre::bail!("missing Classic gump source")
+    let dirs = source_dirs.iter().map(|dir| dir.display().to_string()).collect::<Vec<_>>().join(", ");
+    eyre::bail!("no Classic gumps in {dirs}: expected gumpidx.mul and gumpart.mul, or gumpartLegacyMUL.uop")
 }
 
 fn resolve_classic_gump_source_for_format(
@@ -397,5 +430,30 @@ mod tests {
         assert_eq!(selected.format, SourceFormat::Uop);
         assert_eq!(selected.primary_path, dir.join("gumpartLegacyMUL.uop"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_without_gumps_is_named_in_the_error() {
+        let dir = temp_source_dir("gump_missing");
+
+        let error = resolve_classic_gump_source(std::slice::from_ref(&dir), SourceFormatPreference::Mul)
+            .expect_err("a folder without gumps has no gump source");
+
+        let message = error.to_string();
+        assert!(message.contains(&dir.display().to_string()), "{message}");
+        assert!(message.contains("gumpartLegacyMUL.uop"), "{message}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn classic_gumps_client_reads_only_its_own_folder() {
+        let classic = Path::new("/uo/classic");
+        let enhanced = Path::new("/uo/enhanced");
+
+        assert_eq!(ClassicGumpsClient::default(), ClassicGumpsClient::Classic);
+        assert_eq!(ClassicGumpsClient::Classic.source_dir(Some(classic), Some(enhanced)), Some(classic));
+        assert_eq!(ClassicGumpsClient::Classic.source_dir(None, Some(enhanced)), None);
+        assert_eq!(ClassicGumpsClient::EnhancedCopy.source_dir(Some(classic), Some(enhanced)), Some(enhanced));
+        assert_eq!(ClassicGumpsClient::EnhancedCopy.source_dir(Some(classic), None), None);
     }
 }

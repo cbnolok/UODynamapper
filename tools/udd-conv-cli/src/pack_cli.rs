@@ -27,7 +27,7 @@ use udd_conv::conversion_tables::{
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     tex_aux_ec::pack_tex_aux_ec,
-    classic_sources::SourceFormatPreference,
+    classic_sources::{ClassicGumpsClient, SourceFormatPreference},
     cc_gumps::{
         convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsOptions,
         CC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_CC_DEFAULT_OUTPUT,
@@ -579,6 +579,26 @@ fn collect_cc_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
         .ok_or_else(|| eyre::eyre!("--ccdir is required for Classic source files"))?;
     validate_source_dir(ccdir, "--ccdir")?;
     Ok(vec![ccdir.clone()])
+}
+
+/// The one client folder `pack-gumps` reads, as the converter GUI's Classic Gumps card chooses it: `--ccdir`, the
+/// Classic client, or `--ecdir`, the Enhanced client's copy of the Classic gumps (`gumpartLegacyMUL.uop`). Both
+/// together are refused rather than one read first and the other as a fallback.
+fn collect_cc_gumps_source_dirs(args: &SourceDirArgs) -> eyre::Result<(ClassicGumpsClient, Vec<PathBuf>)> {
+    let (client, dir, arg_name) = match (&args.ccdir, &args.ecdir) {
+        (Some(ccdir), None) => (ClassicGumpsClient::Classic, ccdir, "--ccdir"),
+        (None, Some(ecdir)) => (ClassicGumpsClient::EnhancedCopy, ecdir, "--ecdir"),
+        (Some(_), Some(_)) => eyre::bail!(
+            "pack-gumps reads one client folder: pass --ccdir for the Classic client's gumps or --ecdir for the \
+             Enhanced client's copy of them (gumpartLegacyMUL.uop), not both"
+        ),
+        (None, None) => eyre::bail!(
+            "pack-gumps needs a client folder: --ccdir for the Classic client's gumps or --ecdir for the Enhanced \
+             client's copy of them (gumpartLegacyMUL.uop)"
+        ),
+    };
+    validate_source_dir(dir, arg_name)?;
+    Ok((client, vec![dir.clone()]))
 }
 
 fn collect_ec_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
@@ -1645,6 +1665,10 @@ enum Commands {
         zstd: Option<i32>,
     },
     /// Packs Classic gumpidx.mul/gumpart.mul or gumpartLegacyMUL.uop into gumps_cc.uddp.
+    ///
+    /// Reads one client folder: --ccdir, the Classic client, or --ecdir, the copy of the Classic gumps the Enhanced
+    /// client ships (gumpartLegacyMUL.uop). Passing both is an error, and a folder without gumps is reported, never
+    /// filled from the other client. --uop reads gumpartLegacyMUL.uop before the MUL pair in that folder.
     PackGumps {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -2752,7 +2776,7 @@ where
             single_upscale_passes,
             upscale_profile,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
+            let (client, paths) = collect_cc_gumps_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let single_pixel_format = single_gump_pixel_format(raw, CC_LOSSY_SINGLE_GUMP_FORMAT);
@@ -2774,7 +2798,8 @@ where
                         SourceFormatPreference::Mul
                     },
                 },
-            )?;
+            )
+            .map_err(|error| error.wrap_err(format!("pack the Classic gumps of the {}", client.folder_label())))?;
             info!(
                 "Wrote {} Classic gumps to '{}' ({} single in {}, {} with soft alpha; {} atlas).",
                 summary.gump_count,
@@ -2914,6 +2939,50 @@ mod tests {
         assert_eq!(dirs, vec![ccdir.clone()]);
 
         let _ = fs::remove_dir_all(ccdir);
+        let _ = fs::remove_dir_all(ecdir);
+    }
+
+    #[test]
+    fn pack_gumps_reads_the_one_client_folder_given() {
+        let ccdir = temp_dir("gumps_cc_root");
+        let ecdir = temp_dir("gumps_ec_root");
+        let args = |ccdir: Option<&PathBuf>, ecdir: Option<&PathBuf>| SourceDirArgs {
+            ccdir: ccdir.cloned(),
+            ecdir: ecdir.cloned(),
+        };
+
+        let classic = collect_cc_gumps_source_dirs(&args(Some(&ccdir), None)).expect("classic folder");
+        assert_eq!(classic, (ClassicGumpsClient::Classic, vec![ccdir.clone()]));
+        let enhanced = collect_cc_gumps_source_dirs(&args(None, Some(&ecdir))).expect("enhanced folder");
+        assert_eq!(enhanced, (ClassicGumpsClient::EnhancedCopy, vec![ecdir.clone()]));
+
+        let both = collect_cc_gumps_source_dirs(&args(Some(&ccdir), Some(&ecdir))).expect_err("both folders");
+        assert!(both.to_string().contains("not both"), "{both}");
+        let neither = collect_cc_gumps_source_dirs(&args(None, None)).expect_err("no folder");
+        assert!(neither.to_string().contains("needs a client folder"), "{neither}");
+
+        let _ = fs::remove_dir_all(ccdir);
+        let _ = fs::remove_dir_all(ecdir);
+    }
+
+    #[test]
+    fn pack_gumps_reports_a_folder_without_gumps() {
+        let ecdir = temp_dir("gumps_missing_ec_root");
+        let output = ecdir.join(GUMPS_CC_DEFAULT_OUTPUT);
+        let error = run_with_args([
+            std::ffi::OsString::from("uddpack"),
+            "pack-gumps".into(),
+            "--ecdir".into(),
+            ecdir.clone().into_os_string(),
+            "--output".into(),
+            output.clone().into_os_string(),
+        ])
+        .expect_err("a folder without gumps cannot be packed");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("Enhanced client folder"), "{message}");
+        assert!(message.contains("no Classic gumps in"), "{message}");
+        assert!(!output.exists());
         let _ = fs::remove_dir_all(ecdir);
     }
 

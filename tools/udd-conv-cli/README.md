@@ -28,7 +28,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-map-statics` | `mapX.uddp` + `staticsX.uddp` | Combined map+statics pass |
 | `pack-lights` | `world_lights.uddp` | CC light.mul lights, their signed intensities (`--ccdir`) |
 | `pack-hues` | `hues.uddp` | Classic `hues.mul` (`--hue-ramp linear`, the default, or `flat`) or EC `hues.uop` |
-| `pack-gumps` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul`, or `gumpartLegacyMUL.uop` |
+| `pack-gumps` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul`, or `gumpartLegacyMUL.uop` (`--uop` reads it first), from one client folder: `--ccdir`, the Classic client, or `--ecdir`, the Enhanced client's copy of the Classic gumps, not both; a folder without gumps is an error, not filled from the other client |
 | `pack-ec-gumps` | `gumps_ec.uddp` | EC `interface.uop` gumpart; `--share-with <gumps_cc.uddp>` leaves out the single gumps that package draws the same and the paperdoll gumps it has at the same size, so the package then needs it |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |
 

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use udd_conv::atlas::bc7_rdo_device::Bc7RdoDevice;
 use udd_conv::atlas::bc_encode_device::BcEncodeDevice;
 use udd_conv::classic_sources::SourceFormatPreference;
+/// Which client folder the Classic gumps job reads, as `pack-gumps` chooses it: the Enhanced client's copy of the
+/// Classic gumps only when chosen, never as a fallback for a Classic folder without gumps.
+pub use udd_conv::classic_sources::ClassicGumpsClient;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
 use udd_conv::hues::HueRampMode;
@@ -13,17 +16,6 @@ use udd_conv::page_compression::{
 };
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
-
-/// Which client folder the Classic gumps job reads. The Enhanced client ships a copy of the Classic gumps
-/// (`gumpartLegacyMUL.uop`); it is read only when chosen, never as a fallback for a Classic folder without gumps.
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum ClassicGumpsClient {
-    /// The Classic client folder (`pack-gumps --ccdir`).
-    #[default]
-    Classic,
-    /// The Enhanced client folder's copy of the Classic gumps (`pack-gumps --ecdir`).
-    EnhancedCopy,
-}
 
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextureOptimization {

@@ -72,7 +72,7 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-ec-mobile-anims` | Partial: Assets, Enhanced Mobile Animations | `--tables`, `--ec-mobile-animations-kdl`, `--frame-filters-kdl` and `--prescale-kdl` (routing folder or bundled copy only), `--atlas-width`, `--atlas-height`, `--gutter` |
 | `pack-ec-tex-aux` | Partial: Assets, Enhanced Auxiliary Textures | `--tilemeta` (always the input folder's `tilemeta.uddp`), `--kr-delta` |
 | `make-kr-delta` | CLI only | |
-| `pack-gumps` | Yes: Assets, Classic Gumps | |
+| `pack-gumps` | Yes: Assets, Classic Gumps (the Client choice is `--ccdir` or `--ecdir`) | |
 | `pack-ec-gumps` | Yes: Assets, Enhanced Gumps (`--share-with` is the output folder's `gumps_cc.uddp`) | |
 | `pack-map` | Partial: World, Map | `--zstd`, `--stored`; `--uop` only in the settings file (`map_preferences`) |
 | `pack-statics` | Partial: World, Statics | `--zstd`, `--stored` |
