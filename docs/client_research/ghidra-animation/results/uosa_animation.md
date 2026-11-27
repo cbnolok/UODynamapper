@@ -487,9 +487,11 @@ from memory); the shape is built by 0x00435140. The shadow shape's slot +0x88 (v
 So the land in front of a mobile, which lies behind the mobile's lower pixels, never covers them: each strip is as
 near as the land of the rows it lies over. ClassicUO does the same for the Classic frames
 (`MobileView.DrawInternal`): the frame above its anchor one row nearer, then each slice below it, as tall as that
-part, two rows nearer than the one above. The renderer orders each pixel below the anchor on the cell where its line
-of sight meets the mobile's base plane instead, for both frame sources (art/depth.wesl `mobile_fragment_view_z`,
-2026-11-26).
+part, two rows nearer than the one above. The same nearness puts a strip over a static standing on the rows it lies
+over: a post or a trunk a row or two in front of a hoof. The renderer orders each pixel below the anchor on the first
+cell where its line of sight meets the ground drawn instead, for both frame sources (art/depth.wesl
+`mobile_fragment_view_z`, 2026-11-26; art/mobile_ground.wesl, 2026-11-27): never nearer than that ground, so what
+stands on it in front stays in front.
 
 ### Frame-set loading per layer
 

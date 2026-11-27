@@ -1582,15 +1582,32 @@ outside: the card is one depth, the roof tiles lie on cells behind the mobile's 
 
 - **Below the anchor** (art/depth.wesl `mobile_fragment_view_z`, applied in art/main.wesl with `MOBILE_FRAMES`, not in
   the shadow passes). A card pixel stands, on screen, over the point where its line of sight (`sight_plane_hit`: the
-  view axis in the orthographic camera, the ray from the camera in perspective) meets the plane of the mobile's base.
+  view axis in the orthographic camera, the ray from the camera in perspective) meets the ground drawn there.
   The pixel takes the depth of that point's cell at the mobile's priority z, level 0, if that is nearer than its card:
   the depth a projected shadow lying on that cell takes. Flat land (z - 2), Background floors (z - 1) and flat items
   (z, levels up to 8) there stay under it, a static standing there at the mobile's z (z + 1, level 1 or more) and land
-  rising there more than 3 z cover it. Above the anchor the hit lies behind the card's row, so the card keeps its depth.
-  The plane is taken 2 z over the base (`MOBILE_GROUND_LIFT_Z`, added 2026-11-27): on the base's own plane, land
-  rising 1 or 2 z in the next row, or an Enhanced rug's fringe overhanging its diamond, covered a sliver of a hoof or
-  a claw along each cell edge (the mine at 2578,478; the upper floor at 1412,1601; the ophidians' tails at 2093,790).
-  The price is the foot of a static standing on the cell behind such an edge, up to 8 pixels of it, under the frame.
+  rising there more than 2 z cover it. Above the anchor the hit lies behind the card's row, so the card keeps its depth.
+  - **The ground met** (art/mobile_ground.wesl `mobile_ground_hit`, `render/mobiles/ground.rs`, 2026-11-27). Each
+    mobile reads the 16 x 16 cells around it (`MobileGroundCache`, rebuilt when its cell, z, the caves, the z-view's
+    land limit or the statics source change): per cell the land's rise at its top corner over the mobile's z, 0 to
+    2 (the land as drawn: a cave's floor, none over the z-view's limit), and the highest floor on it within 2 z (a
+    static 0 high, Background and Surface, drawn: boards, rugs, carpets; grass and flowers are Background only and
+    stand). The shader walks the line from 2 z over the base down to a tie over it (1/16 z), the cells nearest the
+    camera first, and takes the first cell where the line leaves it no higher than a tie over its land or its floor.
+    On flat ground that is the cell where the line is a tie over the base, the nearer one on an exact tie; over land
+    rising 1 or 2 z in front, or a carpet a z over the boards, it is the cell whose raised ground the pixel shows. With
+    the Enhanced statics a floor's art on a camera quad reaches 0.042 cells past its diamond
+    (`MOBILE_GROUND_FLOOR_OVERHANG`, ec_item_quad.wesl), and a floor counts as far past its far edges.
+  - Why not a plane: on the base's own plane, land rising 1 or 2 z in the next row, or a carpet's or an Enhanced rug's
+    edge, covered a sliver of a hoof or a claw along each cell edge (the mine at 2578,478; the upper floor at
+    1412,1601; the ophidians' tails at 2093,790). A plane 2 z over the base (`MOBILE_GROUND_LIFT_Z`, 6fe5fcb3) removed
+    them, but on flat ground it moved every hit a cell nearer along the edges, and a post or a trunk standing on the
+    cell behind drew under the frame (the daemon's hoof over the Britain post at 1459,1622; the dragon's claw and the
+    horse's hoof over the Yew trunks at 2067,762 and 2072,761). Following the ground drawn removes both: the pixel is
+    never nearer than the ground it shows, so whatever stands on that ground's cell or in front stays in front.
+    Inside the Enhanced overhang the hit moves at most 0.042 cells nearer; a floor's fringe covers a post's foot there
+    already. The ground is read for both statics sources alike (the overhang only for the Enhanced one), so a
+    Background floor not drawn on a camera quad gives up that much of a post's foot in Enhanced.
   One rule for both sources and every facing; the 8 px Enhanced cut over the anchor is gone, and with it the strip
   constants and `MobileGroundStrips`. A mounted mobile's plane is its own base, whatever its layer's offset; the mount's
   and the rider's pixels below the anchor lie level, and the rider, drawn after its mount, shows (the opaque depth test

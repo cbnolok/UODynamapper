@@ -68,6 +68,17 @@ struct MobileCeiling {
     _pad: vec2<u32>,
 }
 
+// The ground around a mobile (`MobileGround`, render/mobiles/ground.rs; art/mobile_ground.wesl): the first of its
+// MOBILE_GROUND_DIM x MOBILE_GROUND_DIM cells (`first_cell`), the z its rises are counted from, its flags (read, and
+// whether its floors' art reaches past their cells) and 4 bits a cell, 8 cells a word along x then y: the rise of the
+// land at the cell's top corner and of the Background floors on it.
+struct MobileGround {
+    first_cell: vec2<i32>,
+    base_z: f32,
+    flags: u32,
+    cells: array<vec4<u32>, 8>,
+}
+
 // A mobile frame's filter (`MobileFrameFilter`, render/mobiles/sharpening.rs; runtime_specs/mobiles/Sharpening.kdl):
 // its body's CAS strength before the style's `effects.mobile_sharpening` (art/mobile_sharpen.wesl), the share of it
 // the rim takes, the edge treatments (art/mobile_edges.wesl) and the interior lines and contrast at the strong colour
@@ -90,12 +101,13 @@ struct MobileFrameFilter {
     _padding: u32,
 }
 
-// A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite, its crossfade, its ground
-// strips and its filter.
+// A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite, its crossfade, the ceiling
+// over it, the ground around it and its filter.
 struct MobileSpriteInstance {
     sprite: SpriteInstance,
     crossfade: FrameCrossfade,
     ceiling: MobileCeiling,
+    ground: MobileGround,
     frame_filter: MobileFrameFilter,
 }
 

@@ -34,6 +34,7 @@ use super::upscales::{atlas_pages_wanted, upscale_key, MobileUpscale, MobileUpsc
 use super::MobileClipChoice;
 use super::pace::MobileCycleClock;
 use super::ceiling::MobileCeilingCache;
+use super::ground::{MobileGround, MobileGroundCache};
 use crate::world::z_view::ZViewLimit;
 
 /// The most frames drawn at once: a mount and its rider for each mobile, and the parts of an upscaled frame wider than
@@ -53,13 +54,15 @@ const DEPTH_CELL_SLIDE_EPSILON: f32 = 1.0 / 1024.0;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
-/// statics' sprite instance, the crossfade of its frames, the ceiling drawn over it and its body's frame filter.
+/// statics' sprite instance, the crossfade of its frames, the ceiling drawn over it, the ground around it and its body's
+/// frame filter.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MobileSpriteInstance {
     pub sprite: SpriteInstance,
     pub crossfade: FrameCrossfade,
     pub ceiling: MobileCeiling,
+    pub ground: MobileGround,
     pub frame_filter: MobileFrameFilter,
 }
 
@@ -277,7 +280,7 @@ pub fn sys_draw_mobiles(
     mut commands: Commands,
     time: Res<Time>,
     mut mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice, &mut MobileCycleClock,
-        &mut MobileShownLayers, &MobileCeilingCache, Has<MobileHeldClip>)>,
+        &mut MobileShownLayers, &MobileCeilingCache, &MobileGroundCache, Has<MobileHeldClip>)>,
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
@@ -311,7 +314,7 @@ pub fn sys_draw_mobiles(
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
     let (mut mobiles, mut waiting_layers) = (0, 0);
-    for (transform, motion, appearance, choice, mut clock, mut shown, ceiling, held) in mobiles_q.iter_mut() {
+    for (transform, motion, appearance, choice, mut clock, mut shown, ceiling, ground, held) in mobiles_q.iter_mut() {
         mobiles += 1;
         let (Some(source), Some(actions)) = (choice.source, choice.actions) else { continue };
         let mut frames = Vec::with_capacity(2);
@@ -397,7 +400,7 @@ pub fn sys_draw_mobiles(
                 let frames = frames.padded(filter.padding_texels, clip.texel_scale);
                 // Both frames of an in-between come from the clip, so they share its mirroring.
                 instances.push(mobile_instance(transform.translation, frames, filter, mirrored, drawn.offset_px,
-                    drawn.tie_level, source, cave_flags, ceiling, local_lights));
+                    drawn.tie_level, source, cave_flags, ceiling, ground.ground, local_lights));
             }
         }
         shown.upscales = MobileUpscaleSwitches(switches);
@@ -437,8 +440,8 @@ fn mobile_cave_flags(caves: &CavesRes, translation: Vec3) -> u32 {
 }
 
 /// The instance of `frames` at a mobile's position `translation` (world x and z the UO x and y, world y its z), with
-/// the cave bits `cave_flags` (`mobile_cave_flags`) and the `ceiling` over it, lit by `local_lights` of a map when
-/// given, filtered by `filter`.
+/// the cave bits `cave_flags` (`mobile_cave_flags`), the `ceiling` over it and the `ground` around it, lit by
+/// `local_lights` of a map when given, filtered by `filter`.
 #[allow(clippy::too_many_arguments)]
 fn mobile_instance(
     translation: Vec3,
@@ -450,6 +453,7 @@ fn mobile_instance(
     source: AnimSource,
     cave_flags: u32,
     ceiling: MobileCeiling,
+    ground: MobileGround,
     local_lights: Option<(&RenderStaticLightInstances, u32)>,
 ) -> MobileSpriteInstance {
     let (world_x, world_z) = apply_cc_static_world_anchor_translation(translation.x, translation.z);
@@ -486,7 +490,7 @@ fn mobile_instance(
             true, lights, map_id, world_x, world_z, translation.y, bounds, false)),
         color_rgba: OPAQUE_COLOR,
     };
-    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ceiling, frame_filter: filter }
+    MobileSpriteInstance { sprite, crossfade: frames.crossfade, ceiling, ground, frame_filter: filter }
 }
 
 /// The cell a mobile at (`x`, `z`) is ordered from: its own at rest, and while it slides between two cells, the
@@ -529,11 +533,11 @@ mod tests {
 
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
-        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), a MobileCeiling (16) and a
-        // MobileFrameFilter (48), on a 16-byte stride.
+        // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), a MobileCeiling (16), a
+        // MobileGround (144: ground.rs) and a MobileFrameFilter (48), on a 16-byte stride.
         const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
         const WGSL_MOBILE_CEILING_SIZE: usize = 16;
-        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 256;
+        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 400;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
         assert_eq!(std::mem::size_of::<MobileCeiling>(), WGSL_MOBILE_CEILING_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
@@ -577,9 +581,23 @@ mod tests {
         (hit.x.floor(), hit.z.floor())
     }
 
-    /// The z of the plane where a mobile's pixels at `z` meet the ground (art/depth.wesl `MOBILE_GROUND_LIFT_Z`).
+    /// The z of the plane where a mobile's pixels at `z` meet flat ground at that z: a tie over it
+    /// (art/depth.wesl `MOBILE_GROUND_TIE_Z`).
     fn ground_plane_z(z: f32) -> f32 {
-        z + wesl_f32_const(DEPTH_WESL, "MOBILE_GROUND_LIFT_Z")
+        z + wesl_f32_const(DEPTH_WESL, "MOBILE_GROUND_TIE_Z")
+    }
+
+    /// The ground (ground.rs `read_mobile_ground`) around a mobile at (`x`, `y`) and `z`: the land's z at each cell's
+    /// top corner from `land_z`, the floors `floors`, overhanging their cells with `floors_overhang`.
+    fn ground_around(x: f32, y: f32, z: f32, land_z: impl FnMut(i32, i32) -> Option<i32>,
+        floors: impl IntoIterator<Item = (i32, i32, i32)>, floors_overhang: bool) -> MobileGround {
+        let (depth_x, depth_y) = mobile_depth_cell(x, y);
+        read_mobile_ground(depth_x as i32, depth_y as i32, z as i32, land_z, floors, floors_overhang)
+    }
+
+    /// Flat land at the mobile's z, and nothing on it.
+    fn flat_ground(x: f32, y: f32, z: f32) -> MobileGround {
+        ground_around(x, y, z, |_, _| Some(z as i32), [], false)
     }
 
     /// The logical distance (static_placement.rs `logical_draw_distance`, which the GPU's depth follows:
@@ -589,18 +607,24 @@ mod tests {
         logical_draw_distance(f64::from(anchor_x + anchor_y), f64::from(priority_z), 0)
     }
 
+    /// `mobile_pixel_distance_on` flat land at the mobile's z.
+    fn mobile_pixel_distance(x: f32, y: f32, z: f32, pixel: (f32, f32), tie_level: u32, ceiling_z: Option<f32>) -> f64 {
+        mobile_pixel_distance_on(&flat_ground(x, y, z), x, y, z, pixel, tie_level, ceiling_z)
+    }
+
     /// art/depth.wesl `mobile_fragment_view_z` in the isometric camera, as a logical distance: the pixel
     /// (`right_px`, `below_px`) of a frame of tie level `tie_level` of a mobile at (`x`, `y`) and `z`, under the ceiling
-    /// plane at z `ceiling_z` if any. The ground point is on the plane `MOBILE_GROUND_LIFT_Z` over the base.
-    fn mobile_pixel_distance(x: f32, y: f32, z: f32, (right_px, below_px): (f32, f32), tie_level: u32,
-        ceiling_z: Option<f32>) -> f64 {
+    /// plane at z `ceiling_z` if any. The ground point is where its line of sight meets `ground`
+    /// (art/mobile_ground.wesl `mobile_ground_hit`).
+    fn mobile_pixel_distance_on(ground: &MobileGround, x: f32, y: f32, z: f32, (right_px, below_px): (f32, f32),
+        tie_level: u32, ceiling_z: Option<f32>) -> f64 {
         let ceiling_offset = wesl_f32_const(DEPTH_WESL, "MOBILE_CEILING_PRIORITY_Z_OFFSET");
         let point = card_point(x, y, z, right_px, below_px);
         let (depth_x, depth_y) = mobile_depth_cell(x, y);
         let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x, depth_y);
         let priority_z = z + MOBILE_PRIORITY_Z_OFFSET;
         let card = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(priority_z), tie_level);
-        let mut distance = card.max(cell_distance(plane_cell(point, ground_plane_z(z)), priority_z));
+        let mut distance = card.max(cell_distance(ground_hit_cell(point, ground), priority_z));
         if let Some(ceiling_z) = ceiling_z
             && point.y > crate::world::coords::scale_uo_z_to_bevy_units(ceiling_z) {
             distance = distance.min(cell_distance(plane_cell(point, ceiling_z), ceiling_z + ceiling_offset));
@@ -610,7 +634,10 @@ mod tests {
 
     use crate::render::statics::static_placement::{logical_draw_distance, CC_WORLD_Y_PER_PIXEL};
     use crate::util_lib::wesl_source::wesl_f32_const;
+    use crate::world::coords::scale_uo_z_to_bevy_units;
     use super::super::placement::CELL_CENTRE_ABOVE_NEAR_VERTEX_PX;
+    use super::super::ground::{read_mobile_ground, MOBILE_GROUND_DIM};
+    use super::super::ground::mirror::{ground_hit_cell, FLOOR_OVERHANG};
 
     /// The flat land, the Background floors and the flat items at the mobile's z never cover a pixel of its frame: the
     /// legs and a tail below the anchor lie on the cell they cover, over what lies flat on it, at rest and sliding.
@@ -638,8 +665,9 @@ mod tests {
     }
 
     /// A static standing at the mobile's z covers the pixels below the anchor that lie on its cell (where their line of
-    /// sight meets the ground plane), and land rising there more than 3 z over the mobile covers them too: a planter
-    /// one row in front hides the tail behind it. The frame keeps its card's depth on its own row and behind it.
+    /// sight meets the flat ground), and land rising there more than 2 z over the mobile covers them too: a planter
+    /// one row in front hides the tail behind it, a post or a trunk in front the hoof behind its foot. The frame keeps
+    /// its card's depth on its own row and behind it.
     #[test]
     fn what_stands_in_front_covers_the_pixels_that_lie_on_its_cell() {
         const Z: f32 = 10.0;
@@ -672,23 +700,134 @@ mod tests {
         }
     }
 
+    /// How far a test walks along a line of sight at a time, in world units, to find where it meets the land drawn.
+    const SIGHT_STEP: f32 = 1.0 / 512.0;
+    /// How far over the highest land a test starts down a line of sight, in z.
+    const SIGHT_START_OVER_LAND_Z: f32 = 1.0;
+
+    /// The cells drawn at the pixel whose line of sight passes through `point`, as the GPU finds them, walked down the
+    /// line from over `top_z` until the land's height `height` (at a world x, z) is reached; with the cells a tie
+    /// either side of that point, which the rasteriser may take.
+    fn drawn_land_cells(point: Vec3, top_z: f32, height: impl Fn(Vec2) -> f32) -> Vec<(f32, f32)> {
+        let tie = scale_uo_z_to_bevy_units(wesl_f32_const(DEPTH_WESL, "MOBILE_GROUND_TIE_Z"));
+        let mut along = scale_uo_z_to_bevy_units(top_z + SIGHT_START_OVER_LAND_Z) - point.y;
+        loop {
+            let at = point + ISOMETRIC_SIGHT * along;
+            if at.y <= height(Vec2::new(at.x, at.z)) {
+                let mut cells = [at + ISOMETRIC_SIGHT * tie, at, at - ISOMETRIC_SIGHT * tie]
+                    .map(|at| (at.x.floor(), at.z.floor())).to_vec();
+                cells.dedup();
+                return cells;
+            }
+            along -= SIGHT_STEP;
+        }
+    }
+
     /// Land rising in front by as much as stays under the mobile on its own cell (its priority z - 2: 2 z, as at 3 z
-    /// it ties the mobile) covers no pixel of the frame along the cells' edges either, where the line of sight meets
-    /// the raised land a row nearer than the base: no seam over a hoof on uneven ground.
+    /// it ties the mobile) covers no pixel of the frame, where the line of sight meets it a row or two nearer than the
+    /// base: no seam over a hoof on uneven ground.
     #[test]
     fn land_rising_a_little_in_front_leaves_no_seam_over_the_frame() {
         const Z: f32 = 0.0;
         const HIGHEST_RISE: u32 = 2;
         let land_offset = wesl_f32_const(DEPTH_WESL, "LAND_PRIORITY_Z_OFFSET");
         for (x, y) in MOBILE_POSITIONS {
-            for pixel in frame_pixels() {
-                let point = card_point(x, y, Z, pixel.0, pixel.1);
-                let mobile = mobile_pixel_distance(x, y, Z, pixel, MOUNT_TIE_LEVEL, None);
-                for rise in (1..=HIGHEST_RISE).map(|rise| rise as f32) {
-                    let land = cell_distance(plane_cell(point, Z + rise), Z + rise + land_offset);
-                    assert!(mobile > land, "({x}, {y}): land {rise} z up covers {pixel:?}");
+            let (depth_x, depth_y) = mobile_depth_cell(x, y);
+            for rise in (1..=HIGHEST_RISE).map(|rise| rise as f32) {
+                // The land's z at a cell's top corner: the base on the mobile's row and behind it, rising a z a row
+                // in front up to `rise`.
+                let corner_z = |x: i32, y: i32| Z + ((x + y) as f32 - (depth_x + depth_y)).clamp(0.0, rise);
+                let ground = ground_around(x, y, Z, |x, y| Some(corner_z(x, y) as i32), [], false);
+                let land_height = |at: Vec2| {
+                    let cell = at.floor();
+                    let inside = at - cell;
+                    let (x, y) = (cell.x as i32, cell.y as i32);
+                    let near = corner_z(x, y) + (corner_z(x + 1, y) - corner_z(x, y)) * inside.x;
+                    let far = corner_z(x, y + 1) + (corner_z(x + 1, y + 1) - corner_z(x, y + 1)) * inside.x;
+                    scale_uo_z_to_bevy_units(near + (far - near) * inside.y)
+                };
+                for pixel in frame_pixels() {
+                    let point = card_point(x, y, Z, pixel.0, pixel.1);
+                    let mobile = mobile_pixel_distance_on(&ground, x, y, Z, pixel, MOUNT_TIE_LEVEL, None);
+                    for cell in drawn_land_cells(point, Z + rise, land_height) {
+                        let (cell_x, cell_y) = (cell.0 as i32, cell.1 as i32);
+                        let average = (corner_z(cell_x, cell_y) + corner_z(cell_x + 1, cell_y)
+                            + corner_z(cell_x, cell_y + 1) + corner_z(cell_x + 1, cell_y + 1)) / 4.0;
+                        assert!(mobile > cell_distance(cell, average.floor() + land_offset),
+                            "({x}, {y}): land {rise} z up on {cell:?} covers {pixel:?}");
+                    }
                 }
             }
+        }
+    }
+
+    /// A carpet a z over the floor the mobile stands on, on the cells in front, with the Enhanced floors' and carpets'
+    /// art reaching past their cells (ground.rs `MOBILE_GROUND_FLOOR_OVERHANG`) and without: no floor drawn at a pixel
+    /// of the frame covers it. The legs over the carpet's edge show whole.
+    #[test]
+    fn a_carpet_in_front_and_its_fringe_leave_no_seam_over_the_frame() {
+        const Z: f32 = 50.0;
+        const CARPET_RISE: i32 = 1;
+        // ClassicUO's priority z of a Background floor over its z.
+        const BACKGROUND_PRIORITY_Z_OFFSET: f32 = -1.0;
+        // The land, far under the floor.
+        const LAND_Z: i32 = 30;
+        // The cells around the point a floor's art may reach.
+        const NEIGHBOURS: [f32; 3] = [-1.0, 0.0, 1.0];
+        for (x, y) in MOBILE_POSITIONS {
+            let (depth_x, depth_y) = mobile_depth_cell(x, y);
+            let carpeted = move |cell: (f32, f32)| cell.0 + cell.1 > depth_x + depth_y;
+            let mut floors = Vec::new();
+            for cell_y in depth_y as i32 - MOBILE_GROUND_DIM..depth_y as i32 + MOBILE_GROUND_DIM {
+                for cell_x in depth_x as i32 - MOBILE_GROUND_DIM..depth_x as i32 + MOBILE_GROUND_DIM {
+                    floors.push((cell_x, cell_y, Z as i32));
+                    if carpeted((cell_x as f32, cell_y as f32)) {
+                        floors.push((cell_x, cell_y, Z as i32 + CARPET_RISE));
+                    }
+                }
+            }
+            for overhang in [false, true] {
+                let ground = ground_around(x, y, Z, |_, _| Some(LAND_Z), floors.iter().copied(), overhang);
+                let grown = if overhang { FLOOR_OVERHANG } else { 0.0 };
+                for pixel in frame_pixels() {
+                    let point = card_point(x, y, Z, pixel.0, pixel.1);
+                    let mobile = mobile_pixel_distance_on(&ground, x, y, Z, pixel, MOUNT_TIE_LEVEL, None);
+                    // The floors whose art lies at the pixel: the boards and the carpet on each cell whose art,
+                    // grown past it, reaches where the line of sight crosses their plane.
+                    for rise in [0, CARPET_RISE] {
+                        let plane = scale_uo_z_to_bevy_units(Z + rise as f32);
+                        let at = point + ISOMETRIC_SIGHT * (plane - point.y);
+                        let base = (at.x.floor(), at.z.floor());
+                        for (dx, dy) in NEIGHBOURS.into_iter().flat_map(|dx| NEIGHBOURS.map(|dy| (dx, dy))) {
+                            let cell = (base.0 + dx, base.1 + dy);
+                            let reaches = |at: f32, corner: f32| at >= corner - grown && at < corner + 1.0 + grown;
+                            if !(reaches(at.x, cell.0) && reaches(at.z, cell.1)) || (rise != 0 && !carpeted(cell)) {
+                                continue;
+                            }
+                            let floor = cell_distance(cell, Z + rise as f32 + BACKGROUND_PRIORITY_Z_OFFSET);
+                            assert!(mobile > floor,
+                                "({x}, {y}): the floor {rise} z up on {cell:?} covers {pixel:?} (overhang {overhang})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A pixel whose line of sight meets flat ground exactly on the edge between two cells lies on the nearer one; a
+    /// hair off the edge, on the cell it meets it on.
+    #[test]
+    fn a_tie_on_a_cells_edge_goes_to_the_nearer_cell() {
+        const Z: f32 = 0.0;
+        const EDGE_X: f32 = 1475.0;
+        const ALONG_Y: f32 = 1723.4;
+        const OFF_THE_EDGE: f32 = 0.01;
+        let ground = flat_ground(1473.0, 1722.0, Z);
+        let tie = scale_uo_z_to_bevy_units(wesl_f32_const(DEPTH_WESL, "MOBILE_GROUND_TIE_Z"));
+        for (offset, cell_x) in [(0.0, EDGE_X), (OFF_THE_EDGE, EDGE_X), (-OFF_THE_EDGE, EDGE_X - 1.0)] {
+            let on_ground = Vec3::new(EDGE_X + offset, scale_uo_z_to_bevy_units(Z) + tie, ALONG_Y);
+            let point = on_ground + ISOMETRIC_SIGHT * scale_uo_z_to_bevy_units(1.0);
+            assert_eq!(ground_hit_cell(point, &ground).0, cell_x, "{offset} off the edge");
         }
     }
 

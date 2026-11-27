@@ -95,13 +95,17 @@ const MOBILE_SIGHT_MIN_FALL: f32 = 0.01;
 // and over the mobile's own floor in the rows behind it, at least 13 z lower.
 const MOBILE_CEILING_PRIORITY_Z_OFFSET: f32 = -2.5;
 
-// How far over a mobile's base, in z, lies the plane where its pixels' lines of sight meet the ground
-// (mobile_fragment_view_z). A pixel near a cell's front edge so takes the cell in front a little early: land there
-// rising up to 2 z over the base (the most that stays under the mobile: at 3 z its priority z + 1 ties it) and the
-// overhang of an Enhanced flat item's art there no longer cover a sliver of the legs along the edge (a hoof on a cave's
-// uneven floor, a claw over a rug's fringe). In exchange the foot of a static standing on the cell behind that edge
-// goes under the frame, up to 4 pixels a z of it.
-const MOBILE_GROUND_LIFT_Z: f32 = 2.0;
+// How high over a mobile's base, in z, the ground its pixels below the anchor lie on is read (mobile_fragment_view_z,
+// render/mobiles/ground.rs): land and Background floors rising up to 2 z over the base stay under the mobile there,
+// the most that does (at 3 z the land's priority z - 2, a Background's at 2 z its z - 1, ties the mobile's z + 1).
+// Higher ground in front covers the pixels whatever the cell they lie on. Keep in sync with MOBILE_GROUND_REACH_Z in
+// ground.rs.
+const MOBILE_GROUND_REACH_Z: f32 = 2.0;
+// How far over the ground, in z, a pixel's line of sight is taken to meet it: an exact tie, a pixel centre on the edge
+// between two cells (the cells' edges run through the pixels' corners and centres), goes to the cell nearer the
+// camera. The land, the floors and the flat items take either cell there, both under the mobile in the nearer one;
+// a sliver of them along the edge would cover the legs otherwise. A sixteenth of a z is a quarter of a pixel.
+const MOBILE_GROUND_TIE_Z: f32 = 0.0625;
 
 // Where the line of sight through `point` meets the horizontal plane at world height `plane_y`: along the view axis
 // in the orthographic camera, along the ray from the camera in the perspective one. Its w is 0 when the line runs too
@@ -118,19 +122,22 @@ fn sight_plane_hit(point: vec3<f32>, plane_y: f32) -> vec4<f32> {
 }
 
 // The view z of a mobile's fragment at `card_point` on its card, the card's own view z `card_view_z` (its anchor at its
-// priority z and tie level), its ground plane at world height `ground_world_y` (MOBILE_GROUND_LIFT_Z over its base) and
-// its priority z `priority_z`; with `has_ceiling`, a roof or upper floor drawn over it at z `ceiling_z`, world height
-// `ceiling_world_y`.
+// priority z and tie level), `ground` the point where its line of sight meets the ground (w 0 for none; art/
+// mobile_ground.wesl mobile_ground_hit) and its priority z `priority_z`; with `has_ceiling`, a roof or upper floor
+// drawn over it at z `ceiling_z`, world height `ceiling_world_y`.
 //
 // The card stands at its cell's near vertex, and its pixel's line of sight passes through the mobile where the
-// mobile's body is. A pixel below the anchor shows the body below its base: its line of sight meets the ground plane
-// in front of the mobile's cell, on the ground it covers. It is ordered there, as a surface lying on that cell at
-// the mobile's priority z, tie level 0, like a projected shadow on its cell: over the land and the flat items of that
-// cell (land z - 2, Background z - 1, flat items z), under what stands on it at the mobile's z (z + 1, tie levels 1 to
-// 8) and under land rising there more than 3 z over the mobile. Without it the land of the rows in front, behind those
-// pixels, would cover the legs and the tail it lies on; ClassicUO and the Enhanced client slice the frame below the
-// anchor and order the slices rows nearer for that (MobileView.DrawInternal, MobAnimTriShape::RenderImmediate). A
-// pixel is never ordered farther than its card: above the anchor the line meets the plane behind the mobile.
+// mobile's body is. A pixel below the anchor shows the body below its base: its line of sight meets the ground in
+// front of the mobile's cell, on the ground it covers: the land, the Background floors and carpets as drawn, up to
+// MOBILE_GROUND_REACH_Z over the base. It is ordered there, as a surface lying on that cell at the mobile's priority
+// z, tie level 0, like a projected shadow on its cell: over the land and the flat items of that cell (land z - 2,
+// Background z - 1, flat items z), under what stands on it at the mobile's z (z + 1, tie levels 1 to 8) and under
+// land rising there more than 2 z over the mobile. Without it the land of the rows in front, behind those pixels,
+// would cover the legs and the tail it lies on; ClassicUO and the Enhanced client slice the frame below the anchor
+// and order the slices rows nearer for that (MobileView.DrawInternal, MobAnimTriShape::RenderImmediate). The line
+// meets the ground where it is drawn, no nearer: a static standing in front covers the pixels whose line meets the
+// ground on its cell or behind it, the foot of a post or a trunk in front of a hoof. A pixel is never ordered farther
+// than its card: above the anchor the line meets the ground behind the mobile.
 //
 // A pixel above the ceiling shows the body poking through it: its line of sight meets the ceiling's plane behind the
 // mobile. It is ordered there, under the ceiling's z (MOBILE_CEILING_PRIORITY_Z_OFFSET), so the roof tiles drawn
@@ -138,10 +145,9 @@ fn sight_plane_hit(point: vec3<f32>, plane_y: f32) -> vec4<f32> {
 //
 // Both in view z, so they hold in the orthographic and the perspective camera; the pick pass and the light scene take
 // the same depth, the projected and client shadows their own.
-fn mobile_fragment_view_z(card_point: vec3<f32>, card_view_z: f32, ground_world_y: f32, priority_z: f32,
+fn mobile_fragment_view_z(card_point: vec3<f32>, card_view_z: f32, ground: vec4<f32>, priority_z: f32,
     has_ceiling: bool, ceiling_world_y: f32, ceiling_z: f32) -> f32 {
     var view_z = card_view_z;
-    let ground = sight_plane_hit(card_point, ground_world_y);
     if (ground.w != 0.0) {
         view_z = max(view_z, cell_priority_view_z(ground.xz, priority_z));
     }

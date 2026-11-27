@@ -511,52 +511,14 @@ impl ZViewRegion {
         placed_multis: &PlacedMultisRes,
         show_hidden_multi_parts: bool,
         map_id: u32,
-        (center_x, center_y): (i32, i32),
+        center: (i32, i32),
         radius: i32,
     ) -> Self {
         let mut region = Self::default();
-        let in_region = |x: i32, y: i32| {
-            (x - center_x).abs() <= radius && (y - center_y).abs() <= radius
-        };
-        let block_dim = MAP_STORAGE_BLOCK_TILE_DIM as i32;
-        let block_range = |center: i32| {
-            ((center - radius).max(0) / block_dim)..=((center + radius).max(0) / block_dim)
-        };
-        for block_y in block_range(center_y) {
-            for block_x in block_range(center_x) {
-                let Ok(tiles) = statics_store.block_tiles(block_x as u32, block_y as u32) else {
-                    continue;
-                };
-                for tile in tiles {
-                    let x = block_x * block_dim + i32::from(tile.x_offset());
-                    let y = block_y * block_dim + i32::from(tile.y_offset());
-                    if in_region(x, y) {
-                        region.push(tilemeta, x, y, tile.graphic, tile.z);
-                    }
-                }
-            }
-        }
-        let Some(multis) = multis else {
-            return region;
-        };
-        let reach = radius + MULTI_PART_MAX_REACH;
-        let anchor_cells = |center: i32| (center - reach).max(0) as u32..(center + reach + 1).max(0) as u32;
-        for multi in placed_multis.anchored_in(map_id, anchor_cells(center_x), anchor_cells(center_y)) {
-            let Some(parts) = multis.parts(multi.multi_id, show_hidden_multi_parts) else {
-                continue;
-            };
-            let (x, y) = (multi.x as i32, multi.y as i32);
-            let footprint = parts.iter().map(|part| IVec2::new(x + i32::from(part.x), y + i32::from(part.y)))
-                .fold(None, |bounds: Option<IRect>, cell| Some(bounds.map_or(IRect::from_corners(cell, cell),
-                    |bounds| bounds.union_point(cell))));
-            region.multi_footprints.extend(footprint);
-            for part in parts {
-                let (part_x, part_y) = (x + i32::from(part.x), y + i32::from(part.y));
-                if in_region(part_x, part_y) {
-                    region.push(tilemeta, part_x, part_y, part.item_id, expanded_multi_part_z(multi.z, part.z));
-                }
-            }
-        }
+        let mut multi_footprints = Vec::new();
+        visit_region_statics(statics_store, multis, placed_multis, show_hidden_multi_parts, map_id, center, radius,
+            |x, y, graphic, z| region.push(tilemeta, x, y, graphic, z), |footprint| multi_footprints.push(footprint));
+        region.multi_footprints = multi_footprints;
         region
     }
 
@@ -564,6 +526,65 @@ impl ZViewRegion {
         let flags = tilemeta.item_tile(u32::from(graphic)).map_or(0, |meta| meta.flags);
         if flags & NEVER_DRAWN_FLAGS == 0 {
             self.cells.entry((x, y)).or_default().push((flags, z));
+        }
+    }
+}
+
+/// Visits every static of the map `map_id` within `radius` cells of (`center_x`, `center_y`), and every part of the
+/// multis placed within `MULTI_PART_MAX_REACH` of that region that lands in it (the drawn parts, or all with `show_hidden_multi_parts`): `visit` takes each one's cell, graphic and
+/// z, `footprint` the bounds of each multi's parts.
+#[allow(clippy::too_many_arguments)]
+pub fn visit_region_statics(
+    statics_store: &mut LazyStaticsStore,
+    multis: Option<&MultiDefinitionsRes>,
+    placed_multis: &PlacedMultisRes,
+    show_hidden_multi_parts: bool,
+    map_id: u32,
+    (center_x, center_y): (i32, i32),
+    radius: i32,
+    mut visit: impl FnMut(i32, i32, u16, i8),
+    mut footprint: impl FnMut(IRect),
+) {
+    let in_region = |x: i32, y: i32| {
+        (x - center_x).abs() <= radius && (y - center_y).abs() <= radius
+    };
+    let block_dim = MAP_STORAGE_BLOCK_TILE_DIM as i32;
+    let block_range = |center: i32| {
+        ((center - radius).max(0) / block_dim)..=((center + radius).max(0) / block_dim)
+    };
+    for block_y in block_range(center_y) {
+        for block_x in block_range(center_x) {
+            let Ok(tiles) = statics_store.block_tiles(block_x as u32, block_y as u32) else {
+                continue;
+            };
+            for tile in tiles {
+                let x = block_x * block_dim + i32::from(tile.x_offset());
+                let y = block_y * block_dim + i32::from(tile.y_offset());
+                if in_region(x, y) {
+                    visit(x, y, tile.graphic, tile.z);
+                }
+            }
+        }
+    }
+    let Some(multis) = multis else {
+        return;
+    };
+    let reach = radius + MULTI_PART_MAX_REACH;
+    let anchor_cells = |center: i32| (center - reach).max(0) as u32..(center + reach + 1).max(0) as u32;
+    for multi in placed_multis.anchored_in(map_id, anchor_cells(center_x), anchor_cells(center_y)) {
+        let Some(parts) = multis.parts(multi.multi_id, show_hidden_multi_parts) else {
+            continue;
+        };
+        let (x, y) = (multi.x as i32, multi.y as i32);
+        let bounds = parts.iter().map(|part| IVec2::new(x + i32::from(part.x), y + i32::from(part.y)))
+            .fold(None, |bounds: Option<IRect>, cell| Some(bounds.map_or(IRect::from_corners(cell, cell),
+                |bounds| bounds.union_point(cell))));
+        bounds.into_iter().for_each(&mut footprint);
+        for part in parts {
+            let (part_x, part_y) = (x + i32::from(part.x), y + i32::from(part.y));
+            if in_region(part_x, part_y) {
+                visit(part_x, part_y, part.item_id, expanded_multi_part_z(multi.z, part.z));
+            }
         }
     }
 }

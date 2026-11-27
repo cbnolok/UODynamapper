@@ -1244,11 +1244,11 @@ mobiles = [{ x = 2111, y = 790, z = 0, body = 400, facing = 3 },
            { x = 2112, y = 792, z = 0, body = 200, facing = 2 }]
 
 [[fixture]]
-name = "mobiles-ground-lift-price-daemon-behind-post"
-guards = """The price of the 2 z ground lift below a mobile's anchor (art/depth.wesl MOBILE_GROUND_LIFT_Z, 6fe5fcb3): a \
-daemon (9) standing west of a Britain hitching post (map 1, post z 20, 15 high, on flat land 20) draws its hoof over \
-the post's foot, up to 8 pixels of it, where with the lift at 0 the post passes in front. Accepted for the slivers \
-it removes; a change here means the lift or the rule below the anchor changed."""
+name = "mobiles-daemon-behind-post"
+guards = """A static with height in front covers the pixels of a mobile below its anchor whose line of sight meets the \
+ground on its cell or behind it (art/mobile_ground.wesl): a daemon (9) standing west of a Britain hitching post (map \
+1, post z 20, 15 high, on flat land 20) keeps its hoof behind the post's foot, which the 2 z ground lift of 6fe5fcb3 \
+drew over by up to 8 pixels."""
 tier = "full"
 tags = ["mobiles", "depth", "britain"]
 tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
@@ -1256,5 +1256,23 @@ map = 1
 x = 1459
 y = 1622
 z = 20
-styles = ["classic", "enhanced"]
 mobiles = [{ x = 1458, y = 1622, z = 20, body = 9, facing = 3 }]
+
+[[fixture]]
+name = "mobiles-yew-forest-behind-trunks"
+guards = """Mobiles among the trees of the Yew forest (map 1, flat land 0) stay behind the trunks in front of them and \
+show whole over the flowers and grass they stand on (art/mobile_ground.wesl): a dragon (12) at 2067,762 with its claw \
+behind a trunk's foot, a horse (200) at 2072,761 with its hoof behind a trunk, a mounted human (400 on 200) at \
+2076,761 whose hoof the white flowers in front (0x0c8b, standing foliage) cover, an ophidian (86) at 2070,762. The 2 z \
+ground lift of 6fe5fcb3 drew the claw and the hooves over the trunks."""
+tier = "full"
+tags = ["mobiles", "depth", "yew"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 2071
+y = 762
+z = 0
+mobiles = [{ x = 2067, y = 762, z = 0, body = 12, facing = 3 },
+           { x = 2072, y = 761, z = 0, body = 200, facing = 4 },
+           { x = 2076, y = 761, z = 0, body = 400, mount = 200, facing = 3 },
+           { x = 2070, y = 762, z = 0, body = 86, facing = 2 }]

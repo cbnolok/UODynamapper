@@ -61,7 +61,8 @@ import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv
 import package::shaders::world::ec_item_liquid::SHORELINE_FILTER_TAPS_PER_AXIS;
 import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priority_view_z, view_z_depth,
     cave_lifted_view_z, cave_outside_rgb, perspective_cap_may_move, perspective_cap_row_shift,
-    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL, MOBILE_GROUND_LIFT_Z, mobile_fragment_view_z};
+    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL, mobile_fragment_view_z};
+import package::shaders::world::art::mobile_ground::mobile_ground_hit;
 import package::shaders::world::projection::camera_relative_world_to_clip;
 import package::shaders::world::srgb::decode_srgb;
 
@@ -563,9 +564,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // ceiling (art/depth.wesl).
         if (sprite_params.pass_mode != PASS_MODE_SHADOW && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
             let ceiling = mobile_instances[in.instance_index].ceiling;
+            let ground = mobile_ground_hit(in.world_pos, inst.base_world_y, mobile_instances[in.instance_index].ground);
             out.depth = view_z_depth(cave_lifted_view_z(mobile_fragment_view_z(in.world_pos,
-                sprite_logical_view_z(inst), inst.base_world_y + MOBILE_GROUND_LIFT_Z * HEIGHT_SCALE,
-                inst.priority_z_units, ceiling.present != 0u,
+                sprite_logical_view_z(inst), ground, inst.priority_z_units, ceiling.present != 0u,
                 ceiling.z * HEIGHT_SCALE, ceiling.z), inst.is_wet_flags));
         }
     }
