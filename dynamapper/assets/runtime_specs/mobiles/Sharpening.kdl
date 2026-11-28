@@ -35,18 +35,21 @@
 //                             default) off. The frames are stored cropped to their visible pixels, so an outlined
 //                             card grows by a texel each side.
 //   inner_lines=<0..1>        Lines inside the body, where the Classic pixel art draws them (an arm across the torso,
-//                             between the legs, along a wing or a plate): a line one texel wide on the darker side of
-//                             each strong colour edge, in a darker shade of the colour under it. 1 keeps 45 % of
-//                             that colour, 0 (the default) is off. One texel of the frame drawn, so on a SPAN 2x
-//                             frame half as wide on screen as at 1x, as the one-texel outline.
+//                             between the legs, along a wing or a plate): a line one art pixel wide at the foot of
+//                             the dark side of each strong edge of the brightness, in a darker shade of the colour
+//                             under it, so its hue stays. 1 keeps 45 % of that colour, 0 (the default) is off. The
+//                             edges are taken on the brightness smoothed over a few pixels, so the fine mottle of
+//                             skin, fur and scales takes no line; on a SPAN 2x frame the line is two texels wide, as
+//                             wide on screen as at 1x. No line comes within two art pixels of the silhouette.
 //   inner_contrast=<0..1>     The same edges drawn by contrast instead of a line: the texels on their dark side
 //                             darkened and those on their light side lightened, softly limited so that a hard edge
 //                             does not turn black and white. 0 (the default) off. Combines with inner_lines.
-//   inner_threshold=<0.01..1>  The colour step at which an edge starts, as a share of black to white (the change of
-//                             colour across a texel, kept only where it goes on along the edge on both sides of it,
-//                             so that the fine texture of fur and scales and gentle shading take no line); the edge
-//                             is whole at 1.5 times it. Default 0.12: lower draws more lines, higher only the
-//                             strongest.
+//   inner_threshold=<0.01..1>  The step at which an edge starts, as a share of black to white, kept only where it goes
+//                             on along the edge on both sides of the pixel, so that the fine texture of fur and
+//                             scales and gentle shading take no line. The lines take the step of the smoothed
+//                             brightness: they start at half the threshold and are whole at it. The contrast takes
+//                             the change of colour across a texel: it starts at the threshold and is whole at 1.5
+//                             times it. Default 0.12: lower draws more edges, higher only the strongest.
 //
 // Classic frames are pixel art with a dark outline and no rim. The user, 2026-11-26, from clips at scale 0, 1 and 2:
 // scale 1 is more faithful to the Classic art than 2, and the sharpening helps the larger Classic bodies even more
@@ -58,10 +61,11 @@
 // To try the outline with a contour as well, set the Enhanced default to
 //     default sharpening=0.4 outline=1.0 contour=0.8
 // The interior lines and contrast are off everywhere until the user has judged them. The values tuned on the
-// Enhanced monsters (2026-11-27): the lines at inner_lines=1.0 inner_threshold=0.12, or the contrast at
-// inner_contrast=1.0 inner_threshold=0.08 (it draws no line, so it takes the fainter edges well). To try either,
-// add it to the Enhanced default and turn it off on the humans, elves and gargoyles, which have not been tuned:
-//     default sharpening=0.4 outline=1.0 inner_lines=1.0 inner_threshold=0.12
+// Enhanced monsters: the lines at inner_lines=1.0 inner_threshold=0.10 (2026-11-28), or the contrast at
+// inner_contrast=1.0 inner_threshold=0.08 (2026-11-27; it draws no line, so it takes the fainter edges well). To try
+// either, add it to the Enhanced default and turn it off on the humans, elves and gargoyles, which have not been
+// tuned:
+//     default sharpening=0.4 outline=1.0 inner_lines=1.0 inner_threshold=0.10
 //     body 400 403 sharpening=0.4 inner_lines=0
 //     (the same inner_lines=0 on body 605 606 and body 666 667)
 

@@ -6,6 +6,8 @@
 //! leaves the filters in force.
 
 pub mod spec;
+#[cfg(test)]
+mod inner_lines_tests;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -91,8 +93,10 @@ pub struct MobileFrameFilter {
     pub inner_contrast: f32,
     /// The colour step at which an interior edge starts.
     pub inner_threshold: f32,
-    /// Keeps the struct a multiple of 16 bytes, as the instance array's stride.
-    pub _padding: u32,
+    /// The texels of the frame to an art pixel (`for_frame`): 1, or the upscale's factor on an upscaled frame. The
+    /// interior lines read their window at this step, so that they are as wide on an upscaled frame as on a 1x one.
+    /// It also keeps the struct a multiple of 16 bytes, as the instance array's stride.
+    pub texel_scale: u32,
 }
 
 impl MobileFrameFilter {
@@ -110,17 +114,18 @@ impl MobileFrameFilter {
             inner_lines: filter.inner_lines,
             inner_contrast: filter.inner_contrast,
             inner_threshold: filter.inner_threshold,
-            _padding: 0,
+            texel_scale: 1,
         }
     }
 
     /// The filter of a frame of a clip of `texel_scale` texels to an art pixel: an outline reaches, and the card is
-    /// padded, by `width`. A filter without an outline stays as it is.
+    /// padded, by `width`; a filter without an outline is not padded.
     pub fn for_frame(self, width: MobileOutlineWidth, texel_scale: u32) -> Self {
+        let scaled = Self { texel_scale: texel_scale.max(1), ..self };
         if self.padding_texels == 0 {
-            return self;
+            return scaled;
         }
-        Self { padding_texels: width.reach_texels(texel_scale), ..self }
+        Self { padding_texels: width.reach_texels(texel_scale), ..scaled }
     }
 }
 
@@ -249,10 +254,12 @@ mod tests {
         // Past the shader's widest outline the reach stays at it.
         assert_eq!(outlined.for_frame(MobileOutlineWidth::FollowsUpscale, 2 * UPSCALED).padding_texels,
             OUTLINE_MAX_REACH_TEXELS);
-        // The rest of the filter stays; a frame without an outline is not padded.
+        // The rest of the filter stays but the frame's texel scale; a frame without an outline is not padded.
         let wide = outlined.for_frame(MobileOutlineWidth::FollowsUpscale, UPSCALED);
-        assert_eq!(MobileFrameFilter { padding_texels: OUTLINE_PADDING_TEXELS, ..wide }, outlined);
+        assert_eq!(wide.texel_scale, UPSCALED);
+        assert_eq!(MobileFrameFilter { padding_texels: OUTLINE_PADDING_TEXELS, texel_scale: 1, ..wide }, outlined);
         let plain = MobileFrameFilter::of(FrameFilter::OFF);
-        assert_eq!(plain.for_frame(MobileOutlineWidth::FollowsUpscale, UPSCALED), plain);
+        assert_eq!(plain.for_frame(MobileOutlineWidth::FollowsUpscale, UPSCALED),
+            MobileFrameFilter { texel_scale: UPSCALED, ..plain });
     }
 }

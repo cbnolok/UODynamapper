@@ -81,12 +81,13 @@ pub struct FrameFilter {
     pub contour_color: [u8; 3],
     /// The opacity of a one-texel line of `contour_color` outside the silhouette.
     pub outline: f32,
-    /// The strength of the interior lines: a texel wide on the darker side of a strong colour edge inside the body,
-    /// a darker shade of the colour under them.
+    /// The strength of the interior lines: an art pixel wide at the foot of the dark side of a strong edge of the
+    /// smoothed brightness inside the body, a darker shade of the colour under them.
     pub inner_lines: f32,
     /// The strength of the contrast across the same edges: their dark side darkened, their light side lightened.
     pub inner_contrast: f32,
-    /// The colour step (0..1, over the 3x3 texels about the texel) at which an interior edge starts.
+    /// The step (0..1, black to white) at which an interior edge starts: of the smoothed brightness for the lines,
+    /// of the colour over the 3x3 texels about the texel for the contrast.
     pub inner_threshold: f32,
 }
 

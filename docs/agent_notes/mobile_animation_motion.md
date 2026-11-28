@@ -1268,67 +1268,137 @@ and 3x (4x does not fit), `07` the KR-like daemon at 4x, `08-sheet-standing.png`
 headless KWin with x11grab (as [the cold-cache tests](shader_compile_progress.md#testing-with-a-cold-cache)); the
 control socket's captures come at about one a second.
 
-### Interior lines and contrast (2026-11-27)
+### Interior lines and contrast (2026-11-27, lines redone 2026-11-28)
 
 The Classic frames' pixel art draws dark lines inside the body (an arm across the torso, between the legs, along a
 wing or a plate); the Enhanced frames' rendered art has there only a change of colour, and reads flatter in game.
 Two Sharpening.kdl properties draw those edges, resolved per package, size class and body as the others, off in
 the bundled file (`inner_threshold` sets where an edge starts for both):
 
-- **A, `inner_lines=<0..1>`**: a line one texel wide on the darker side of each strong edge, a darker shade of the
-  colour under it (1 keeps 45 % of it).
+- **A, `inner_lines=<0..1>`**: a line one art pixel wide at the foot of the dark side of each strong edge of the
+  smoothed brightness, a darker shade of the colour under it (1 keeps 45 % of it).
 - **B, `inner_contrast=<0..1>`**: no line; the texels on the dark side darkened and those on the light side
   lightened, softly limited so that a hard edge is not clipped.
 
-- **Algorithm** (`art/mobile_inner_edges.wesl`, after the CAS sharpening and before the contour, on the
-  sRGB-encoded colours of the frame's own texels). The frames hold no depth or normals, so the edges are colour
-  discontinuities:
-  - The step is the Sobel gradient's length over the 3x3 window that CAS already reads (RGB distance over √3).
-  - The step is capped by the weaker of its two neighbours' steps along the edge: an edge must go on past the
-    texel, so a fleck of fur or scale texture makes none. That is a cheap coherence test standing in for hysteresis
-    or a minimum length.
-  - The weight ramps from `inner_threshold` (default 0.12) to 1.5 times it.
-  - Only on an edge texel are two more taps read, two texels away along the edge's axis.
-  - The line comes from a non-maximum suppression along that axis, a tie going to the darker side.
-  - The contrast pushes luma by 3 times the centre's luma less the mean of the four axis taps, limited softly to
-    0.3.
-  - A transparent tap lends the centre's colour, so the silhouette makes no interior edge, and the rim (alpha below
-    0.98) is left as it is.
-  - True hysteresis or an XDoG would need a wider window or a preparation pass over the frame.
-- **SPAN**: the filter runs on the drawn frame's texel grid, so on a 2x frame the line is one texel of the 2x frame,
-  half as wide on screen as at 1x, as the one-texel outline. The sheets show it.
-- **Tuned values** (Enhanced monsters, 2026-11-27): `inner_lines=1.0 inner_threshold=0.12` and
-  `inner_contrast=1.0 inner_threshold=0.08`. At 0.08 the lines trace the daemon's skin mottling; at 0.14 they keep
-  only the wing and limb edges. The grizzly's and gorilla's fur takes no line at any of them. The contrast draws no
-  line, so it takes the lower threshold well. A contrast gain of 2 with a limit of 0.2 was too faint at 1x; 3 and
-  0.3 marks the wing ribs and the plate edges without clipping.
-- **Known defects**:
-  - A line rings a specular highlight on its darker side (the daemon's chest).
-  - At 0.12 the daemon's skin mottling still takes a few short lines, and at 1x the lines come somewhat dashed
-    where an edge's step wavers about the threshold.
-  - The thresholds behave alike at 1x and on SPAN 2x frames, the 2x lines somewhat more connected.
-  - The humans, elves and gargoyles (400-403, 605-606, 666-667) have not been looked at.
-- **Cost** (gfx engine time per frame, off / A / B alternated in one launch through the user's Sharpening.kdl,
-  paired medians of 5 rounds of 8 s, uncapped, SPAN `always`, 1900x1000; CAS and the outline on as shipped):
+Both run in `art/mobile_inner_edges.wesl`, after the CAS sharpening and before the contour, on the sRGB-encoded
+colours of the frame's own texels. The frames hold no depth or normals, so the edges are colour discontinuities.
 
-  | Scene | Enhanced: A / B against off | KR-like: A / B against off |
-  |---|---|---|
-  | Daemon (player), 4x view (off 13.4 / 15.5 ms) | +0.07 / +0.07 | +0.06 / +0.12 |
-  | Crowd of 32 Enhanced monsters (9, 212, 29, 764) + player, 2x view (off 16.1 / 20.0 ms) | +0.38 / +0.41 | +0.43 / +0.59 |
+**The first lines (2026-11-27), and why they were patchy.** The user, 2026-11-28: A reads better than B, "but it's
+patchy and scrambles some colour — check the daemon's legs". The first A took the RGB Sobel step over the 3x3 that
+CAS reads, capped by the weaker of the two neighbours' steps along the edge, ramped from the threshold to 1.5 times
+it, and placed the line by a non-maximum suppression along the axis, a tie going to the darker side. Crops of the
+daemon's legs with the line drawn black (`diagnosis-daemon-legs-*.png`):
+- The darkening itself keeps the hue (median hue shift 0.43° on the lined texels): the "scrambled colour" is
+  spatial, not a hue shift.
+- On the mottled skin the RGB step, which counts chroma texture, crosses the threshold on single blotches: 1 to 3
+  texel dashes scattered over the thighs and the chest.
+- The minimum-of-neighbours coherence kills both ends of every line, and the ramp up to 1.5 times the threshold
+  leaves pale segments between dark ones: long edges break into dashes.
+- A specular highlight takes a dark ring that cuts it into blocks (the hooves).
+- The non-maximum suppression on RGB ties flips from side to side, and the directions are axis-only, so a diagonal
+  comes out as a staircase of stubs.
+- A second, doubled outline one texel inside the silhouette, where the rim's colour step counts as interior.
 
-  The first version read the four far taps on every texel: +0.72 / +0.74 ms on the Enhanced crowd and +1.38 /
-  +1.35 ms on the KR-like one, where every tap is the client's bilinear filter. Reading two taps, and only on an
-  edge, halved the Enhanced cost and took two thirds off KR-like's, with the same pixels.
-- **Same pixels when off** (the bundled file sets neither property): the regression harness (quick tier, 111
-  captures, with the standing-mobile fixtures) against `before-inner-lines`: 92 identical, 19 within tolerance
-  (lava, UOD-Painterly and night views, 1 or 2 levels), none changed; the mobile fixtures identical or 1 level.
+**The lines now** (2026-11-28):
+- The luma (Rec. 601 on the encoded values), not the RGB distance: chroma texture makes no edge.
+- A 5x5 window at a step of the frame's texel scale (`MobileFrameFilter::texel_scale`, the old padding slot: 1, or
+  the upscale's factor on a SPAN frame), smoothed by a binomial [1 2 1]² to a 3x3 of smoothed luma. The smoothing
+  is what removes the specks: on the daemon's skin no texel-sized blotch survives it, while the forms' edges do.
+- The Sobel gradient of the smoothed 3x3, snapped to the nearest of the eight directions, so diagonals are lined as
+  diagonals.
+- The line goes on the foot of the dark side: the texel whose rise towards the light side is at least 1.9 times its
+  fall towards the darker one (the foot of a hard step rises just twice what it falls once smoothed; at 1.5 short
+  marks come on the daemon's mottled skin and hooves). That places it once, on one side, without a tie rule.
+- No line where the raw luma spreads over the 3x3 by less than half the threshold: on a hard step the smoothed
+  foot test passes on two texels, and the second, a texel further into the dark, has a flat 3x3. The lines are one
+  art pixel wide. The same test is the early out: the 16 outer taps are read only where it passes.
+- A light hysteresis along the edge: the support is the weaker of the steps just before and just after the texel
+  along the edge; below half the threshold no line, else the weight ramps from half the threshold to the threshold,
+  and is whole wherever the support is itself at the threshold. A long edge stays whole to its ends instead of
+  fading into dashes.
+- No line when any of the 25 taps is transparent or on the rim (`mobile_edge_is_fringe`): no doubled outline, and
+  no line within two art pixels of the silhouette.
+- The darkening scales the texel's own encoded colour (`encoded × shade`), so no neighbour's colour comes in.
+- Emulated first in numpy on the captured raw frames (the scratch rig's `emu.py`), then measured in the shader.
+  Tried and dropped: the luma on the raw 3x3 with the foot placement and the stronger of the neighbours' support
+  (the first prototype): denser specks than the first A. A reach-2 support without smoothing did not help either.
 
-Sheets and clips (`inner-lines/sheets/` and `inner-lines/clips/` in the scratch folder):
-- Sheets: per body (daemon 9, dragon 12, grizzly 212, gorilla 29, the armoured 764), rows Enhanced, KR-like and
-  UOD-Painterly, columns off | A | B | Classic, at 1x frames and zoom 1 and on SPAN 2x frames at zoom 0.5. Each comes
-  1:1 and as a 4x nearest crop.
-- Clips: walking east from 2084,790 on map 1, off | A | B, each panel its own recording, x264 yuv444p at qp 0 to 8
-  under 30 MiB.
+**SPAN 2x.** The first A ran on the drawn frame's texel grid, so on a 2x frame its line was one texel of the 2x
+frame, half as wide on screen, and dotted: the 2x frame's texels are interpolations of the 1x art, so a texel step
+is half as strong and wavers. The window's step is now the texel scale: the 2x lines are two texels wide and as
+coherent as the 1x ones. The shader's lined texels on the daemon match the emulation at stride 2 (Jaccard 0.45)
+and not at stride 1 (0.10) (`span2x-stride-emulated-daemon.png`).
+
+**Order with the enhancing filters.** Shader order: CAS, then the lines found on the raw texels and applied to the
+CAS colour, then the contour and outline. Emulated against the alternatives (`order-emulated-daemon-*.png`):
+- Lines found on the CAS output: 17 % more lined texels on the daemon at 1x (1378 against 1176, 466 differing),
+  the extra ones the specks the smoothing had removed: CAS amplifies the mottle.
+- CAS after the lines: harsher, nearly black lines, and CAS would then need a 7x7 window.
+- Kept: find on the raw texels, shade the sharpened colour. The outline, outside the silhouette, does not meet the
+  lines, which keep two art pixels inside it.
+
+**Dither** (asked: would it help, or suit the UO look). Measured as prototypes, and removed:
+- A 4x4 Bayer threshold on the line's weight turns each ramp into a regular dot pattern: more patchiness, the very
+  defect being fixed.
+- 15-bit colour (5 bits a channel, as the Classic client's art) with a 4x4 Bayer dither over the whole body: no
+  visible change on the Enhanced frames, whose rendered art is already mottled at the texel scale; on flat colours it
+  would add a screen-door pattern that the Classic art does not have (its 15-bit art is hand-placed, not dithered).
+- Neither earns its place. The final sheets show both columns.
+
+**Tuned values** (Enhanced monsters): `inner_lines=1.0 inner_threshold=0.10`. At 0.08 more form lines, and some
+short dashes on the daemon's skin; at 0.12 only the strongest (belly, knees, the dragon's wing edges). The contrast
+keeps `inner_contrast=1.0 inner_threshold=0.08` (its step is still the RGB colour step over the 3x3, unchanged).
+
+**Known defects** (new A):
+- At 1x the lines on the daemon's skin still come partly as 2 to 4 texel dashes where a form's edge is faint; at
+  0.10 they follow the forms (belly folds, thigh and knee edges, the hoof's rim) rather than the mottle.
+- Short marks at the bottom of a specular highlight (the hooves), where the highlight's own edge is strong; the
+  highlight is no longer cut into blocks.
+- The ogre takes a stitch-like dotted line at the neck seam of its art.
+- The humans, elves and gargoyles (400-403, 605-606, 666-667) have not been looked at.
+- Not ours: on SPAN 2x the shipped frames show pale rectangular patches at the daemon's hoof bottoms, with or
+  without the lines (the BC7 or SPAN path).
+
+**KR-like and UOD-Painterly** draw the Enhanced frames with the same filter: the same lines on the daemon, as coherent
+  at 1x and 2x (`kr-painterly-daemon-1x.png`, `-2x.png`). The taps beyond the 3x3 window are read by the nearest
+  texel in every style (below), so KR-like's bilinear client filter does not soften the edges the line looks for.
+
+**Cost** (gfx engine time per frame, shipped (CAS + outline) / A alternated in one launch through the user's
+Sharpening.kdl, paired medians of 5 rounds of 8 s, uncapped, SPAN `always`, 1900x1000, Enhanced):
+
+| variant | daemon alone, zoom 0.25 | 32 humans and daemons, zoom 0.5 |
+|---|---|---|
+| dev, shipped / A old | 13.65 / +0.04 ms | 17.53 / +0.37 ms |
+| first new A (3x3 arrays, client taps) | 14.11 / +1.27 ms | 19.15 / +5.23 ms |
+| luma sums, near early out, client taps | 14.00 / +0.86 ms | 18.98 / +3.60 ms |
+| final (outer taps nearest) | 13.64 / +0.53 ms | 17.57 / +2.19 ms |
+
+KR-like crowd: dev 21.28 / A old +0.61 ms; luma sums with client taps 23.95 / +5.76 ms; final 21.33 / +2.32 ms.
+
+The "shipped" column is the cost with the lines off. The first two new versions slowed every art draw, lines or
+not: RADV's statistics (`RADV_DEBUG=shaderstats`, the art pixel shader) put the art shader at 256 VGPRs and four
+waves a SIMD against dev's 168 and six. Bisected by variants of the weight function: the 3x3 alone from the
+sharpening window costs nothing; any fetch of a further tap through `mobile_offset_tap` (the client filter, four
+bilinear taps in KR-like) brought the 256. Read by the nearest texel (`mobile_inner_line_tap`) the shader is back
+at 168 VGPRs and six waves (774 kB of code against dev's 739 kB), and the off cost at dev's within noise. Whether
+the compiler unrolls the loops made no difference once the taps are nearest. The remaining on-cost is the 16 outer
+taps where the near spread lets a line through.
+
+**Same pixels when off** (the bundled file sets neither property): the harness's mobile fixtures in the four styles (60
+captures), dev against this tree: 48 identical, 12 within tolerance (KR-like and one UOD-Painterly capture, at most 2
+levels on a handful of pixels, none above 4: the art shader recompiled, rounding differently), none changed.
+
+Sheets and clips (`inner-lines-2/sheets/` and `inner-lines-2/clips/` in the scratch folder):
+- `NNN-name-1x.png`, `NNN-name-2x.png` for the daemon 9, dragon 12, ettin 18, giant spider 28 and ogre 1: columns
+  off | filters (CAS + outline, as shipped) | A old + filters | A new alone | A new + filters | + Bayer | + 15-bit |
+  B + filters, rows 1:1 and a nearest crop (the daemon also its legs). 1x frames at zoom 1, SPAN 2x at zoom 0.5.
+  The two dither columns are of the first new A (before the foot ratio 1.9 and the near spread).
+- `diagnosis-daemon-legs-1x.png`, `-2x.png`: A old and new, as drawn and with the line black.
+- `kr-painterly-daemon-1x.png`, `-2x.png`: shipped | A old | A new in KR-like and UOD-Painterly.
+- `daemon-walk-span2x.mp4`: the daemon walking on SPAN 2x frames at zoom 0.5, shipped | A old | A new, 1 s
+  standing then 4 s walking, x264 yuv444p qp 0 (lossless), 26.3 MiB.
+
+The first version's sheets and clips (off | A old | B in the three Enhanced-frame styles) are in `inner-lines/`.
 
 
 The frame atlas takes its pixel format from the animation package it shows: a `Rgba8888` package's frames go to an

@@ -49,7 +49,9 @@ import package::shaders::world::art::mobile_sharpen::{mobile_sharpening_on, mobi
 import package::shaders::world::art::mobile_edges::{mobile_alpha_contrast_on, mobile_alpha_contrast, mobile_contour_on,
     mobile_contour, mobile_outline_on, mobile_outline, mobile_outline_wide, MOBILE_OUTLINE_WIDE_REACH};
 import package::shaders::world::art::mobile_inner_edges::{MobileInnerEdge, mobile_inner_edges_on, mobile_inner_edge,
-    mobile_inner_edges, mobile_inner_far_offset, MOBILE_INNER_FAR_TAPS};
+    mobile_inner_contrast, mobile_inner_line, mobile_inner_line_shade, mobile_inner_line_offset, mobile_inner_line_step,
+    mobile_inner_line_start, mobile_inner_line_add, mobile_inner_line_ruled_out, mobile_inner_line_is_near,
+    mobile_inner_far_offset, MOBILE_INNER_FAR_TAPS, MOBILE_INNER_LINE_TAPS};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
@@ -399,6 +401,50 @@ fn mobile_window(centre: vec4<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f
         }
     }
     return window;
+}
+
+// A mobile's texel `offset` texels of the page from the fragment's at `uv`, by the nearest texel whatever the texture
+// filter: the interior line's taps beyond the sharpening window. The client's filter would only soften the edges the
+// line looks for, and read in the line's loops it costs every art draw occupancy, lines or not (RADV, 2026-11-28: 168
+// VGPRs to 256, six waves a SIMD to four).
+fn mobile_inner_line_tap(offset: vec2<f32>, page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>,
+    atlas_size: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    return sprite_page_tap(page, pixel_art_atlas_nearest_uv(uv + offset / atlas_size, uv_min, uv_max, atlas_size),
+        instance_index);
+}
+
+// The interior line's weight through `uv` (art/mobile_inner_edges.wesl): its window at its step read tap by tap,
+// the near taps first, from the sharpening window `window` at a step of one texel, and the others only when the near
+// ones leave a line possible.
+fn mobile_inner_line_weight(window: array<vec4<f32>, MOBILE_SHARPEN_WINDOW_TAPS>, page: ArtPage, uv: vec2<f32>,
+    uv_min: vec2<f32>, uv_max: vec2<f32>, atlas_size: vec2<f32>, instance_index: u32) -> f32 {
+    var near = window;
+    let frame_filter = mobile_instances[instance_index].frame_filter;
+    let step = mobile_inner_line_step(frame_filter);
+    var sum = mobile_inner_line_start();
+    for (var tap = 0u; tap < MOBILE_SHARPEN_WINDOW_TAPS; tap++) {
+        let offset = mobile_sharpen_tap_offset(tap);
+        var texel = near[tap];
+        if (step > 1u) {
+            texel = mobile_inner_line_tap(offset * f32(step), page, uv, uv_min, uv_max, atlas_size, instance_index);
+        }
+        sum = mobile_inner_line_add(sum, vec2<i32>(offset), texel);
+    }
+    if (mobile_inner_line_ruled_out(sum, frame_filter)) {
+        return 0.0;
+    }
+    for (var tap = 0u; tap < MOBILE_INNER_LINE_TAPS; tap++) {
+        let offset = mobile_inner_line_offset(tap);
+        if (mobile_inner_line_is_near(offset)) {
+            continue;
+        }
+        sum = mobile_inner_line_add(sum, offset, mobile_inner_line_tap(vec2<f32>(offset * i32(step)), page, uv, uv_min,
+            uv_max, atlas_size, instance_index));
+        if (sum.rim) {
+            return 0.0;
+        }
+    }
+    return mobile_inner_line(sum, frame_filter);
 }
 
 // The taps beyond the window across the interior edge `edge` through `uv` (art/mobile_inner_edges.wesl), as
@@ -818,11 +864,15 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             if (mobile_sharpening_on(strength)) {
                 color = mobile_sharpen(window, strength, frame_filter.fringe_sharpening);
             }
-            if (mobile_inner_edges_on(frame_filter)) {
+            if (frame_filter.inner_lines > 0.0) {
+                color = mobile_inner_line_shade(color, mobile_inner_line_weight(window, page, uv, inst.uv_min,
+                    inst.uv_max, atlas_size, in.instance_index), frame_filter);
+            }
+            if (frame_filter.inner_contrast > 0.0) {
                 // The taps beyond the window only on an edge, where they are read.
                 let edge = mobile_inner_edge(window, frame_filter);
                 if (edge.weight > 0.0) {
-                    color = mobile_inner_edges(color, window, mobile_inner_far_taps(edge, page, uv, inst.uv_min,
+                    color = mobile_inner_contrast(color, window, mobile_inner_far_taps(edge, page, uv, inst.uv_min,
                         inst.uv_max, sprite_uv_dx, sprite_uv_dy, atlas_size, in.instance_index), edge, frame_filter);
                 }
             }

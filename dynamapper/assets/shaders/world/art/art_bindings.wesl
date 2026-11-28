@@ -100,7 +100,8 @@ struct MobileFrameFilter {
     inner_lines: f32,
     inner_contrast: f32,
     inner_threshold: f32,
-    _padding: u32,
+    // The texels of the frame to an art pixel: 1, or the upscale's factor on an upscaled frame.
+    texel_scale: u32,
 }
 
 // A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite, its crossfade, the ceiling
