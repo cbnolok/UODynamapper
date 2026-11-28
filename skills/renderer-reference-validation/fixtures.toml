@@ -1248,7 +1248,9 @@ name = "mobiles-daemon-behind-post"
 guards = """A static with height in front covers the pixels of a mobile below its anchor whose line of sight meets the \
 ground on its cell or behind it (art/mobile_ground.wesl): a daemon (9) standing west of a Britain hitching post (map \
 1, post z 20, 15 high, on flat land 20) keeps its hoof behind the post's foot, which the 2 z ground lift of 6fe5fcb3 \
-drew over by up to 8 pixels."""
+drew over by up to 8 pixels. The post is Background, a priority z under the daemon's: until the standing codes of \
+render/mobiles/ground.rs the hoof's pixels on its cell still drew over it, the post running through the hoof \
+(mobiles-daemon-hoof-behind-post-zoomed)."""
 tier = "full"
 tags = ["mobiles", "depth", "britain"]
 tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
@@ -1256,6 +1258,24 @@ map = 1
 x = 1459
 y = 1622
 z = 20
+mobiles = [{ x = 1458, y = 1622, z = 20, body = 9, facing = 3 }]
+
+[[fixture]]
+name = "mobiles-daemon-hoof-behind-post-zoomed"
+guards = """The daemon of mobiles-daemon-behind-post at four times the scale, its hoof against the post, with both frame \
+sources in every style: the post (0x1296) is Background with height, so it stands at its own z, a priority z under \
+the mobile's (ClassicUO: z - 1 + 1), and the hoof's pixels that lie on its cell drew over it while those on the \
+daemon's own row stayed under it, the post running through the hoof (4f47f8df). They lie on its cell at its priority \
+z now (render/mobiles/ground.rs standing codes), and the whole hoof stays behind the post."""
+tier = "full"
+tags = ["mobiles", "depth", "britain", "zoom"]
+tolerance = { pixel_threshold = 4, changed_pct = 0.0005 }
+map = 1
+x = 1459
+y = 1622
+z = 20
+sources = ["cc/cc", "ec/ec"]
+zoom = 0.25
 mobiles = [{ x = 1458, y = 1622, z = 20, body = 9, facing = 3 }]
 
 [[fixture]]

@@ -71,12 +71,14 @@ struct MobileCeiling {
 // The ground around a mobile (`MobileGround`, render/mobiles/ground.rs; art/mobile_ground.wesl): the first of its
 // MOBILE_GROUND_DIM x MOBILE_GROUND_DIM cells (`first_cell`), the z its rises are counted from, its flags (read, and
 // whether its floors' art reaches past their cells) and 4 bits a cell, 8 cells a word along x then y: the rise of the
-// land at the cell's top corner and of the Background floors on it.
+// land at the cell's top corner and of the Background floors on it (`cells`), and how far under the mobile's z the
+// lowest priority z of the statics standing on it lies (`standing`).
 struct MobileGround {
     first_cell: vec2<i32>,
     base_z: f32,
     flags: u32,
     cells: array<vec4<u32>, 8>,
+    standing: array<vec4<u32>, 8>,
 }
 
 // A mobile frame's filter (`MobileFrameFilter`, render/mobiles/sharpening.rs; runtime_specs/mobiles/Sharpening.kdl):

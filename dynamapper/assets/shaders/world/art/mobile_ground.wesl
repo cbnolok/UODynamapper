@@ -11,6 +11,9 @@
 // it is a tie over the base: on an exact tie, the nearer cell. The Enhanced art of a floor drawn on a camera quad
 // reaches past its cell (MOBILE_GROUND_FLOOR_OVERHANG): the line meets that floor where its art lies, as far past the
 // cell's far edges. A cell outside the ground read, or a mobile whose ground is not read yet, lies flat at the base.
+//
+// The pixel lies on the cell it meets at the mobile's priority z, or at the lowest priority z of a static standing on
+// that cell if that is lower (a Background static with height, a post or a tree, at its own z): under the static.
 // ============================================================================
 
 import package::shaders::world::art::art_bindings::{MobileGround, HEIGHT_SCALE};
@@ -41,16 +44,35 @@ const MOBILE_GROUND_FLOOR_OVERHANG: f32 = (0.7671049 / 0.707105 - 1.0) * 0.5;
 const MOBILE_GROUND_MAX_CELLS: i32 = 8;
 
 // The code of the cell `cell` of the ground `ground`, read through a pointer to the function's copy of it (a varying
-// index may read the function's memory): 0, flat land at the base and no floor, outside it.
-fn mobile_ground_code(ground: ptr<function, MobileGround>, cell: vec2<i32>) -> u32 {
+// index may read the function's memory), from its `cells` or with `standing` from its `standing`: 0 outside it, flat
+// land at the base, no floor and nothing standing.
+fn mobile_ground_code_of(ground: ptr<function, MobileGround>, cell: vec2<i32>, standing: bool) -> u32 {
     let local = cell - (*ground).first_cell;
     if (any(local < vec2<i32>(0)) || any(local >= vec2<i32>(MOBILE_GROUND_DIM))) {
         return 0u;
     }
     let index = u32(local.y * MOBILE_GROUND_DIM + local.x);
     let word = index / MOBILE_GROUND_CELLS_PER_WORD;
-    let packed = (*ground).cells[word / MOBILE_GROUND_WORDS_PER_VEC][word % MOBILE_GROUND_WORDS_PER_VEC];
+    let vec_index = word / MOBILE_GROUND_WORDS_PER_VEC;
+    let lane = word % MOBILE_GROUND_WORDS_PER_VEC;
+    let packed = select((*ground).cells[vec_index][lane], (*ground).standing[vec_index][lane], standing);
     return (packed >> ((index % MOBILE_GROUND_CELLS_PER_WORD) * MOBILE_GROUND_CELL_BITS)) & MOBILE_GROUND_CELL_MASK;
+}
+
+// The code of the cell `cell`: its land and floors.
+fn mobile_ground_code(ground: ptr<function, MobileGround>, cell: vec2<i32>) -> u32 {
+    return mobile_ground_code_of(ground, cell, false);
+}
+
+// The priority z a pixel lying on the cell `cell` takes, the mobile's priority z being `priority_z`: the lowest
+// priority z of the statics standing on it, how far under the base the standing code says (+ 1, 0 for none), when
+// that is lower, so they cover the pixel at their tie levels (1 and up) over its 0.
+fn mobile_ground_priority_z(ground: ptr<function, MobileGround>, cell: vec2<i32>, priority_z: f32) -> f32 {
+    let standing = mobile_ground_code_of(ground, cell, true);
+    if (standing == 0u) {
+        return priority_z;
+    }
+    return min(priority_z, (*ground).base_z - f32(standing - 1u));
 }
 
 // The land's rise at the top corner of the cell `cell`, as a corner of its neighbours too: a corner over the z-view's
@@ -83,16 +105,18 @@ fn mobile_ground_line_rise(t: f32) -> f32 {
     return mix(MOBILE_GROUND_REACH_Z, MOBILE_GROUND_TIE_Z, clamp(t, 0.0, 1.0));
 }
 
-// Where the line of sight through `card_point`, of a mobile whose base is at world height `base_world_y`, meets the
-// ground `ground` around it: a point on the cell it meets it on (its centre, so the cell is never in doubt), w 0 when
-// the line runs too level to meet it near (sight_plane_hit).
-fn mobile_ground_hit(card_point: vec3<f32>, base_world_y: f32, ground_read: MobileGround) -> vec4<f32> {
+// Where the line of sight through `card_point`, of a mobile whose base is at world height `base_world_y` and whose
+// priority z is `priority_z`, meets the ground `ground` around it: in x and z a point on the cell it meets it on (its
+// centre, so the cell is never in doubt), in y the priority z the pixel takes there (mobile_ground_priority_z), w 0
+// when the line runs too level to meet it near (sight_plane_hit).
+fn mobile_ground_hit(card_point: vec3<f32>, base_world_y: f32, priority_z: f32, ground_read: MobileGround)
+    -> vec4<f32> {
     var ground = ground_read;
     let read = (ground.flags & MOBILE_GROUND_PRESENT) != 0u;
     let base_y = select(base_world_y, ground.base_z * HEIGHT_SCALE, read);
     let far = sight_plane_hit(card_point, base_y + MOBILE_GROUND_TIE_Z * HEIGHT_SCALE);
     if (far.w == 0.0 || !read) {
-        return far;
+        return vec4<f32>(far.x, priority_z, far.z, far.w);
     }
     let near = sight_plane_hit(card_point, base_y + MOBILE_GROUND_REACH_Z * HEIGHT_SCALE);
     let start = near.xz;
@@ -114,7 +138,7 @@ fn mobile_ground_hit(card_point: vec3<f32>, base_world_y: f32, ground_read: Mobi
                 <= f32(floors - 1u) + MOBILE_GROUND_TIE_Z;
         }
         if (meets) {
-            return vec4<f32>(corner.x + 0.5, far.y, corner.y + 0.5, 1.0);
+            return vec4<f32>(corner.x + 0.5, mobile_ground_priority_z(&ground, cell, priority_z), corner.y + 0.5, 1.0);
         }
         if (t >= 1.0) {
             break;
@@ -122,5 +146,5 @@ fn mobile_ground_hit(card_point: vec3<f32>, base_world_y: f32, ground_read: Mobi
         let step = vec2<i32>(sign(span));
         cell += select(vec2<i32>(0), step, leaves <= vec2<f32>(t));
     }
-    return far;
+    return vec4<f32>(far.x, mobile_ground_priority_z(&ground, vec2<i32>(floor(far.xz)), priority_z), far.z, 1.0);
 }

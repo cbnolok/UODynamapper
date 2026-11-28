@@ -1644,6 +1644,22 @@ outside: the card is one depth, the roof tiles lie on cells behind the mobile's 
     Inside the Enhanced overhang the hit moves at most 0.042 cells nearer; a floor's fringe covers a post's foot there
     already. The ground is read for both statics sources alike (the overhang only for the Enhanced one), so a
     Background floor not drawn on a camera quad gives up that much of a post's foot in Enhanced.
+  - **Background statics with height** (`MobileGround::standing`, `StandingStatic`, art/mobile_ground.wesl
+    `mobile_ground_priority_z`, 2026-11-28). The Britain post (0x1296) and the trees (0x0cd0, 0x0cd3, 0x0cd6, 0x0cda)
+    are Background with height: ClassicUO's priority z is their z (z - 1 + 1), a z under a mobile's (z + 1) at the
+    same base, and 820 item tiles in the 7.0.20 tiledata are so. The pixels lying on such a cell, at the mobile's
+    priority z and tie level 0, drew over the post (level 1 or more at z), while those meeting the ground on the
+    mobile's own row kept the card's depth, a row behind it: the post ran through the hoof. The daemon at 1458,1622,
+    post on the next cell east: a pixel r px right and b px below the anchor meets the ground on the post's cell when
+    b + r >= 22 and b - r < 22; at the pole (r about 19) that is b >= 3, so the hoof's top 3 rows stayed behind and
+    the rest went over (logical distance 3083 + 21/264 = 3083.0795 against the post's 3083 + (20 + 1/9)/264 =
+    3083.0762). Now each cell also holds the lowest priority z of the statics with height standing on it whose top
+    reaches over the mobile's z and whose priority z is not over it (4 bits: up to 14 z under), and a pixel lying on
+    that cell takes that priority z, level 0 (3083.0758): under the static, still over the cell's land (z - 2) and
+    Background floors (z - 1). Flat items (height 0, priority z) on other cells stay under the pixel as before; on a
+    cell with such a static they tie or cover it. ClassicUO itself draws the slice below the anchor two rows nearer,
+    over the post: a client artefact not reproduced. Statics the z-view's cut hides are still read (their base is at
+    or under the mobile's z, below any cut over it).
   One rule for both sources and every facing; the 8 px Enhanced cut over the anchor is gone, and with it the strip
   constants and `MobileGroundStrips`. A mounted mobile's plane is its own base, whatever its layer's offset; the mount's
   and the rider's pixels below the anchor lie level, and the rider, drawn after its mount, shows (the opaque depth test

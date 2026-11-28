@@ -534,10 +534,10 @@ mod tests {
     #[test]
     fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
         // A SpriteInstance (144 bytes, aligned to its vec4), a FrameCrossfade (48), a MobileCeiling (16), a
-        // MobileGround (144: ground.rs) and a MobileFrameFilter (48), on a 16-byte stride.
+        // MobileGround (272: ground.rs) and a MobileFrameFilter (48), on a 16-byte stride.
         const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
         const WGSL_MOBILE_CEILING_SIZE: usize = 16;
-        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 400;
+        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 528;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
         assert_eq!(std::mem::size_of::<MobileCeiling>(), WGSL_MOBILE_CEILING_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
@@ -588,11 +588,11 @@ mod tests {
     }
 
     /// The ground (ground.rs `read_mobile_ground`) around a mobile at (`x`, `y`) and `z`: the land's z at each cell's
-    /// top corner from `land_z`, the floors `floors`, overhanging their cells with `floors_overhang`.
+    /// top corner from `land_z`, the floors `floors`, overhanging their cells with `floors_overhang`, nothing standing.
     fn ground_around(x: f32, y: f32, z: f32, land_z: impl FnMut(i32, i32) -> Option<i32>,
         floors: impl IntoIterator<Item = (i32, i32, i32)>, floors_overhang: bool) -> MobileGround {
         let (depth_x, depth_y) = mobile_depth_cell(x, y);
-        read_mobile_ground(depth_x as i32, depth_y as i32, z as i32, land_z, floors, floors_overhang)
+        read_mobile_ground(depth_x as i32, depth_y as i32, z as i32, land_z, floors, [], floors_overhang)
     }
 
     /// Flat land at the mobile's z, and nothing on it.
@@ -624,7 +624,8 @@ mod tests {
         let (tile_x, tile_y) = apply_cc_static_world_anchor_translation(depth_x, depth_y);
         let priority_z = z + MOBILE_PRIORITY_Z_OFFSET;
         let card = logical_draw_distance(f64::from(tile_x + tile_y), f64::from(priority_z), tie_level);
-        let mut distance = card.max(cell_distance(ground_hit_cell(point, ground), priority_z));
+        let cell = ground_hit_cell(point, ground);
+        let mut distance = card.max(cell_distance(cell, pixel_priority_z(ground, cell, priority_z)));
         if let Some(ceiling_z) = ceiling_z
             && point.y > crate::world::coords::scale_uo_z_to_bevy_units(ceiling_z) {
             distance = distance.min(cell_distance(plane_cell(point, ceiling_z), ceiling_z + ceiling_offset));
@@ -636,8 +637,8 @@ mod tests {
     use crate::util_lib::wesl_source::wesl_f32_const;
     use crate::world::coords::scale_uo_z_to_bevy_units;
     use super::super::placement::CELL_CENTRE_ABOVE_NEAR_VERTEX_PX;
-    use super::super::ground::{read_mobile_ground, MOBILE_GROUND_DIM};
-    use super::super::ground::mirror::{ground_hit_cell, FLOOR_OVERHANG};
+    use super::super::ground::{read_mobile_ground, StandingStatic, MOBILE_GROUND_DIM};
+    use super::super::ground::mirror::{ground_hit_cell, pixel_priority_z, FLOOR_OVERHANG};
 
     /// The flat land, the Background floors and the flat items at the mobile's z never cover a pixel of its frame: the
     /// legs and a tail below the anchor lie on the cell they cover, over what lies flat on it, at rest and sliding.
@@ -698,6 +699,65 @@ mod tests {
             }
             assert!(covered > 0);
         }
+    }
+
+    /// A Background static with height, a post or a tree, stands at its own z (ClassicUO's priority z - 1 + 1), under
+    /// the mobile's priority z: it covers the pixels below the anchor that lie on its cell all the same, and they stay
+    /// over its cell's land and Background floors. The daemon (9) at 1458,1622, z 20, west of the Britain post (0x1296,
+    /// 15 high) on the next cell east: its hoof's pixels 3 px and more below the anchor lay on the post's cell over the
+    /// post, those above it on the daemon's own row under it, and the post cut the hoof in two.
+    #[test]
+    fn a_background_static_in_front_covers_the_pixels_that_lie_on_its_cell() {
+        const Z: f32 = 20.0;
+        const POST_HEIGHT: i32 = 15;
+        // The post's priority z over its z (Background: - 1, with height: + 1) and its lowest tie level
+        // (assign_sprite_tie_levels); a Background floor's priority z over its z.
+        const BACKGROUND_STANDING_PRIORITY_Z_OFFSET: f32 = 0.0;
+        const STATIC_TIE_LEVEL: u32 = 1;
+        const BACKGROUND_PRIORITY_Z_OFFSET: f32 = -1.0;
+        // The daemon, the post and a pixel of the hoof over the post (the fixture mobiles-daemon-behind-post).
+        const DAEMON: (f32, f32) = (1458.0, 1622.0);
+        const POST: (f32, f32) = (1459.0, 1622.0);
+        const HOOF_PIXEL: (f32, f32) = (19.5, 10.5);
+        let land_offset = wesl_f32_const(DEPTH_WESL, "LAND_PRIORITY_Z_OFFSET");
+        let static_distance = |cell: (f32, f32)| {
+            let (anchor_x, anchor_y) = apply_cc_static_world_anchor_translation(cell.0, cell.1);
+            logical_draw_distance(f64::from(anchor_x + anchor_y), f64::from(Z + BACKGROUND_STANDING_PRIORITY_Z_OFFSET),
+                STATIC_TIE_LEVEL)
+        };
+        for (x, y) in MOBILE_POSITIONS.into_iter().chain([DAEMON]) {
+            let (depth_x, depth_y) = mobile_depth_cell(x, y);
+            let reach = MOBILE_GROUND_DIM;
+            let posts = (-reach..reach).flat_map(|dy| (-reach..reach).map(move |dx| (dx, dy)))
+                .map(|(dx, dy)| StandingStatic { x: depth_x as i32 + dx, y: depth_y as i32 + dy,
+                    priority_z: Z as i32, top_z: Z as i32 + POST_HEIGHT });
+            let ground = read_mobile_ground(depth_x as i32, depth_y as i32, Z as i32, |_, _| Some(Z as i32), [],
+                posts, false);
+            let mut covered = 0;
+            for pixel in frame_pixels() {
+                let mobile = mobile_pixel_distance_on(&ground, x, y, Z, pixel, RIDER_TIE_LEVEL, None);
+                let cell = plane_cell(card_point(x, y, Z, pixel.0, pixel.1), ground_plane_z(Z));
+                if cell.0 + cell.1 <= depth_x + depth_y {
+                    assert_eq!(mobile, mobile_pixel_distance(x, y, Z, pixel, RIDER_TIE_LEVEL, None),
+                        "({x}, {y}): {pixel:?} keeps its card");
+                    continue;
+                }
+                assert!(static_distance(cell) > mobile, "({x}, {y}): the static on {cell:?} stays under {pixel:?}");
+                assert!(mobile > cell_distance(cell, Z + land_offset), "({x}, {y}): the land covers {pixel:?}");
+                assert!(mobile > cell_distance(cell, Z + BACKGROUND_PRIORITY_Z_OFFSET), "a floor, {pixel:?}");
+                covered += 1;
+            }
+            assert!(covered > 0);
+        }
+        let (x, y) = DAEMON;
+        assert_eq!(plane_cell(card_point(x, y, Z, HOOF_PIXEL.0, HOOF_PIXEL.1), ground_plane_z(Z)), POST);
+        let post_alone = read_mobile_ground(x as i32, y as i32, Z as i32, |_, _| Some(Z as i32), [],
+            [StandingStatic { x: POST.0 as i32, y: POST.1 as i32, priority_z: Z as i32, top_z: Z as i32 + POST_HEIGHT }],
+            false);
+        let hoof = mobile_pixel_distance_on(&post_alone, x, y, Z, HOOF_PIXEL, MOUNT_TIE_LEVEL, None);
+        assert!(static_distance(POST) > hoof, "the post covers the hoof");
+        assert!(mobile_pixel_distance(x, y, Z, HOOF_PIXEL, MOUNT_TIE_LEVEL, None) > static_distance(POST),
+            "read without the post, the hoof lies over it");
     }
 
     /// How far a test walks along a line of sight at a time, in world units, to find where it meets the land drawn.

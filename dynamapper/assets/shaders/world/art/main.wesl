@@ -564,10 +564,11 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // ceiling (art/depth.wesl).
         if (sprite_params.pass_mode != PASS_MODE_SHADOW && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
             let ceiling = mobile_instances[in.instance_index].ceiling;
-            let ground = mobile_ground_hit(in.world_pos, inst.base_world_y, mobile_instances[in.instance_index].ground);
+            let ground = mobile_ground_hit(in.world_pos, inst.base_world_y, inst.priority_z_units,
+                mobile_instances[in.instance_index].ground);
             out.depth = view_z_depth(cave_lifted_view_z(mobile_fragment_view_z(in.world_pos,
-                sprite_logical_view_z(inst), ground, inst.priority_z_units, ceiling.present != 0u,
-                ceiling.z * HEIGHT_SCALE, ceiling.z), inst.is_wet_flags));
+                sprite_logical_view_z(inst), ground, ceiling.present != 0u, ceiling.z * HEIGHT_SCALE, ceiling.z),
+                inst.is_wet_flags));
         }
     }
     var uv = in.uv;

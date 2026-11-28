@@ -1,11 +1,19 @@
 //! The ground around a mobile, where the art shader finds the cell each pixel below its anchor lies on
 //! (art/mobile_ground.wesl `mobile_ground_hit`, art/depth.wesl `mobile_fragment_view_z`): the land as drawn and the
-//! Background floors and carpets, each a rise over the mobile's z up to `MOBILE_GROUND_REACH_Z`.
+//! Background floors and carpets, each a rise over the mobile's z up to `MOBILE_GROUND_REACH_Z`, and the statics
+//! standing on each cell at a priority z under the mobile's.
 //!
 //! A pixel's line of sight meets the ground where the ground is drawn: on flat ground at the mobile's z where it
 //! reaches that z, on a carpet a z higher or on land rising in front as soon as it reaches them. Taken on a plane over
 //! the base instead, the pixel lay a little nearer everywhere: no seam of the land or a rug in front over the legs, but
 //! the foot of a post or a trunk in front under a hoof on flat ground. Read where the ground is, neither happens.
+//!
+//! The pixel lies on that cell at the mobile's priority z (z + 1), over the flat items there and under what stands
+//! there at the mobile's z. A Background static with height, a post or a tree, stands at its own z (ClassicUO's
+//! priority: z - 1 + 1), under the mobile's: on its cell the pixel lies at that priority instead, tie level 0, under
+//! the static (tie levels 1 and up). Without it the post cut the hoof behind it in two: the pixels meeting the ground
+//! on the mobile's own cell kept the card's depth, a row behind the post, those meeting it on the post's cell lay over
+//! it (the daemon at 1458,1622 west of the Britain post, 4f47f8df).
 //!
 //! The ground is read when the mobile's cell, z or map changes, or the map data, the caves drawn, the z-view's limit on
 //! the land or the statics' art source does.
@@ -14,6 +22,7 @@ use bevy::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use crate::render::scene::SceneStateData;
+use crate::render::statics::static_placement::resolve_priority_z_units;
 use crate::render::statics::static_source::StaticArtSourceState;
 use crate::settings::{ClientTextureSource, Settings};
 use crate::world::caves::CavesRes;
@@ -33,7 +42,10 @@ const MOBILE_GROUND_FIRST_CELL_OFFSET: i32 = -5;
 /// How high over the mobile's z the ground is read (art/depth.wesl `MOBILE_GROUND_REACH_Z`): higher land is read as
 /// this high, higher floors not at all; either covers the pixels whatever the cell they lie on.
 pub const MOBILE_GROUND_REACH_Z: i32 = 2;
-/// The bits of a cell, and the cells in a word of `MobileGround::cells`.
+/// How far under the mobile's z the priority z of a static standing on a cell is read (`ground_standing_code`): as far
+/// as a cell's 4 bits count. A static lower still, whose top yet reaches over the mobile's z, stays under its pixels.
+const MOBILE_GROUND_STANDING_DEPTH: i32 = 14;
+/// The bits of a cell, and the cells in a word of `MobileGround::cells` and `MobileGround::standing`.
 const GROUND_CELL_BITS: usize = 4;
 const GROUND_CELLS_PER_WORD: usize = u32::BITS as usize / GROUND_CELL_BITS;
 const GROUND_WORDS: usize = (MOBILE_GROUND_DIM * MOBILE_GROUND_DIM) as usize / GROUND_CELLS_PER_WORD;
@@ -48,8 +60,9 @@ const FLOOR_FLAGS: u64 = TaeFlag::Background.bits() | TaeFlag::Surface.bits();
 const NEVER_DRAWN_FLAGS: u64 = TaeFlag::NoDraw.bits();
 
 /// The ground around a mobile, as the art sprite shader reads it (art/art_bindings.wesl `MobileGround`): the first of
-/// its `MOBILE_GROUND_DIM` x `MOBILE_GROUND_DIM` cells, the z its rises count from, its flags, and the cells' codes
-/// (`ground_cell_code`), 8 a word along x then y. All zero, it is not read: the shader takes flat ground at the base.
+/// its `MOBILE_GROUND_DIM` x `MOBILE_GROUND_DIM` cells, the z its rises count from, its flags, the cells' codes
+/// (`ground_cell_code`) and the codes of what stands on them (`ground_standing_code`), each 8 a word along x then y.
+/// All zero, it is not read: the shader takes flat ground at the base.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct MobileGround {
@@ -57,6 +70,7 @@ pub struct MobileGround {
     pub base_z: f32,
     pub flags: u32,
     pub cells: [u32; GROUND_WORDS],
+    pub standing: [u32; GROUND_WORDS],
 }
 
 /// A cell's code: the land's rise over the base at the cell's top corner in bits 0 and 1, clamped to 0 to
@@ -68,29 +82,64 @@ fn ground_cell_code(land_rise: Option<i32>, floor_rise: Option<i32>) -> u32 {
     land | floors << GROUND_FLOOR_SHIFT
 }
 
+/// A cell's standing code: how far under the mobile's z lies the lowest priority z of the statics standing on it
+/// (0 to `MOBILE_GROUND_STANDING_DEPTH`), + 1, or 0 for none.
+fn ground_standing_code(deepest_drop: Option<i32>) -> u32 {
+    deepest_drop.map_or(0, |drop| drop as u32 + 1)
+}
+
+/// A static with height around a mobile (`read_mobile_ground`): its cell, its priority z (static_placement.rs
+/// `resolve_priority_z_units`, ClassicUO's) and the z of its top, its z and its height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StandingStatic {
+    pub x: i32,
+    pub y: i32,
+    pub priority_z: i32,
+    pub top_z: i32,
+}
+
 /// The ground around the mobile on the cell (`x`, `y`) at `z`: `land_z` the z of a cell's top corner as drawn, `None`
-/// where its land is not; `floors` the cell and z of each floor around; `floors_overhang` whether the floors' art reaches
-/// past their cells.
+/// where its land is not; `floors` the cell and z of each floor around; `standing` the statics with height around, of
+/// which those count whose top reaches over `z` and whose priority z is not over it; `floors_overhang` whether the
+/// floors' art reaches past their cells.
 pub fn read_mobile_ground(x: i32, y: i32, z: i32, mut land_z: impl FnMut(i32, i32) -> Option<i32>,
-    floors: impl IntoIterator<Item = (i32, i32, i32)>, floors_overhang: bool) -> MobileGround {
+    floors: impl IntoIterator<Item = (i32, i32, i32)>, standing: impl IntoIterator<Item = StandingStatic>,
+    floors_overhang: bool) -> MobileGround {
     let first = IVec2::new(x, y) + IVec2::splat(MOBILE_GROUND_FIRST_CELL_OFFSET);
     let dim = MOBILE_GROUND_DIM as usize;
+    let slot_of = |cell_x: i32, cell_y: i32| {
+        let local = IVec2::new(cell_x, cell_y) - first;
+        (local.min_element() >= 0 && local.max_element() < MOBILE_GROUND_DIM)
+            .then(|| local.y as usize * dim + local.x as usize)
+    };
     let mut floor_rises = vec![None; dim * dim];
     for (floor_x, floor_y, floor_z) in floors {
-        let local = IVec2::new(floor_x, floor_y) - first;
         let rise = floor_z - z;
-        if local.min_element() < 0 || local.max_element() >= MOBILE_GROUND_DIM || !(0..=MOBILE_GROUND_REACH_Z).contains(&rise) {
+        let Some(slot) = slot_of(floor_x, floor_y).filter(|_| (0..=MOBILE_GROUND_REACH_Z).contains(&rise)) else {
             continue;
-        }
-        let slot: &mut Option<i32> = &mut floor_rises[local.y as usize * dim + local.x as usize];
+        };
+        let slot: &mut Option<i32> = &mut floor_rises[slot];
         *slot = Some(slot.map_or(rise, |highest| highest.max(rise)));
     }
+    let mut standing_drops = vec![None; dim * dim];
+    for item in standing {
+        let drop = z - item.priority_z;
+        let Some(slot) = slot_of(item.x, item.y)
+            .filter(|_| item.top_z > z && (0..=MOBILE_GROUND_STANDING_DEPTH).contains(&drop)) else {
+            continue;
+        };
+        let slot: &mut Option<i32> = &mut standing_drops[slot];
+        *slot = Some(slot.map_or(drop, |deepest| deepest.max(drop)));
+    }
     let mut ground = MobileGround { first_cell: first.to_array(), base_z: z as f32,
-        flags: GROUND_PRESENT | if floors_overhang { GROUND_FLOORS_OVERHANG } else { 0 }, cells: [0; GROUND_WORDS] };
-    for (index, floor_rise) in floor_rises.into_iter().enumerate() {
+        flags: GROUND_PRESENT | if floors_overhang { GROUND_FLOORS_OVERHANG } else { 0 }, cells: [0; GROUND_WORDS],
+        standing: [0; GROUND_WORDS] };
+    for (index, (floor_rise, standing_drop)) in floor_rises.into_iter().zip(standing_drops).enumerate() {
         let (local_x, local_y) = ((index % dim) as i32, (index / dim) as i32);
         let code = ground_cell_code(land_z(first.x + local_x, first.y + local_y).map(|land| land - z), floor_rise);
-        ground.cells[index / GROUND_CELLS_PER_WORD] |= code << ((index % GROUND_CELLS_PER_WORD) * GROUND_CELL_BITS);
+        let (word, shift) = (index / GROUND_CELLS_PER_WORD, (index % GROUND_CELLS_PER_WORD) * GROUND_CELL_BITS);
+        ground.cells[word] |= code << shift;
+        ground.standing[word] |= ground_standing_code(standing_drop) << shift;
     }
     ground
 }
@@ -149,14 +198,20 @@ pub fn sys_update_mobile_grounds(
             continue;
         }
         let tilemeta = tilemeta.for_world_analyses();
-        let mut floors = Vec::new();
+        let (mut floors, mut standing) = (Vec::new(), Vec::new());
         let half = MOBILE_GROUND_DIM / 2;
         let center = (inputs.x + MOBILE_GROUND_FIRST_CELL_OFFSET + half, inputs.y + MOBILE_GROUND_FIRST_CELL_OFFSET + half);
         visit_region_statics(&mut statics_store.lock(), multis.0.as_deref(), &multis.1, show_hidden_multi_parts,
             map_id, center, half, |x, y, graphic, z| {
                 let Some(meta) = tilemeta.item_tile(u32::from(graphic)) else { return };
-                if meta.height == 0 && meta.flags & FLOOR_FLAGS == FLOOR_FLAGS && meta.flags & NEVER_DRAWN_FLAGS == 0 {
+                if meta.flags & NEVER_DRAWN_FLAGS != 0 {
+                    return;
+                }
+                if meta.height == 0 && meta.flags & FLOOR_FLAGS == FLOOR_FLAGS {
                     floors.push((x, y, i32::from(z)));
+                } else if meta.height != 0 {
+                    standing.push(StandingStatic { x, y, priority_z: resolve_priority_z_units(z, Some(meta)) as i32,
+                        top_z: i32::from(z) + i32::from(meta.height) });
                 }
             }, |_| {});
         let active_caves = caves.active();
@@ -166,7 +221,7 @@ pub fn sys_update_mobile_grounds(
             cave_floor.or_else(|| land.land_z(map_planes.as_deref(), map_id, cell_x, cell_y))
                 .filter(|&land_z| land_z as f32 <= land_max_z)
         };
-        cache.ground = read_mobile_ground(inputs.x, inputs.y, inputs.z, land_z, floors, floors_overhang);
+        cache.ground = read_mobile_ground(inputs.x, inputs.y, inputs.z, land_z, floors, standing, floors_overhang);
         cache.inputs = Some(inputs);
     }
 }
@@ -218,13 +273,30 @@ pub(super) mod mirror {
         Vec2::new(hit.x, hit.z)
     }
 
-    pub fn code(ground: &MobileGround, cell: IVec2) -> u32 {
+    fn code_of(words: &[u32; GROUND_WORDS], ground: &MobileGround, cell: IVec2) -> u32 {
         let local = cell - IVec2::from_array(ground.first_cell);
         if local.min_element() < 0 || local.max_element() >= MOBILE_GROUND_DIM {
             return 0;
         }
         let index = (local.y * MOBILE_GROUND_DIM + local.x) as usize;
-        ground.cells[index / GROUND_CELLS_PER_WORD] >> ((index % GROUND_CELLS_PER_WORD) * GROUND_CELL_BITS) & CELL_MASK
+        words[index / GROUND_CELLS_PER_WORD] >> ((index % GROUND_CELLS_PER_WORD) * GROUND_CELL_BITS) & CELL_MASK
+    }
+
+    pub fn code(ground: &MobileGround, cell: IVec2) -> u32 {
+        code_of(&ground.cells, ground, cell)
+    }
+
+    pub fn standing_code(ground: &MobileGround, cell: IVec2) -> u32 {
+        code_of(&ground.standing, ground, cell)
+    }
+
+    /// art/mobile_ground.wesl `mobile_ground_priority_z`: the priority z a pixel of a mobile of priority z
+    /// `priority_z` takes on the cell whose corner is `cell`.
+    pub fn pixel_priority_z(ground: &MobileGround, (x, y): (f32, f32), priority_z: f32) -> f32 {
+        match standing_code(ground, IVec2::new(x as i32, y as i32)) {
+            0 => priority_z,
+            standing => priority_z.min(ground.base_z - (standing - 1) as f32),
+        }
     }
 
     fn corner_rise(ground: &MobileGround, cell: IVec2) -> f32 {
@@ -299,8 +371,8 @@ mod tests {
     #[test]
     fn the_shader_reads_the_ground_as_this_file_packs_it() {
         mirror::check_shader_constants();
-        // first_cell, base_z and flags (16 bytes), and the cells' 32 words.
-        const WGSL_MOBILE_GROUND_SIZE: usize = 144;
+        // first_cell, base_z and flags (16 bytes), the cells' 32 words and the standing codes' 32.
+        const WGSL_MOBILE_GROUND_SIZE: usize = 272;
         assert_eq!(std::mem::size_of::<MobileGround>(), WGSL_MOBILE_GROUND_SIZE);
         assert_eq!(GROUND_WORDS * u32::BITS as usize,
             (MOBILE_GROUND_DIM * MOBILE_GROUND_DIM) as usize * GROUND_CELL_BITS);
@@ -313,7 +385,7 @@ mod tests {
         const HIDDEN_X: i32 = X + 3;
         let land_z = |x: i32, y: i32| (x != HIDDEN_X).then_some(Z + (x - X) + (y - Y));
         let floors = [(X + 1, Y, Z + 1), (X + 1, Y, Z), (X + 2, Y, Z + 3), (X, Y + 1, Z - 1), (X, Y + 2, Z + 2)];
-        let ground = read_mobile_ground(X, Y, Z, land_z, floors, false);
+        let ground = read_mobile_ground(X, Y, Z, land_z, floors, [], false);
         assert_eq!(ground.first_cell, [X + MOBILE_GROUND_FIRST_CELL_OFFSET, Y + MOBILE_GROUND_FIRST_CELL_OFFSET]);
         assert_eq!((ground.base_z, ground.flags), (Z as f32, GROUND_PRESENT));
         let floor = |rise: u32| (rise + 1) << GROUND_FLOOR_SHIFT;
@@ -325,7 +397,38 @@ mod tests {
         assert_eq!(code(HIDDEN_X, Y), GROUND_LAND_HIDDEN);
         assert_eq!(code(X, Y + 1), 1, "a floor under the mobile");
         assert_eq!(code(X, Y + 2), 2 | floor(2));
-        assert!(read_mobile_ground(X, Y, Z, land_z, [], true).flags & GROUND_FLOORS_OVERHANG != 0);
+        assert!(read_mobile_ground(X, Y, Z, land_z, [], [], true).flags & GROUND_FLOORS_OVERHANG != 0);
+        assert_eq!(ground.standing, [0; GROUND_WORDS]);
+    }
+
+    /// A static with height standing on a cell at a priority z under the mobile's (ClassicUO's: a Background one at
+    /// its z, another a z over it) with its top over the mobile's z orders the pixels lying on that cell at its
+    /// priority z, the lowest of them: the Britain post (0x1296, Background, 15 high) on flat land at the mobile's z,
+    /// a tree on land a z lower. One standing at the mobile's priority z or over it, one whose top stays at the
+    /// mobile's z or under it, and one past the depth read, leave them at the mobile's.
+    #[test]
+    fn the_ground_holds_what_stands_under_the_mobiles_priority() {
+        const POST_HEIGHT: i32 = 15;
+        let at = |x: i32, priority_z: i32, top_z: i32| StandingStatic { x, y: Y + 1, priority_z, top_z };
+        let standing = [
+            at(X + 1, Z, Z + POST_HEIGHT),
+            at(X + 2, Z - 1, Z - 1 + POST_HEIGHT), at(X + 2, Z, Z + POST_HEIGHT),
+            at(X + 3, Z + 1, Z + POST_HEIGHT),
+            at(X + 4, Z - 2, Z),
+            at(X + 5, Z - MOBILE_GROUND_STANDING_DEPTH - 1, Z + POST_HEIGHT),
+            at(X + 6, Z - MOBILE_GROUND_STANDING_DEPTH, Z + 1),
+        ];
+        let ground = read_mobile_ground(X, Y, Z, |_, _| Some(Z), [], standing, false);
+        let mobile_priority_z = Z as f32 + 1.0;
+        let priority = |x: i32| mirror::pixel_priority_z(&ground, (x as f32, (Y + 1) as f32), mobile_priority_z);
+        assert_eq!(priority(X), mobile_priority_z, "nothing stands there");
+        assert_eq!(priority(X + 1), Z as f32, "the post");
+        assert_eq!(priority(X + 2), (Z - 1) as f32, "the lowest of two");
+        assert_eq!(priority(X + 3), mobile_priority_z, "at the mobile's priority z it covers already");
+        assert_eq!(priority(X + 4), mobile_priority_z, "its top at the mobile's z");
+        assert_eq!(priority(X + 5), mobile_priority_z, "past the depth read");
+        assert_eq!(priority(X + 6), (Z - MOBILE_GROUND_STANDING_DEPTH) as f32, "as deep as read");
+        assert_eq!(mirror::code(&ground, IVec2::new(X + 1, Y + 1)), 0, "no land or floor code");
     }
 
     /// art/mobile_ground.wesl passes naga's validation, as the GPU's shader module creation runs it: no art shader is
@@ -342,7 +445,7 @@ const MOBILE_GROUND_TIE_Z: f32 = 0.0625;
 fn sight_plane_hit(point: vec3<f32>, plane_y: f32) -> vec4<f32> { return vec4<f32>(point.x, plane_y, point.z, 1.0); }
 @group(0) @binding(0) var<storage, read> grounds: array<MobileGround>;
 @fragment fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return mobile_ground_hit(position.xyz, 0.0, grounds[u32(position.x)]);
+    return mobile_ground_hit(position.xyz, 0.0, position.w, grounds[u32(position.x)]);
 }
 ";
         let structure = BINDINGS_WESL.split("struct MobileGround {").nth(1).and_then(|rest| rest.split_once('}'))
