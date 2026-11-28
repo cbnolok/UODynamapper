@@ -14,6 +14,7 @@
 //! takes; below each encoding, its difference from the source over the grey, amplified [`DIFF_GAIN`] times.
 
 mod span_frames;
+mod source_encodes;
 
 use super::*;
 use std::fmt::Write as _;

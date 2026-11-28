@@ -1581,6 +1581,76 @@ the SPAN upscales and the RIFE in-betweens alike (`render/mobiles/bc7_encoding.r
 - **Worth it**: on large Enhanced bodies at a 2x view or closer; elsewhere UltraFast is as good to the eye and its
   crowds' frames come sooner.
 
+### Pale patches on the hooves at SPAN 2x (2026-11-28)
+
+The user saw pale patches with straight edges at the bottom of the Enhanced daemon's (9) hooves on SPAN 2x, with
+and without interior lines, where the orange hoof turns grey. Traced on the daemon's stand (direction 3, frame 0)
+and walk (direction 4, frame 6), then the dragon (12), ettin (18) and ogre (1), each frame against the Enhanced
+client's own (palette and coverage, lossless; `uocf-cli animframe export`), 2026-11-28 test packages.
+
+- **The drawn frame is the offline one.** A capture of the stand with the filters off matches the offline SPAN of the
+  packaged frame plus the run-time UltraFast at a correlation of 0.99991. The art shader's 2x sampling, the atlas
+  placement and padding and the frame filter add nothing.
+- **The stored 1x frame carries it.** The package's frames match the client's at offset (0, 0), RGB off by 3.7–4.1
+  on average, alpha by 0.65 (walk, direction 4, frames 0–9). A BC7 block across the change from orange to grey gets
+  one colour line, and a block on a single line comes out washed, pale or grey. At 1x the art's mottle hides it.
+- **SPAN reveals it.** SPAN smooths the mottle into flat areas and keeps the block's edge, so the washed block becomes
+  a flat pale patch with a straight edge, 8 texels on a side at 2x. Across the 2x lines where the 1x blocks meet, the
+  colour steps exceed the ones across the other texel lines by 22 % on the packaged stand frame. The client's own
+  frame gives 8 %.
+- **The run-time encode adds little.** UltraFast moves the patch error by 0.02 and VeryFast does not remove it.
+
+The table compares encodes of the client's frame and the packaged frame. Each one goes through SPAN and the run-time
+UltraFast encode. The figures are the error against SPAN of the client's frame, low-passed over 9x9 texels: the
+washed areas without the texel noise. Harness: `block_encode::tests::source_encodes::evaluate_source_frame_encodes`
+(ignored), then [`span_encode_table.py`](mobile_animation_motion/span_encode_table.py), which also gives the plain
+error and the block-edge excess.
+
+| 1x frame | daemon stand | daemon walk | dragon | ettin | ogre |
+|---|---:|---:|---:|---:|---:|
+| packaged (as shipped) | 1.87 | 1.88 | 3.68 | 1.68 | 1.78 |
+| CPU AnalyticalWide | 1.48 | 1.46 | 3.07 | 1.41 | 1.32 |
+| GPU UltraFast (the packers') | 1.29 | 1.29 | 2.41 | 1.39 | 1.18 |
+| GPU VeryFast | 1.07 | 1.03 | 1.54 | 1.37 | 0.94 |
+| GPU Fast | 0.94 | 0.88 | 1.34 | 1.06 | 0.72 |
+| GPU Basic / Slow | 0.92 / 0.93 | 0.87 / 0.88 | 1.29 / 1.27 | 1.01 / 1.02 | 0.73 / 0.72 |
+| client (lossless) | 0.45 | 0.49 | 0.79 | 0.37 | 0.37 |
+
+- **Where the packaged error comes from.** Roughly two thirds comes from the encoder: the packers' UltraFast and
+  AnalyticalWide are alike. The other third comes from the pack's lossy level, `minimal` (`fields:30:3`, see
+  bc7_anim_supercompression.md). The dragon loses the most. The ogre shows the same washed toenails, and the ettin
+  only mild ones. In the block-edge excess, the packaged frames give +18 to +26 % (ettin +8), the client's +7 to +10 %
+  (ettin −1). Fast brings the excess to +11 to +15 %.
+- **Nothing at run time brings it back**, because the stored frame has lost the hue.
+  - Deblocking the 1x frame before SPAN raised the plain error from 5.31 to 5.7–6.9.
+  - Deblocking the 2x frame across the block lines brought those steps level with the other lines, with the error
+    unchanged (5.31 → 5.29), but the patch stayed washed.
+  - A clamp of SPAN's partly covered samples (below) does not touch the opaque inside of the hoof.
+- **Fix (proposed, not applied).** Encode the Enhanced mobile animation pages better than `GPU_BC7_QUALITY`
+  (`udd_conv::atlas::bc_encode_device`, UltraFast for every packer), with or without the `lossless` level for that
+  pack. Both need a repack. Costs, from the tables of atlas_page_compression.md ("BC7 encode on the GPU") and
+  bc7_anim_supercompression.md:
+  - **VeryFast** takes 17–20 % off UltraFast's patch error on the daemon and the ogre and 36 % on the dragon; the
+    ettin's barely moves. It adds 4.8 % of Zstd bytes and about 1.1 s of GPU time per 16 pages before the encoder's
+    later optimizations, so at most about 170 s over 2473 pages.
+  - **Fast** takes 24–44 % off, for 9.8 % of bytes and about 290 s at most.
+  - **The `lossless` level** removes the lossy level's share. The pack grows from 1764 to 1890 MiB but takes 320 s
+    instead of 559 s. With Fast, the shipped error halves: daemon 1.87 → 0.94, dragon 3.68 → 1.34.
+
+  A refinement pass is not worth its complexity. It encodes at UltraFast, then encodes at Fast the blocks whose RMS
+  against the frame exceeds 6. That re-encodes 14–48 % of the blocks with alpha and only reaches VeryFast's figures
+  (daemon 1.07 on both frames, dragon 1.46, against VeryFast's 1.07, 1.03 and 1.54). The RIFE in-betweens are made
+  from the stored frames, so they gain with them. The run-time encoder is unchanged.
+- **A second, fainter effect: the matte removal's fringe.** SPAN's `finish` divides the network's colour by alpha to
+  take out the grey matte, so at low alpha the network's small errors become near-white colours. On the daemon's
+  stand from the client's frame, 2.9k texels of alpha under 64 have channels above 140 on average (alpha 1–31:
+  RGB 204, 204, 191). From the packaged frame there are 4.1k. Its BC7 leaks alpha up to 28 onto 465 texels the client
+  leaves transparent, in block-shaped clusters, which SPAN turns into faint pale rectangles outside the silhouette.
+  - A clamp of every partly covered sample to the colour range of the 1x texels with alpha in the 3x3 around it
+    removes them: 4.1k → 0.3k, with the colours of partly covered texels inside that range.
+  - The same clamp also removes the dark rim the network draws along the silhouette, so it was not adopted.
+  - Clamping only from above is the variant to try if the fringe is wanted gone.
+
 ## Ground, collision and draw order of a walking body (2026-11-22)
 
 The user saw the stygian dragon (Enhanced 826) sink into the ground while it walked, and the human, on foot and
