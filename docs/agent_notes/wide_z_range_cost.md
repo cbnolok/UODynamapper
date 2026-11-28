@@ -163,7 +163,8 @@ The tools hard-code the i8 range in:
 - the editor GUIs' `DragValue<i8>`.
 
 **Protocol.** The repo has no packet code. The only sockets are the local JSON control socket (`Teleport` and
-`SpawnMobile` with `z: i8`) and the executable patching in `lib/uocf/src/client`.
+`SpawnMobile` with `z: i8`) and the executable patching in `lib/uocf/src/client`. The packets that carry z, and what a
+future network layer must branch on, are in [`docs/protocol/wide_z_extension.md`](../protocol/wide_z_extension.md).
 
 ## Encodings and deltas per site
 
@@ -424,19 +425,26 @@ UDDP stays v1 and the packages are regenerated. This is a proposal that needs th
   - A 9-bit or 10-bit renderer then behaves exactly as today on i8 maps.
   - Optional for i16: a per-chunk z bounds table (4 B per chunk, 112 KiB raw for map 0).
 
-**Protocol extension (server side, outside this repo).** From memory of the RunUO and ServUO packet code, not
-verified here:
-- the world-object packets carry z as a signed byte: items 0x1A and 0xF3, mobiles 0x20, 0x77 and 0x78, move
-  rejection 0x21, effects 0x70 and 0xC0;
-- the login confirm 0x1B already carries it as a short.
+**Protocol extension (server side, outside this repo).** The full spec, verified against ClassicUO (ee79d7eb) and
+Source-X (e0cf4ed6), is [`docs/protocol/wide_z_extension.md`](../protocol/wide_z_extension.md). In short:
+- **z as a signed byte:**
+  - server to client: items 0x1A and 0xF3 (also as 0xF7 records); mobiles 0x20, 0x77 and 0x78; move rejection 0x21;
+    drag animation 0x23; effects 0x70, 0xC0 and 0xC7; map waypoint 0xE5;
+  - client to server: the drop 0x08.
+- **Already a 16-bit slot:**
+  - the login confirm 0x1B, where Sphere writes `0x00, i8` (not sign-extended) and ClassicUO keeps the low byte;
+  - the target response 0x6C, which ClassicUO writes sign-extended over 15-16 and Sphere reads only at byte 16;
+  - sound 0x54, server change 0x76 and boat moving 0xF6 (i16).
+- **Relative, unchanged:** custom house 0xD8 and 0xD7, and the multi cursor 0x99.
 
-The cleanest extension is a capability negotiated at login, for example a 0xBF subcommand or a client feature bit.
-After it, those packets carry z as an i16:
-- +1 byte each;
-- the fixed-length packets change length, so both sides switch together.
+The proposed extension:
+- **Negotiation:** a 0xBF subcommand (0x00E0 proposed) with OFFER, ACCEPT and COMMIT messages, exchanged before the
+  client sends 0x5D. Vanilla clients never see a changed packet.
+- **Wire format:** after COMMIT, z is i16 big-endian, limited to -512..511. Each field grows by one byte (two for 0x23
+  and the effects), so the fixed lengths change on both sides.
 
-The server's own tile structures (land and static z as sbyte) need widening too. Separate wide packets, or a side
-packet carrying only the z high byte, would work as well, but they double the paths for each object.
+Source-X keeps z as `int8` throughout (`CPointBase::m_z`, about 135 narrow declarations or casts in about 30 files,
+and a `CItem` union that aliases the z byte). The server side is estimated at about 40 files.
 
 ## Open questions for the user
 
@@ -444,5 +452,7 @@ packet carrying only the z high byte, would work as well, but they double the pa
 2. The package changes above (`mapN.uddp` G16, `staticsN.uddp` i16 z, `UMAP` min/max z): confirm before
    implementing.
 3. Where custom maps' wide z comes from: a wide Classic file variant, or editors writing UDDP directly. Which editor?
-4. The protocol extension's shape, if a server will ever send z beyond i8.
+4. The protocol extension's shape, if a server will ever send z beyond i8. It is proposed in
+   [`docs/protocol/wide_z_extension.md`](../protocol/wide_z_extension.md), whose own open questions list the choices
+   still to make.
 5. Separate from wide z: fix the perspective camera's far-zoom tie collisions (Option B)?
