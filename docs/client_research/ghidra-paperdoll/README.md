@@ -8,7 +8,9 @@ AMOU entries are:
 - the client loads them as assets 0x40 and 0x41 of type 0x12 (`PaperdollFrameSet`), and the EC and CC
   paperdoll textures look a frame up by action = gender and frame number = the body or the worn item's id.
 
-Findings: [results/uosa_paperdoll.md](results/uosa_paperdoll.md) (UOSA.exe and UOKR.exe). Every result is marked
+Findings: [results/uosa_paperdoll.md](results/uosa_paperdoll.md) (UOSA.exe and UOKR.exe). Which gump each worn
+item of the old-style gump paperdoll draws, its body gump and its draw order are in
+[ghidra-ec-paperdoll-gump](../ghidra-ec-paperdoll-gump/README.md). Every result is marked
 **confirmed** (read in the code) or **probable** (inferred from the code and the shipped data).
 
 ## Programs

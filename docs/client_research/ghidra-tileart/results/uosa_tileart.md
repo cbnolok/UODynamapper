@@ -615,9 +615,11 @@ banners, cloth, pillows and towels (values 2..95); no client meaning was found, 
 `OffC8` has no support.
 
 props2 (`HasProperty2`/`GetProperty2` +0x6c/+0x70) is read only by `UOPaperdoll::BuildImage` 0x0050c790:
-for each equipped layer the appearance tile is props2 key 11, else props2 key 8, else props1 key 11, else
-props1 key 8 (each + 10000000); it then draws gump `id + 60000` for a female wearer (falling back to
-`id + 50000`) or `id + 50000`, with HasFlags2 bit 18 (PartialHue) selecting a partial hue.
+for each equipped layer the number is props2 key 11, else props2 key 8 (the definition of value + 10000000),
+else the item's own id; props1 keys 11 and 8 are read only after an `equipconv.csv` conversion, a file no package
+ships. It then draws gump `id + 60000` for a female wearer (falling back to `id + 50000`) or `id + 50000`, with
+HasFlags2 bit 18 (PartialHue) of the final definition selecting a partial hue (corrected 2026-11-28,
+[ghidra-ec-paperdoll-gump](../../ghidra-ec-paperdoll-gump/results/uosa_paperdoll_gump.md#2-the-gump-of-a-worn-item)).
 
 ### 8.4 House join bits 1-5, 14, 15
 

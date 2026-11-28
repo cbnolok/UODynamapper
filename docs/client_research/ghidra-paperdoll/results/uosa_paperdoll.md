@@ -157,7 +157,9 @@ layer map, layer byte, hue, partial, key r, g, b). **confirmed** (decompiler and
     0x00509d9e: the red byte is the index); an entry alpha below 255 blends it over the target texel
     (0x00509ded..0x00509e51).
 18. **Partial.** The body gump is drawn with partial true (skin hue on greys only); each worn layer passes
-    `HasFlags2(0x40000, 0)` (PartialHue, tileart flags2 bit 18) of its appearance definition.
+    `HasFlags2(0x40000, 0)` (PartialHue, tileart flags2 bit 18) of its appearance definition. No shipped
+    appearance definition sets that bit, so the client hues every worn item fully; the gump each item draws and
+    that definition are in [uosa_paperdoll_gump.md](../../ghidra-ec-paperdoll-gump/results/uosa_paperdoll_gump.md).
 
 So a block-coded Enhanced paperdoll gump changes what the client hues: any texel that was an exact grey and is
 no longer one loses the hue, and a coloured texel that rounds to a grey gains it.
