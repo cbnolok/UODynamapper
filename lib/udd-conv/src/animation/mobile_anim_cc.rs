@@ -56,18 +56,22 @@ use crate::upscale::{apply_upscale_passes_owned, UpscaleFilter, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_cc::{
-    page_entry_path, ClassicBodyTables, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
-    MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord, MobileAnimCcPageRecord,
-    ANIMATION_MANIFEST_ENTRY_PATH, BODY_RESOLVE_FLAG_BODYCONV_DEF, BODY_RESOLVE_FLAG_BODY_DEF,
-    MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
-    BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
+    page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord, MobileAnimCcPageRecord,
+    ANIMATION_MANIFEST_ENTRY_PATH, MOBILE_ANIM_CC_FLAG_UOP_SOURCE, BODY_TABLE_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
     MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
-    ANIMATION_MANIFEST_MAGIC, BODY_RESOLVE_MANIFEST_MAGIC, BODY_TYPE_MANIFEST_MAGIC, FRAME_MANIFEST_MAGIC,
+    ANIMATION_MANIFEST_MAGIC, FRAME_MANIFEST_MAGIC,
     MOBILE_ANIM_CC_METADATA_VERSION, MOB_TYPE_FLAG_USES_UOP_FRAMES, MOB_TYPE_GROUP_ANIMAL, MOB_TYPE_GROUP_EQUIPMENT,
     MOB_TYPE_GROUP_HUMAN, MOB_TYPE_GROUP_MONSTER, MOB_TYPE_GROUP_SEA_MONSTER, MOVE_ACTION_GROUP_COUNT,
     MOVE_ACTION_MOVEMENT_COUNT, NO_MOVE_ACTION, NO_SEQUENCE_FPS, PAGE_MANIFEST_MAGIC,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
+
+mod body_table;
+
+use body_table::{
+    resolve_classic_bodies, serialize_body_table, ClassicBodyResolveRow, ClassicBodyTable, ClassicBodyTables,
+    ClassicMobTypeRow, BODY_RESOLVE_FLAG_BODYCONV_DEF, BODY_RESOLVE_FLAG_BODY_DEF,
+};
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -75,8 +79,6 @@ pub const DEFAULT_ATLAS_GUTTER: u16 = 4;
 
 const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
-/// Serialized body type record: body id, group type, flags, then the move actions (u16 each).
-const BODY_TYPE_RECORD_SIZE: usize = 7 + MOVE_ACTION_GROUP_COUNT * MOVE_ACTION_MOVEMENT_COUNT * 2;
 /// Serialized animation record: body, action, direction, file, source index, frame start, frame count, flags, fps.
 const ANIMATION_RECORD_SIZE: usize = 24;
 /// The Classic client's flying animation switch for `GetActionFps` (`DAT_0074dca5`), set to 1 by both its callers of
@@ -425,16 +427,20 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
     let (body_type_records, sequences) = build_body_type_records(&client_dir)?;
     fill_uop_animation_fps(&mut animation_records, &body_type_records, &sequences);
-    set_frame_filters(&mut planned_frames, options, ClassicBodyTables {
+    let body_table = resolve_classic_bodies(ClassicBodyTables {
         body_resolve: &body_resolve_records,
         body_types: &body_type_records,
-    })?;
+    }, &animation_records)?;
+    set_frame_filters(&mut planned_frames, options, &body_table)?;
     stage_timings.body_records = stage_timer.elapsed();
     info!(
-        "CC mobile animation planning prepared {} frames, {} animations, {} body resolves in {:.3}s",
+        "CC mobile animation planning prepared {} frames, {} animations, {} body resolves, {} server bodies with \
+         frames, {} move action sets in {:.3}s",
         packed_frame_count,
         animation_records.len(),
         body_resolve_records.len(),
+        body_table.bodies.len(),
+        body_table.move_action_sets.len(),
         planning_timer.elapsed().as_secs_f64()
     );
 
@@ -461,15 +467,13 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animation_records)?;
     let frame_manifest = serialize_frame_manifest(&frame_records)?;
-    let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records)?;
-    let body_type_manifest = serialize_body_type_manifest(&body_type_records)?;
+    let body_table_manifest = serialize_body_table(&body_table)?;
 
     for (path, data) in [
         (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
         (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
         (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice()),
-        (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice()),
-        (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice()),
+        (BODY_TABLE_ENTRY_PATH, body_table_manifest.as_slice()),
     ] {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
@@ -529,18 +533,19 @@ fn planned_frames_key(frame: &PlannedMobileAnimFrame) -> ClassicFramesKey {
 }
 
 /// Sets each planned frame's cleanup filter: the `MobileFrameFilters.kdl` entries of package "cc", their server
-/// bodies followed to the frames the client draws for them ([`ClassicBodyTables::frames_body`]).
+/// bodies followed to the frames the client draws for them (the server body table).
 fn set_frame_filters(
     planned_frames: &mut [PlannedMobileAnimFrame],
     options: &MobileAnimCcAtlasOptions,
-    body_tables: ClassicBodyTables<'_>,
+    body_table: &ClassicBodyTable,
 ) -> eyre::Result<()> {
     let (path, table) = load_mobile_frame_filters(options.frame_filters_path.as_deref())?;
     println!("Using mobile frame filters: {}", path.display());
     let stored = planned_frames.iter().map(planned_frames_key).collect::<HashSet<_>>();
     let frames_of = |body: u16| {
-        let frames = body_tables.frames_body(body);
-        let key = if frames.uop { (true, 0, frames.body_id) } else { (false, frames.file_index, frames.body_id) };
+        let index = body_table.bodies.binary_search_by_key(&body, |record| record.body_id).ok()?;
+        let record = &body_table.bodies[index];
+        let key = (record.uses_uop_frames(), record.file_index, record.frames_body_id);
         stored.contains(&key).then_some(key)
     };
     let describe = |(uop, file_index, body): ClassicFramesKey| {
@@ -596,15 +601,15 @@ fn print_classic_animation_source_files(client_dir: &Path) {
     }
 }
 
-fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimCcBodyResolveRecord>> {
-    let mut records = BTreeMap::<u16, MobileAnimCcBodyResolveRecord>::new();
+fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<ClassicBodyResolveRow>> {
+    let mut records = BTreeMap::<u16, ClassicBodyResolveRow>::new();
 
     let body_def_path = client_dir.join("Body.def");
     if body_def_path.is_file() {
         let body_def = BodyDef::load(&body_def_path)
             .wrap_err_with(|| format!("load {}", body_def_path.display()))?;
         for (&body_id, entry) in body_def.iter() {
-            records.insert(body_id, MobileAnimCcBodyResolveRecord {
+            records.insert(body_id, ClassicBodyResolveRow {
                 body_id,
                 resolved_body_id: entry.graphic,
                 hue: entry.hue,
@@ -628,7 +633,7 @@ fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimC
                     record.mount_height = entry.mount_height;
                     record.flags |= BODY_RESOLVE_FLAG_BODYCONV_DEF;
                 })
-                .or_insert(MobileAnimCcBodyResolveRecord {
+                .or_insert(ClassicBodyResolveRow {
                     body_id,
                     resolved_body_id: entry.graphic,
                     hue: 0,
@@ -647,7 +652,7 @@ fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimC
 /// sequences, loaded only when a row is UOP-flagged.
 fn build_body_type_records(
     client_dir: &Path,
-) -> eyre::Result<(Vec<MobileAnimCcBodyTypeRecord>, BTreeMap<u32, AnimationSequence>)> {
+) -> eyre::Result<(Vec<ClassicMobTypeRow>, BTreeMap<u32, AnimationSequence>)> {
     let path = client_dir.join("mobtypes.txt");
     if !path.is_file() {
         return Ok((Vec::new(), BTreeMap::new()));
@@ -670,7 +675,7 @@ fn build_body_type_records(
 /// `NO_SEQUENCE_FPS`.
 fn fill_uop_animation_fps(
     animations: &mut [MobileAnimCcAnimationRecord],
-    body_types: &[MobileAnimCcBodyTypeRecord],
+    body_types: &[ClassicMobTypeRow],
     sequences: &BTreeMap<u32, AnimationSequence>,
 ) {
     let uop_bodies = body_types
@@ -694,7 +699,7 @@ fn fill_uop_animation_fps(
 
 /// Sets the move actions of every UOP-flagged record from its body's sequence; the others keep `NO_MOVE_ACTION`.
 fn fill_uop_move_actions(
-    records: &mut [MobileAnimCcBodyTypeRecord],
+    records: &mut [ClassicMobTypeRow],
     sequences: &BTreeMap<u32, AnimationSequence>,
 ) -> eyre::Result<()> {
     let mut without_sequence = 0usize;
@@ -707,8 +712,8 @@ fn fill_uop_move_actions(
     Ok(())
 }
 
-pub(crate) fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
-    let mut records = BTreeMap::<u16, MobileAnimCcBodyTypeRecord>::new();
+pub(crate) fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<ClassicMobTypeRow>> {
+    let mut records = BTreeMap::<u16, ClassicMobTypeRow>::new();
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') || !line.as_bytes()[0].is_ascii_digit() {
@@ -725,7 +730,7 @@ pub(crate) fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBod
         let flags = u32::from_str_radix(flags.trim_start_matches("0x").trim_start_matches("0X"), 16)
             .unwrap_or(0);
 
-        records.insert(body_id, MobileAnimCcBodyTypeRecord {
+        records.insert(body_id, ClassicMobTypeRow {
             body_id,
             group_type,
             flags: 0x8000_0000 | flags,
@@ -3198,47 +3203,12 @@ pub fn serialize_frame_manifest(frames: &[MobileAnimCcFrameRecord]) -> eyre::Res
     Ok(bytes)
 }
 
-pub fn serialize_body_resolve_manifest(
-    records: &[MobileAnimCcBodyResolveRecord],
-) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + records.len() * 10);
-    bytes.extend_from_slice(&BODY_RESOLVE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
-    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
-    for record in records {
-        bytes.write_u16::<LittleEndian>(record.body_id)?;
-        bytes.write_u16::<LittleEndian>(record.resolved_body_id)?;
-        bytes.write_u16::<LittleEndian>(record.hue)?;
-        bytes.push(record.file_index);
-        bytes.write_i8(record.mount_height)?;
-        bytes.write_u16::<LittleEndian>(record.flags)?;
-    }
-    Ok(bytes)
-}
-
-pub fn serialize_body_type_manifest(
-    records: &[MobileAnimCcBodyTypeRecord],
-) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + records.len() * BODY_TYPE_RECORD_SIZE);
-    bytes.extend_from_slice(&BODY_TYPE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
-    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
-    for record in records {
-        bytes.write_u16::<LittleEndian>(record.body_id)?;
-        bytes.push(record.group_type);
-        bytes.write_u32::<LittleEndian>(record.flags)?;
-        for &action in record.move_actions.iter().flatten() {
-            bytes.write_u16::<LittleEndian>(action)?;
-        }
-    }
-    Ok(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use udd_container::{AddFileRequest, DataType, UddpReader};
     use udd_assets::MobileAnimCcPackage;
+    use udd_assets::mobile_anim_cc::MobileAnimCcBodyRecord;
 
     /// Pages whose RDO splits into row chunks (more blocks than the parallel threshold) and changes blocks.
     const PARALLEL_TEST_PAGES: u32 = 4;
@@ -3721,23 +3691,23 @@ mod tests {
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frame_records).unwrap();
-        let body_resolve_records = vec![MobileAnimCcBodyResolveRecord {
-            body_id: 7,
-            resolved_body_id: 8,
-            hue: 9,
-            file_index: 2,
-            mount_height: -1,
-            flags: BODY_RESOLVE_FLAG_BODY_DEF | BODY_RESOLVE_FLAG_BODYCONV_DEF,
-        }];
         let stand_walk_run = [4, 0, 2];
-        let body_type_records = vec![MobileAnimCcBodyTypeRecord {
-            body_id: 7,
-            group_type: 3,
-            flags: 0x8000_0001,
-            move_actions: [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT], stand_walk_run, stand_walk_run],
-        }];
-        let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records).unwrap();
-        let body_type_manifest = serialize_body_type_manifest(&body_type_records).unwrap();
+        let body_table = ClassicBodyTable {
+            bodies: vec![MobileAnimCcBodyRecord {
+                body_id: 7,
+                frames_body_id: 8,
+                file_index: 2,
+                flags: 0,
+                group_type: MOB_TYPE_GROUP_HUMAN,
+                mount_height: -1,
+                mob_type_flags: 0x8000_0001,
+                hue: 9,
+                move_action_set: 0,
+                movement_actions: [stand_walk_run, [25, 23, 24]],
+            }],
+            move_action_sets: vec![[[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT], stand_walk_run, stand_walk_run]],
+        };
+        let body_table_manifest = serialize_body_table(&body_table).unwrap();
         let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
         let stored_page = pages[0].pixels.clone();
 
@@ -3746,8 +3716,7 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice(), DataType::Metadata),
             (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice(), DataType::Metadata),
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
-            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice(), DataType::Metadata),
-            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice(), DataType::Metadata),
+            (BODY_TABLE_ENTRY_PATH, body_table_manifest.as_slice(), DataType::Metadata),
             (page_path.as_str(), stored_page.as_slice(), DataType::Texture),
         ] {
             builder.add_file(AddFileRequest {
@@ -3770,9 +3739,8 @@ mod tests {
         assert_eq!(package.animation(1, 2, 3).unwrap().source_index, 13);
         assert_eq!(package.animation(1, 2, 3).unwrap().fps, ROUNDTRIP_FPS);
         assert_eq!(package.animation_frames(package.animation(1, 2, 3).unwrap())[0].center_y, -1);
-        assert_eq!(package.body_resolve_record(7).unwrap().file_index, 2);
-        assert_eq!(package.body_type_record(7).unwrap().flags, 0x8000_0001);
-        assert_eq!(package.body_type_record(7).unwrap().move_actions, body_type_records[0].move_actions);
+        assert_eq!(package.bodies(), body_table.bodies);
+        assert_eq!(package.move_action_sets(), body_table.move_action_sets);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
     }
 
@@ -3834,8 +3802,7 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, serialize_page_manifest(&pages, &options).unwrap()),
             (ANIMATION_MANIFEST_ENTRY_PATH, serialize_animation_manifest(&animations).unwrap()),
             (FRAME_MANIFEST_ENTRY_PATH, serialize_frame_manifest(&frame_records).unwrap()),
-            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, serialize_body_resolve_manifest(&[]).unwrap()),
-            (BODY_TYPE_MANIFEST_ENTRY_PATH, serialize_body_type_manifest(&[]).unwrap()),
+            (BODY_TABLE_ENTRY_PATH, body_table_of(&animations)),
         ];
         let package = |compression: CompressionFlag, codec: udd_container::Codec| {
             let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -3877,6 +3844,12 @@ mod tests {
         }
     }
 
+    /// The body table of `animations` without `Body.def`, `Bodyconv.def` or `mobtypes.txt`: each body draws its own.
+    fn body_table_of(animations: &[MobileAnimCcAnimationRecord]) -> Vec<u8> {
+        let tables = ClassicBodyTables { body_resolve: &[], body_types: &[] };
+        serialize_body_table(&resolve_classic_bodies(tables, animations).unwrap()).unwrap()
+    }
+
     /// A package of one UOP body's one frame ([`sparse_frame`], stored cropped to its opaque texels), written to `path`.
     fn write_one_frame_package(path: &Path) {
         let options = MobileAnimCcAtlasOptions {
@@ -3902,8 +3875,7 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, serialize_page_manifest(&pages, &options).unwrap(), DataType::Metadata),
             (ANIMATION_MANIFEST_ENTRY_PATH, serialize_animation_manifest(&animations).unwrap(), DataType::Metadata),
             (FRAME_MANIFEST_ENTRY_PATH, serialize_frame_manifest(&frame_records).unwrap(), DataType::Metadata),
-            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, serialize_body_resolve_manifest(&[]).unwrap(), DataType::Metadata),
-            (BODY_TYPE_MANIFEST_ENTRY_PATH, serialize_body_type_manifest(&[]).unwrap(), DataType::Metadata),
+            (BODY_TABLE_ENTRY_PATH, body_table_of(&animations), DataType::Metadata),
             (page_path.as_str(), pages[0].pixels.clone(), DataType::Texture),
         ] {
             builder.add_file(AddFileRequest { data_type: data_type as u8, compression: CompressionFlag::None,
@@ -4007,15 +3979,13 @@ mod tests {
         let page_manifest = serialize_page_record_manifest(&packed_pages.records, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frame_records).unwrap();
-        let body_resolve_manifest = serialize_body_resolve_manifest(&[]).unwrap();
-        let body_type_manifest = serialize_body_type_manifest(&[]).unwrap();
+        let body_table_manifest = body_table_of(&animations);
 
         for (path, data) in [
             (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
             (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice()),
-            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice()),
-            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice()),
+            (BODY_TABLE_ENTRY_PATH, body_table_manifest.as_slice()),
         ] {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8,
@@ -4057,13 +4027,13 @@ mod tests {
 
         assert_eq!(records.len(), 2);
         let no_move_actions = [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
-        assert_eq!(records[0], MobileAnimCcBodyTypeRecord {
+        assert_eq!(records[0], ClassicMobTypeRow {
             body_id: 7,
             group_type: 3,
             flags: 0x8000_0001,
             move_actions: no_move_actions,
         });
-        assert_eq!(records[1], MobileAnimCcBodyTypeRecord {
+        assert_eq!(records[1], ClassicMobTypeRow {
             body_id: 8,
             group_type: 0,
             flags: 0x8000_0002,
@@ -4185,7 +4155,7 @@ mod tests {
         let records = build_body_resolve_records(&dir).unwrap();
 
         assert_eq!(records.len(), 3);
-        assert_eq!(records[0], MobileAnimCcBodyResolveRecord {
+        assert_eq!(records[0], ClassicBodyResolveRow {
             body_id: 7,
             resolved_body_id: 20,
             hue: 9,
@@ -4193,7 +4163,7 @@ mod tests {
             mount_height: 0,
             flags: BODY_RESOLVE_FLAG_BODY_DEF | BODY_RESOLVE_FLAG_BODYCONV_DEF,
         });
-        assert_eq!(records[1], MobileAnimCcBodyResolveRecord {
+        assert_eq!(records[1], ClassicBodyResolveRow {
             body_id: 8,
             resolved_body_id: 21,
             hue: 0,
@@ -4201,7 +4171,7 @@ mod tests {
             mount_height: 0,
             flags: BODY_RESOLVE_FLAG_BODYCONV_DEF,
         });
-        assert_eq!(records[2], MobileAnimCcBodyResolveRecord {
+        assert_eq!(records[2], ClassicBodyResolveRow {
             body_id: 10,
             resolved_body_id: 11,
             hue: 12,

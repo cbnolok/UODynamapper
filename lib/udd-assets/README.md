@@ -58,8 +58,7 @@ Built by `udd-conv` from the Classic `anim*.mul`, `AnimationFrame1..4.uop`, `Bod
 | `metadata/pages.bin` | `MAPG` | atlas pages |
 | `metadata/animations.bin` | `MAAN` | `u32 count`, then animation records (24 bytes) |
 | `metadata/frames.bin` | `MAFR` | `u32 count`, then frame records |
-| `metadata/body_resolve.bin` | `MABR` | `u32 count`, then the `Body.def` / `Bodyconv.def` records, sorted by body |
-| `metadata/body_types.bin` | `MABT` | `u32 count`, then body type records (25 bytes), sorted by body |
+| `metadata/bodies.bin` | `MABD` | `u32` body and move action set counts, then the server body records (28 bytes), sorted by body, and the move action sets (18 bytes) |
 | `metadata/strides.bin` | `MOST` | optional: the measured strides (below), version `MOBILE_STRIDES_VERSION` |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
 
@@ -69,13 +68,18 @@ the `mobtypes.txt` 0x10000 rows with a sequence: `GetActionFps` of the action in
 entry (aliases resolved, flying animations on), which the client times those bodies by (`CMobile_SetUopAction`
 0x005b6580). It is `NO_SEQUENCE_FPS` (0) on every other record, which the player shows at ClassicUO's 80 ms.
 
-Body type record: `u16 body_id, u8 group_type, u32 flags, u16 move_actions[3][3]` (groups war, peace, mounted;
-movements stand, walk, run): one per `mobtypes.txt` row, `flags` with bit 31 set. `move_actions` is filled for the
-rows with flag 0x10000 (UOP frames) from the body's `AnimationSequence.uop` entry, as for the Enhanced body records
-below (`FrameSetLookup_GetMoveAction` 0x00408114 is the Classic client's copy of the lookup); `NO_MOVE_ACTION`
-marks a group the sequence lacks, and every entry of another row or of a body without a sequence (or when the
-client folder has no `AnimationSequence.uop`). `MobileAnimCcPackage::movement_action` plays them: the mounted
-group when the mobile rides and the sequence has it, else peace.
+Server body record: `u16 body_id, u16 frames_body_id, u8 file_index, u8 flags, u8 group_type, i8 mount_height,
+u32 mob_type_flags, u16 hue, u16 move_action_set, u16 movement_actions[2][3]` (`MobileAnimCcBodyRecord`): one per
+body the server can send that reaches frames, the Classic client's routing resolved by the packer
+(`udd_conv::animation::mobile_anim_cc::body_table`): where its frames are (`BODY_FLAG_UOP_FRAMES` for the UOP
+route), the `mobtypes.txt` layout and flags it plays by, its own `Body.def` hue and `Bodyconv.def` mount height,
+and its peace-mode stand, walk and run actions on foot and mounted, which `MobileAnimCcPackage::movement_action`
+returns. `move_action_set` indexes a move action set, `u16 move_actions[3][3]` (groups war, peace, mounted;
+movements stand, walk, run), filled for the `mobtypes.txt` rows with flag 0x10000 (UOP frames) from the body's
+`AnimationSequence.uop` entry, as for the Enhanced body records below (`FrameSetLookup_GetMoveAction` 0x00408114 is
+the Classic client's copy of the lookup); `NO_MOVE_ACTION` marks a group the sequence lacks, and
+`NO_MOVE_ACTION_SET` a body without a sequence (or a client folder without `AnimationSequence.uop`). A body without
+a record draws nothing. The reader refuses a package without `metadata/bodies.bin` and asks for a repack.
 
 ## `mobile_anim_ec.uddp` (metadata version 1)
 

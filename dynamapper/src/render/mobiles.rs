@@ -267,7 +267,7 @@ fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&mut MobileStri
     let mount_action = mount.and_then(|mount| package.movement_action(mount, movement, false));
     // The mount's height offset of `Bodyconv.def` (ClassicUO `MountedHeightOffset`; its `Mounts` table by mount
     // item agrees where both have one).
-    let rider_offset_y = mount.and_then(|mount| package.body_resolve_record(mount)).map_or(0, |record| record.mount_height);
+    let rider_offset_y = mount.and_then(|mount| package.body(mount)).map_or(0, |record| record.mount_height);
     MobileClipChoice {
         source: Some(AnimSource::Classic),
         actions: body_action.map(|body_action| MobileActions { body_action, mount_action }),

@@ -20,6 +20,7 @@ Common commands:
 - `make-kr-delta`: write `kr_delta.uddp`, the Kingdom Reborn client files the packers read as a delta over the Enhanced Client (see below).
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`, with the Classic paperdoll's tables from the Classic folder (`mobtypes.txt`, `Equipconv.def`, `gump.def`).
 - `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback and its day, night and night-sight maps (`TerrainTexture.uop`); see below.
+- `pack-mobile-anims`: pack the Classic Client's mobile animations (`anim*.mul`, `AnimationFrame*.uop`) into `mobile_anim_cc.uddp`, with the client's server body routing resolved (see below).
 - `pack-ec-paperdoll`: pack the Enhanced Client's 3D paperdoll frames (`Paperdoll.uop`), lossless, into `paperdoll_ec.uddp`, with what each dress-layer item takes off; Dynamapper hues them with `hues.uddp`.
 - `pack-radar`: generate a radar map such as `facet0X.dds` from Classic Client map and statics data.
 - `pack-map`: pack Classic Client map data into a block-based `.uddp` package.
@@ -236,6 +237,14 @@ Stores dense land/item metadata tables used by the runtime to merge Classic Clie
 The Classic gump paperdoll reads it as the Classic client does (`DrawPaperdollGumpLayers`, [cc_tileart study](../client_research/ghidra-cc-tileart/results/cc_tileart.md#31-paperdoll-and-equipment-gumps)): the item's anim from tiledata, or from tileart's appearance for the UOP-frame bodies of `mobtypes.txt` and for an item whose "animation by body" filter matches the body; then the gump from `Equipconv.def`, + 10000 for a woman when that gump exists, and `gump.def` for a gump that does not. The tileart filters are in `metadata/item_definitions.bin`, the Classic folder's three tables in `metadata/classic_paperdoll.bin` ([UDDP_FORMATS.md](UDDP_FORMATS.md) section 2). The Classic and Enhanced `tileart.uop` records are the same (37,756 entries, 2026-11-27), so the Enhanced folder's tileart serves the Classic rule.
 
 Each EC texture ref carries the shader input it feeds (`stable_role`), taken from the block's shader name and the item position, as the client binds them; file names are not read.
+
+### `mobile_anim_cc.uddp`
+
+Stores the Classic Client's mobile animation frames and, resolved at pack time, what the client draws for each server body: the packer replays the client's routing (`Body.def` once, `Bodyconv.def`, the `mobtypes.txt` UOP flag, the action layout and the stand, walk and run actions) on the Classic folder's tables and writes one record per body that reaches frames (`metadata/bodies.bin`), so the reader only looks a body up. The routing code and its client references live in `udd_conv::animation::mobile_anim_cc::body_table`; a changed table needs a repack, and a package from before the body table is refused with the message to repack. Layout in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 3.
+
+```text
+udd-cli pack pack-mobile-anims --ccdir /path/to/cc --strides-from mobile_anim_cc.uddp --output mobile_anim_cc.uddp
+```
 
 ### `paperdoll_ec.uddp`
 

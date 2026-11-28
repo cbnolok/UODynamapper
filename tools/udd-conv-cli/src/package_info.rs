@@ -170,7 +170,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
 
     if let Ok(package) = MobileAnimCcPackage::from_uddp_package(package.clone()) {
         info!("Recognized package: mobile_anim_cc");
-        info!("Known logical files: metadata=5, textures={}", package.pages().len());
+        info!("Known logical files: metadata=4, textures={}", package.pages().len());
         info!(
             "Atlas: max={}x{}, gutter={}, pages={}, buckets={}",
             package.atlas_width(),
@@ -182,11 +182,11 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             }))
         );
         info!(
-            "Animations: {}, frames={}, body_maps={}, body_types={}",
+            "Animations: {}, frames={}, server_bodies={}, move_action_sets={}",
             package.animations().len(),
             package.frames().len(),
-            package.body_resolve().len(),
-            package.body_types().len()
+            package.bodies().len(),
+            package.move_action_sets().len()
         );
         return Ok(true);
     }

@@ -96,7 +96,7 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                         |frame| (frame.page_index, frame.width, frame.height),
                     );
                     let body_type = package
-                        .body_type_record(animation.body_id)
+                        .body(animation.body_id)
                         .map(|record| record.group_type);
                     let label = cc_animation_label(animation, visible_count, frames.len());
                     let search_label = format!(
@@ -211,8 +211,8 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                 ("Pages", package.pages().len().to_string()),
                 ("Animations", package.animations().len().to_string()),
                 ("Frames", package.frames().len().to_string()),
-                ("Body maps", package.body_resolve().len().to_string()),
-                ("Body types", package.body_types().len().to_string()),
+                ("Server bodies", package.bodies().len().to_string()),
+                ("Move action sets", package.move_action_sets().len().to_string()),
             ],
             package.pages().iter().map(|page| {
                 (page.atlas_width, page.atlas_height, page.frame_count)
@@ -226,7 +226,7 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                 ui.label(selected_animation.body_id.to_string());
                 ui.end_row();
                 metadata_label(ui, "Body Type");
-                ui.label(body_type_label(package.body_type_record(selected_animation.body_id).map(|record| record.group_type)));
+                ui.label(body_type_label(package.body(selected_animation.body_id).map(|record| record.group_type)));
                 ui.end_row();
                 metadata_label(ui, "Action");
                 ui.label(selected_animation.action_id.to_string());
@@ -856,7 +856,7 @@ fn filtered_cc_mobile_anim_indices(
             |frame| (frame.page_index, frame.width, frame.height),
         );
         let body_type = package
-            .body_type_record(animation.body_id)
+            .body(animation.body_id)
             .map(|record| record.group_type);
         let label = cc_animation_label(animation, visible_count, frames.len());
         let search_label = format!(

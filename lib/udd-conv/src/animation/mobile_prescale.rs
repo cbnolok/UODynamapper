@@ -210,11 +210,11 @@ impl Package {
     /// The stored frames the client draws server `body` with.
     fn frames_of(&self, body: u16) -> Option<FramesKey> {
         match self {
-            Self::Classic(package) => {
-                let frames = package.frames_body(body);
-                Some(FramesKey::Classic { uop: frames.uop, file: if frames.uop { 0 } else { frames.file_index },
-                    body: frames.body_id })
-            }
+            Self::Classic(package) => package.body(body).map(|body| FramesKey::Classic {
+                uop: body.uses_uop_frames(),
+                file: body.file_index,
+                body: body.frames_body_id,
+            }),
             Self::Enhanced(package) => package.body(u32::from(body)).map(|body| FramesKey::Enhanced(body.frames_body_id)),
         }
     }

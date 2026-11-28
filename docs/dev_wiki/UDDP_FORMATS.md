@@ -44,7 +44,7 @@ Every format was reset to version 1 on 2026-11-12, and the packages were repacke
 | `tex_land_cc.uddp` | `metadata/pages.bin` (`CTXP`), `metadata/slots.bin` (`CTXS`) | `TEX_LAND_CC_METADATA_VERSION` = 1 |
 | `tex_land_ec.uddp` and its Kingdom Reborn section | `metadata/pages.bin` (`ELPG`), `metadata/slots.bin` (`ELSL`; the section's `ELSO`); `metadata/terrain_provenance.bin` (`ELTP`); `metadata/terrain_overrides.json` (`schema_version`); the section's `metadata/ec_equivalents.bin` (`ELEQ`, at `TEX_LAND_EC_METADATA_VERSION`) and optional `textures/grunge.rgba8888` (`ELGR`) | `TEX_LAND_EC_METADATA_VERSION`, `TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION`, `TERRAIN_OVERRIDES_SCHEMA_VERSION`, `TEX_LAND_EC_GRUNGE_VERSION` = 1 |
 | `gumps_cc.uddp`, `gumps_ec.uddp` | atlas page and slot manifests (`GAPG`, `GASL`); shared Classic gump table (`GSHC`) | `GUMP_ATLAS_METADATA_VERSION`, `SHARED_CLASSIC_GUMP_TABLE_VERSION` = 1 |
-| `mobile_anim_cc.uddp` | page, animation, frame, body resolve and body type manifests (`MAPG`, `MAAN`, `MAFR`, `MABR`, `MABT`) | `MOBILE_ANIM_CC_METADATA_VERSION` = 1 |
+| `mobile_anim_cc.uddp` | page, animation, frame and server body manifests (`MAPG`, `MAAN`, `MAFR`, `MABD`) | `MOBILE_ANIM_CC_METADATA_VERSION` = 1 |
 | `mobile_anim_ec.uddp` | page, animation, frame, item, source hint and body manifests (`MEPG`, `MEAN`, `MEFR`, `MEIT`, `MESH`, `MEBD`) | `MOBILE_ANIM_EC_METADATA_VERSION` = 1 |
 | `mobile_anim_cc.uddp`, `mobile_anim_ec.uddp` | optional `metadata/strides.bin` (`MOST`), `metadata/stride_sources.bin` (`MOSS`) | `MOBILE_STRIDES_VERSION`, `MOBILE_STRIDE_SOURCES_VERSION` = 1 |
 | `mobile_anim_cc.uddp`, `mobile_anim_ec.uddp` | optional `metadata/upscaled_frames.bin` (`MOUP`) and its `upscaled_pages/` | `MOBILE_UPSCALED_FRAMES_VERSION` = 1 |
@@ -427,11 +427,24 @@ Between decoding and the atlas blit (before any upscale), each frame goes throug
 - Body records (44 bytes) end with `u16 move_actions[3][3]`: the `GetMoveAction` result for groups war, peace and mounted and movements stand, walk and run. `NO_MOVE_ACTION` (0xFFFF) marks a group the sequence lacks.
 - Animation records (43 bytes) end with `i8 rider_offset_x, i8 rider_offset_y, i16 extra_offset_x, i16 extra_offset_y`: the client's per-direction attachment and layer offsets, with the sequence defaults applied.
 
-`mobile_anim_cc.uddp` body type records (25 bytes, `MABT`) end with the same `u16 move_actions[3][3]`, filled for the `mobtypes.txt` 0x10000 (UOP) rows from the Classic client's `AnimationSequence.uop`, `NO_MOVE_ACTION` elsewhere. Its animation records (24 bytes, `MAAN`) end with `f32 fps`: on the UOP records of those rows, the sequence fps of the action, which the Classic client times them by (`CMobile_SetUopAction` 0x005b6580); 0 elsewhere, for the player's 80 ms. Its reader resolves server bodies itself:
+`mobile_anim_cc.uddp` stores the Classic client's routing of a server body already resolved: the packer (`udd_conv::animation::mobile_anim_cc::body_table`) replays it on `Body.def`, `Bodyconv.def`, `mobtypes.txt` and `AnimationSequence.uop`, and `metadata/bodies.bin` (`MABD`) holds one record per body the server can send that reaches frames. Its animation records (24 bytes, `MAAN`) end with `f32 fps`: on the UOP records of the `mobtypes.txt` 0x10000 (UOP) rows with a sequence, the sequence fps of the action, which the Classic client times them by (`CMobile_SetUopAction` 0x005b6580); 0 elsewhere, for the player's 80 ms. The resolution:
 
-- `frames_body` applies `Body.def` once, then `Bodyconv.def` (a body and its `anim*.mul` file), or the UOP route for `mobtypes.txt` 0x10000 bodies.
-- `server_body_animation` looks the frames up in that file.
-- `movement_action` gives the Classic client's peace-mode stand, walk and run actions: a UOP body's sequence move actions (mounted group when riding and present, else peace), otherwise ClassicUO's rules on the `mobtypes.txt` type and flags, by choice (where the client's `GetMobileMulFrame` differs: [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#movement-actions)).
+- The frames body applies `Body.def` once, then `Bodyconv.def` (a body and its `anim*.mul` file), or the UOP route for `mobtypes.txt` 0x10000 bodies; `server_body_animation` looks the frames up in that file.
+- The movement actions are the Classic client's peace-mode stand, walk and run actions, on foot and mounted: a UOP body's sequence move actions (mounted group when riding and present, else peace), otherwise ClassicUO's rules on the `mobtypes.txt` type and flags, by choice (where the client's `GetMobileMulFrame` differs: [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#movement-actions)). `movement_action` reads them from the record.
+- A body without a record reaches no frames: the reader draws nothing for it and gives it no movement action, hue or mount height.
+
+After the header (magic `MABD`, `u32` version, `u32` body count, `u32` move action set count) come the body records (28 bytes, ascending by unique body id), then the move action sets (18 bytes each, `u16 move_actions[3][3]`, groups war, peace, mounted by movements stand, walk, run, `NO_MOVE_ACTION` where the sequence lacks one):
+
+`u16 body_id, u16 frames_body_id, u8 file_index, u8 flags, u8 group_type, i8 mount_height, u32 mob_type_flags, u16 hue, u16 move_action_set, u16 movement_actions[2][3]`
+
+- `frames_body_id` and `file_index` (`anim.mul` 0, `anim2.mul` 1, ...; 0 on the UOP route) name the animation records.
+- `flags`: `BODY_FLAG_UOP_FRAMES` (1) for the UOP route, `BODY_FLAG_OWN_UOP_FRAMES` (2) when `mobtypes.txt` flags the body id itself.
+- `group_type` (`MOB_TYPE_GROUP_*`) and `mob_type_flags` (bit 31 set for a row) are the action layout: the `mobtypes.txt` row of the `Body.def` graphic or the body, else the layout by id and file with flags 0.
+- `hue` and `mount_height` come from the body's own `Body.def` and `Bodyconv.def` rows (0 without one).
+- `move_action_set` indexes the sets: the sequence move actions of the layout body, for the `mobtypes.txt` 0x10000 rows with a sequence; equal sets are stored once, and `NO_MOVE_ACTION_SET` (0xFFFF) marks a body without one.
+- `movement_actions[mounted][movement]` are the resolved actions above.
+
+The loader refuses a package without the entry, or with another magic or version, a length that does not match the counts, unsorted bodies or a set index out of range, and asks to repack `mobile_anim_cc.uddp`. The shipped Classic client gives 1,031 bodies and 17 move action sets, 29,190 bytes raw, where the two routing tables it replaces (`MABR`, `MABT`) took 39,084 (8,672 and 30,412) (2026-11-28).
 - `classic_stored_direction` maps the 8 directions to the 5 stored ones plus mirroring (ClassicUO `GetAnimDirection`; the client's tables at 0x007087dc and 0x007087fc agree).
 
 Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges. This is an on-disk package invariant, not a runtime repair step.
