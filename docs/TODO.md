@@ -304,8 +304,8 @@ These need a person at the GUI or in a running client; the code side is done.
 - Enhanced gump paperdoll, numbered after the Enhanced client's rule (2026-11-28: props2 Paperdoll, else props2
   Appearance, else the item's own id; [ec paperdoll gump
   study](client_research/ghidra-ec-paperdoll-gump/results/uosa_paperdoll_gump.md#6-against-dynamappers-enhanced-gump-paperdoll)).
-  The gumps are the same on the shipped data. Open decisions, where the client draws worse paperdolls than the data
-  allows:
+  The gumps are the same on the shipped data. Kept different from the client by choice (the user, 2026-11-28), where
+  the client draws worse paperdolls than the data allows; the study's section 6 records each difference:
   - It leaves out 45 items (EC fp 57) whose appearance record is missing.
   - It hues every worn item fully: no appearance record carries the flags2 partial-hue bit.
   - It crops the gargish two-handers to the 260x237 body gump.

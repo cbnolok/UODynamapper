@@ -192,8 +192,8 @@ anim + 60,000 falling back to + 50,000, partial hue from the item's flags.
 
 Since 2026-11-28 dynamapper numbers each Enhanced worn item by the client's rule
 (`uocf::enhanced::paperdoll_gump::legacy_gump_number`): props2 Paperdoll, else props2 Appearance, else the item's
-own id. The profile offsets still give the gumps. The other rows are open, because following the client there
-draws worse paperdolls than the data allows:
+own id. The profile offsets still give the gumps. Dynamapper keeps its own behaviour on every other row, by
+choice (the user, 2026-11-28), because following the client there draws worse paperdolls than the data allows:
 
 - **missing appearance records**: the client hides 45 items (57 in fp) whose gump exists, the backpacks aside;
 - **partial hue**: the client hues every worn item fully because the records it reads carry no flag;
