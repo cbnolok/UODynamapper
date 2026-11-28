@@ -285,7 +285,8 @@ The next levers, measured:
 
 `uot-gpu-compute` runs its own copies of block_compression 0.11.0's kernels (`shaders/block_encode/bc7.wgsl` and
 `bc1.wgsl`, MIT, CREDITS.md), one pipeline per `MobileBlockFormat` (`Bc7(quality)`, `Bc7Opaque(quality)`, `Bc1`),
-each compiled the first time it is used. dynamapper compiles `Bc7(UltraFast)` only. A BC7 profile's modes (which of
+each compiled the first time it is used. dynamapper compiles `Bc7(UltraFast)` or `Bc7(VeryFast)`, as its setting
+chooses (below). A BC7 profile's modes (which of
 the groups 0/2, 1/3/7, 4/5 and 6 it tries, and whether it skips mode 2) are WGSL constants appended to the source
 (`Bc7Profile::wgsl_constants`), so the driver drops every mode the profile never runs. Its numeric settings
 (refinement iterations, fast-skip thresholds, channels) stay in the crate's storage buffer: as constants too (the 4.5 s
@@ -317,7 +318,8 @@ modes, opaque Basic alpha Basic's and opaque Slow alpha Slow's):
 | `Bc1` | 0.25 s (0.23–0.25) | |
 
 Warm, every format takes 12 to 15 ms (BC1 5 ms). A converter that wants Slow pays about what the crate's one pipeline
-cost; dynamapper pays UltraFast's 5.4 to 8 s, on its own thread, and never the others.
+cost; dynamapper pays the chosen profile's (UltraFast's 5.4 to 8 s by default), on its own thread, and never the
+others.
 
 In the app (dev build, Britain, Desktop 4, the BC7 animation packages, one run each, other agents' previews queued;
 2026-11-22), the warm-up's `The BC7 block encoder is compiled, in X s.`: cold 26.1 s with dev's crate compressor, 7.1 s
@@ -337,6 +339,19 @@ other agents' builds running), the warm-up's line read 11.9 and 14.4 s before, 1
 cache is cold there, so the encoder compiles beside every other pipeline. The renderer's quick tier is the same with
 both (71 captures identical, 22 within tolerance; two Classic water captures caught the after binary's first, cold,
 compile overlay and were identical when taken again).
+
+The profile is a setting since 2026-11-28 (`world_rendering.mobile_bc7_quality`, Preferences, Graphics, "Frame
+Encoding"; `ultra_fast` by default, or `very_fast`). The warm-up compiles the chosen profile alone, and its line names
+it: `The BC7 block encoder (UltraFast) is compiled, in X s.` A profile chosen later compiles on a thread of its own
+(`bc7 encoder compile`, render/mobiles/bc7_encoding.rs) under the overlay's `Mobile frames: BC7 encoder (VeryFast)`,
+while the encoder in use goes on encoding; once compiled it takes that encoder's place between two frames' encodes,
+and the log reads `The mobile frames the GPU makes encode at BC7 VeryFast from now on; ...`. Choosing the profile in
+use again while the other compiles drops the compile (its thread runs out detached). In the app (dev build, Desktop 4,
+1900 x 1000, a new empty `MESA_SHADER_CACHE_DIR` for the launch, Enhanced style with the EC packages, SPAN always and
+RIFE x2, eight large Enhanced bodies drawing, other agents' captures running; 2026-11-28, one run): the warm-up's
+UltraFast 8.0 s; VeryFast chosen through the control socket two minutes later, 27.7 s (14.5 s alone in the test
+binary). The frames went on meanwhile: 16.15 ms mean against 16.14 ms just before, the worst 500 ms window 25.5 ms,
+no 100 ms poll without a new frame.
 
 ## Atlas page formats and what compiles
 

@@ -2,9 +2,10 @@
 //! running anything. An app calls [`warm_up`] once, off its frame path (the first compile on a cold driver cache takes
 //! seconds), and builds its models from what it returns ([`crate::rife::RifeModel::with_pipelines`],
 //! [`crate::upscale::UpscaleModel::with_pipelines`]), so nothing compiles again when they are first needed. The block
-//! encoder is not part of it: its BC7 UltraFast pipeline takes about 6.6 s on a cold cache, so an app compiles it
-//! ([`crate::block_encode::MobileBlockEncoder::compile`], with a [`CompileReport`] of its own) only when it will
-//! encode blocks. The driver's own shader cache (Mesa's on disk) makes a later warm-up, in another run, much
+//! encoder is not part of it: its BC7 UltraFast pipeline takes about 6.6 s on a cold cache (VeryFast about 14.5 s),
+//! so an app compiles it ([`crate::block_encode::MobileBlockEncoder::compile`], or
+//! [`crate::block_encode::MobileBlockEncoder::compile_format`] for another profile, with a [`CompileReport`] of its
+//! own) only when it will encode blocks. The driver's own shader cache (Mesa's on disk) makes a later warm-up, in another run, much
 //! shorter; this crate keeps no pipeline cache of its own.
 //!
 //! The callback hears each compile twice, as it starts and as it ends, with its name, its place among the

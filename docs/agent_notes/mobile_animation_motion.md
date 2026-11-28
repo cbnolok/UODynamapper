@@ -496,7 +496,8 @@ network and its frame steps are uot-gpu-compute's `upscale`.
   snapped at 0.5 in the finish step, so their edges stay hard.
 - **Atlas**: 2× frames are atlas entries of their own (`AtlasEntry::Upscaled`) in a pool of 16 extra pages per atlas
   (`AtlasPool::Upscaled`, layers 8–23), in the atlas's format: BC7 atlases get them encoded on the GPU by the warmed
-  BC7 UltraFast encoder, shared with the RIFE in-betweens (`bc7_encoding.rs`). Only upscales empty upscaled pages, so
+  BC7 encoder (UltraFast, or VeryFast as `mobile_bc7_quality` chooses), shared with the RIFE in-betweens
+  (`bc7_encoding.rs`). Only upscales empty upscaled pages, so
   1× frames are never evicted for them, and an evicted upscale just plays at 1× again. The pages exist only while the
   setting is on: switching it remakes the atlases (everything reloads, as after a package switch).
 - **Drawing**: each 2× frame is its canvas cut to the frame plus the 2-pixel border the network sees, so the halo past
@@ -1350,7 +1351,7 @@ atlas of their clip, in its format. The format is one value of the page-manifest
   gutter is outside the copied blocks.
 - **In-betweens** (`rife_in_betweens/render.rs`): an in-between of a BC7 clip goes from the staging rows to rows of its
   own in a 1024² `Rgba8Unorm` scratch texture, cleared around it. After the frame's steps the warm-up's
-  `MobileBlockEncoder` (BC7 UltraFast) encodes them all in one pass, one `record` (each record has a uniform buffer of
+  `MobileBlockEncoder` (BC7 UltraFast by default) encodes them all in one pass, one `record` (each record has a uniform buffer of
   its own; block_compression's compressor wrote them through the queue, one `compress` per submission), each at its
   scratch row (`add_frame_at`; our BC7 and BC1 kernels both take a row). Their blocks are copied into the atlas a block row at a
   time (a multi-row copy needs 256-byte rows). A pair's first frame is copied block by block through a 1 MiB bounce
@@ -1465,7 +1466,7 @@ Basic 2.09 + 21.7, Slow 6.9 + 75.6. Basic sits between Fast and Slow in time and
   32 creatures' clips (SPAN by the cost model ×1.15 plus the encode) drains 9–10 % slower with VeryFast for the large
   bodies (SPAN is 98 % of it), 27–34 % slower for the human; at 60 fps 32 Enhanced daemons' walk takes 45 s with
   UltraFast, 49 s with VeryFast. VeryFast/Fast also compile in 14.5 s cold against UltraFast's 5.7 s
-  (shader_compile_progress.md), and the RIFE in-betweens share `MOBILE_BLOCK_FORMAT`.
+  (shader_compile_progress.md), and the RIFE in-betweens share the encoder.
 - **In game** (outline on; human, daemon, dragon and horse at a 4x view and the four at a 2x view, Classic, Enhanced
   and KR-like, each profile through a temporary SPAN-only switch, diffs against Slow since the game has no RGBA8
   reference): pixels off Slow by more than 8 are 0.5–18k with UltraFast, 0.1–3.9k with VeryFast, max 107 against 76.
@@ -1473,7 +1474,42 @@ Basic 2.09 + 21.7, Slow 6.9 + 75.6. Basic sits between Fast and Slow in time and
   scattered texels inside the body. Side by side at 4x, nearest-zoomed further, the three read the same.
 - **Kept UltraFast** (pending the user's look at the sheets): see the 2026-11-27 report for the sheet paths.
   `BC7_ENCODE_MS*` (0.25 ms + 4 ms per megapixel) overestimates UltraFast on these frames (0.19 + 1.2); the timed cost
-  scale absorbs it.
+  scale absorbs it. The user then asked for VeryFast as a choice: see the next section.
+
+### Choosing the profile (2026-11-28)
+
+`world_rendering.mobile_bc7_quality` (Preferences, Graphics, "Frame Encoding"; `ultra_fast` by default, or
+`very_fast`; the control socket's `set`) chooses the profile of every frame the GPU encodes into a BC7 frame atlas,
+the SPAN upscales and the RIFE in-betweens alike (`render/mobiles/bc7_encoding.rs`). The block layout is the same
+(`MOBILE_BLOCK_FORMAT` stays the constant of the sizes and copies); only the encoder's pipeline changes.
+
+- **Compile**: the warm-up compiles only the chosen profile. A profile chosen later compiles on a thread of its own
+  under the shader-compile overlay while the encoder in use goes on; once ready it takes that encoder's place before
+  the next frames are added, so nothing waits on it (shader_compile_progress.md has the times: 27.7 s cold in a busy
+  app).
+- **Frames already in the atlas keep their blocks** and leave as they are evicted; nothing is flushed. A flush would
+  drop every upscale and in-between back to the stored 1x frames and requeue a crowd's whole backlog, a visible step
+  down for a difference only a 4x view shows. Choosing VeryFast and back costs nothing but the compile.
+- **Scheduler**: `MobileBc7Quality::encode_ms` gives each profile its estimate for the 2 ms compute budget, UltraFast
+  0.25 ms + 4 per megapixel, VeryFast 1.05 ms + 9.5 per megapixel. Measured as UltraFast's were
+  (`evaluate_block_formats` for the in-betweens and `evaluate_span_frame_profiles` for the SPAN frames, Radeon 880M,
+  each frame alone, 2026-11-28), VeryFast takes 1.02 to 1.06 ms per frame up to 256x256 (UltraFast 0.21: the kernel
+  is faster than in the table above) and 2.05 ms on the 113k and 147k pixel SPAN frames (UltraFast 0.35); the Classic
+  daemon's frames 2.07 to 2.82. The least-squares fit is 0.87 + 9.1; the constants bound it from above, as
+  UltraFast's do.
+- **Frame time** (dev build, Desktop 4, 1900 x 1000 at zoom 0.75, Enhanced style with the EC packages, SPAN always and
+  RIFE x2, frame limit and vsync off, the player and eight large Enhanced bodies spawned (9, 12, 46, 826, two facings
+  each), 90 s from the spawn, launches alternated, other agents' captures queued): the GPU is busy the whole frame in
+  both, and the frames take as long. First pair UltraFast 16.11 ms mean (GPU 16.06 ms a frame, worst 500 ms window
+  18.3 ms), VeryFast 15.99 ms (15.97, worst 16.6); second pair, on a machine loaded enough that UltraFast's idle
+  frame read 24.7 ms instead of 14.6, UltraFast 18.97 ms (worst window 56 ms), VeryFast 17.90 ms (one 0.74 s window,
+  nothing in the log). The 2 ms compute budget caps the encode's share of a frame, so the cost is the backlog, not the
+  frame time: neither profile drained the eight bodies' clips in 90 s (6 to 9 layers waiting throughout), and by the
+  cost model above VeryFast drains a crowd of large bodies 9-10 % slower, a crowd of humans 27-34 % slower. A
+  runtime switch to VeryFast with the same bodies (default zoom) kept the frames at 16.15 ms during its compile
+  (16.14 before).
+- **Worth it**: on large Enhanced bodies at a 2x view or closer; elsewhere UltraFast is as good to the eye and its
+  crowds' frames come sooner.
 
 ## Ground, collision and draw order of a walking body (2026-11-22)
 

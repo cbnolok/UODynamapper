@@ -4,8 +4,8 @@ use crate::{
     settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::{frame_limiter_for_options, FrameLimiterSettings},
     app::present_mode_for_vsync,
-    render::{mobiles::{in_between::MobileInBetweenFrames, sharpening::MobileOutlineWidth, upscales::MobileUpscale},
-        view::camera::UiCameraResource},
+    render::{mobiles::{bc7_encoding::MobileBc7Quality, in_between::MobileInBetweenFrames,
+        sharpening::MobileOutlineWidth, upscales::MobileUpscale}, view::camera::UiCameraResource},
     world::mobile_motion::MobileStop,
     world::player_movement::MOVEMENT_SPEED_MULTIPLIER_RANGE,
     render::mobiles::pace::MobileWalkPace,
@@ -85,6 +85,7 @@ pub struct PreferencesDialogState {
     pub mobile_in_between_frames: MobileInBetweenFrames,
     pub mobile_upscale: MobileUpscale,
     pub mobile_outline_width: MobileOutlineWidth,
+    pub mobile_bc7_quality: MobileBc7Quality,
     pub mobile_stop: MobileStop,
     pub mobile_walk_pace: MobileWalkPace,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
@@ -141,6 +142,7 @@ impl Default for PreferencesDialogState {
             mobile_in_between_frames: MobileInBetweenFrames::Crossfade,
             mobile_upscale: MobileUpscale::Off,
             mobile_outline_width: MobileOutlineWidth::OneTexel,
+            mobile_bc7_quality: MobileBc7Quality::UltraFast,
             mobile_stop: MobileStop::HalfStepLater,
             mobile_walk_pace: MobileWalkPace::MatchTheGround,
             apply_timer: {
@@ -223,6 +225,7 @@ fn sys_sync_settings_to_state(
         state.mobile_in_between_frames = settings.world_rendering.mobile_in_between_frames;
         state.mobile_upscale = settings.world_rendering.mobile_upscale;
         state.mobile_outline_width = settings.world_rendering.mobile_outline_width;
+        state.mobile_bc7_quality = settings.world_rendering.mobile_bc7_quality;
         state.mobile_stop = settings.world_rendering.mobile_stop;
         state.mobile_walk_pace = settings.world_rendering.mobile_walk_pace;
 
@@ -353,6 +356,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.mobile_outline_width != state.mobile_outline_width {
             settings.world_rendering.mobile_outline_width = state.mobile_outline_width;
+        }
+        if settings.as_ref().world_rendering.mobile_bc7_quality != state.mobile_bc7_quality {
+            settings.world_rendering.mobile_bc7_quality = state.mobile_bc7_quality;
         }
         if settings.as_ref().world_rendering.mobile_stop != state.mobile_stop {
             settings.world_rendering.mobile_stop = state.mobile_stop;
@@ -737,6 +743,34 @@ pub fn sys_render_preferences_dialog(
                                              Sharpening.kdl) is on its upscaled frames. One Texel: one texel of the 2x \
                                              frame, half as wide on screen as on the frames as stored. Follows Upscale: \
                                              two texels of the 2x frame, as wide on screen as at 1x.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Frame Encoding:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_mobile_bc7_quality")
+                                        .selected_text(state.mobile_bc7_quality.label())
+                                        .show_ui(ui, |ui| {
+                                            for quality in MobileBc7Quality::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.mobile_bc7_quality, quality,
+                                                        quality.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "The BC7 profile the GPU encodes the RIFE in-betweens and SPAN upscales \
+                                             of BC7 animation packages with. UltraFast: the default. VeryFast: a \
+                                             longer first compile (about 15 s instead of 6 on a cold driver cache, on \
+                                             a thread of its own while UltraFast goes on encoding), 5 to 6 times the \
+                                             GPU time per frame encoded, so a crowd's frames take longer to make, for \
+                                             a small gain in quality, mostly on large Enhanced bodies. Frames already \
+                                             made keep their encoding until they leave the atlas.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

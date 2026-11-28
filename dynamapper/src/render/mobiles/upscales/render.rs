@@ -27,7 +27,7 @@ use uot_gpu_compute::block_encode::record_copy_to_layer;
 use uot_gpu_compute::upscale::{UpscaleDispatch, UpscaleModel, UpscalePipelines, UpscaleWorkspace,
     UPSCALE_FRAME_SLOTS, UPSCALE_OUTPUT_TEXEL_BYTES};
 use uot_gpu_compute::{ConvUnits, SourceRect};
-use super::super::bc7_encoding::{bc7_encode_ms, scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder,
+use super::super::bc7_encoding::{scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder, MobileBc7Quality,
     BC7_SCRATCH_SIDE, MOBILE_BLOCK_FORMAT};
 use super::super::clips::AtlasEntry;
 use super::super::compute_budget::{steps_within_budget, CostScale, GpuClock, MobileComputeBudget,
@@ -145,9 +145,10 @@ fn frame_steps(workspace: &UpscaleWorkspace) -> Vec<FrameStep> {
     steps
 }
 
-/// A step of a frame's pass, estimated GPU time, in ms; with its BC7 encode after the last pass, for a frame of the BC7
-/// atlas.
-fn step_ms(workspace: &UpscaleWorkspace, step: FrameStep, frame: &UpscaleFrame, last_pass: bool) -> f64 {
+/// A step of a frame's pass, estimated GPU time, in ms; with its BC7 encode at `bc7` after the last pass, for a frame
+/// of the BC7 atlas.
+fn step_ms(workspace: &UpscaleWorkspace, step: FrameStep, frame: &UpscaleFrame, last_pass: bool,
+    bc7: MobileBc7Quality) -> f64 {
     let (width, height) = workspace.size();
     let canvas = width * height;
     match step {
@@ -157,7 +158,7 @@ fn step_ms(workspace: &UpscaleWorkspace, step: FrameStep, frame: &UpscaleFrame, 
             let encode = match frame.target.format {
                 AtlasFormat::Bc7 if last_pass => {
                     let (width, height) = frame.target.padded_size();
-                    bc7_encode_ms(width * height)
+                    bc7.encode_ms(width * height)
                 }
                 AtlasFormat::Bc7 | AtlasFormat::Rgba8 => 0.0,
             };
@@ -284,7 +285,7 @@ pub fn sys_render_mobile_upscales(
     }
     let cost_scale = state.cost_scale.get();
     let bc7_listed = state.active && state.jobs.iter().any(|job| job_format(job) == AtlasFormat::Bc7);
-    bc7.poll(bc7_listed, &mut warm_up, device, &render_queue);
+    bc7.poll(bc7_listed, &mut warm_up, device);
 
     let atlases = state.images.iter()
         .filter_map(|(format, image)| Some((*format, gpu_images.get(image)?)))
@@ -314,6 +315,7 @@ pub fn sys_render_mobile_upscales(
     let mut frames_started = HashMap::<WorkspaceKey, usize>::new();
     let RenderUpscales { jobs, workspaces, progress, holders, completed, .. } = &mut *state;
     let bc7_ready = bc7.ready().is_some();
+    let bc7_quality = bc7.quality();
     for job in jobs.iter() {
         if completed.contains(&job.id) || spent >= MOBILE_COMPUTE_FRAME_BUDGET_MS || bc7_full {
             continue;
@@ -361,7 +363,8 @@ pub fn sys_render_mobile_upscales(
                 break;
             }
             let costs = plan[first..].iter()
-                .map(|&step| step_ms(&workspace.span, step, frame, last_pass) * cost_scale).collect::<Vec<_>>();
+                .map(|&step| step_ms(&workspace.span, step, frame, last_pass, bc7_quality) * cost_scale)
+                .collect::<Vec<_>>();
             let (mut count, _) = steps_within_budget(costs.iter().copied(), spent);
             for (index, &step) in plan[first..first + count].iter().enumerate() {
                 match step {
@@ -509,10 +512,10 @@ pub fn sys_render_mobile_upscales(
     if !encodes.is_empty() {
         // The frames of the BC7 atlas, encoded together: the encoder's one compress of the submission.
         let atlas = atlas_of(AtlasFormat::Bc7).expect("a step ran on it");
-        let Bc7Encoding { encoder: block_encoder, scratch_view, blocks, .. } =
+        let Bc7Encoding { encoder: block_encoder, quality, scratch_view, blocks, .. } =
             bc7.ready_mut().expect("a BC7 step ran");
         for &(target, y) in &encodes {
-            block_encoder.add_frame_at(MOBILE_BLOCK_FORMAT, scratch_view, y, target.width, target.height, blocks,
+            block_encoder.add_frame_at(quality.format(), scratch_view, y, target.width, target.height, blocks,
                 scratch_blocks_offset(y));
         }
         {

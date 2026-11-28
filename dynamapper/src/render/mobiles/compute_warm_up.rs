@@ -1,9 +1,11 @@
 //! The GPU compute pipelines of `uot_gpu_compute`, compiled ahead of use on the render device, each group on a thread
 //! of its own (at most three, one per group, each started once): a cold driver cache takes seconds to tens of
 //! seconds, which would hold a worker of the background pool (whose jobs are never interrupted) all that time. RIFE's
-//! and the SPAN upscaler's compile at startup. The block encoder (its BC7 UltraFast pipeline, about 6.6 s cold on the
-//! Radeon 880M) compiles only while a loaded animation package is BC7, the one atlas whose in-betweens it
-//! encodes: from the first frame such a package is loaded, never on the frame path. RADV compiles the threads'
+//! and the SPAN upscaler's compile at startup. The block encoder (its BC7 pipeline of the profile
+//! `world_rendering.mobile_bc7_quality` chooses, alone: UltraFast about 6.6 s cold on the Radeon 880M, VeryFast about
+//! 14.5 s) compiles only while a loaded animation package is BC7, the one atlas whose in-betweens it encodes: from the
+//! first frame such a package is loaded, never on the frame path. A profile chosen later compiles in
+//! bc7_encoding.rs. RADV compiles the threads'
 //! pipelines side by side without slowing any, so none waits for another. The RIFE in-betweens take the warmed
 //! pipelines when first turned on, and wait for them while they compile, so nothing compiles twice; so does the BC7
 //! encoder of the frames the GPU makes for a BC7 frame atlas, and the SPAN upscales (upscales.rs).
@@ -13,7 +15,7 @@
 
 use std::thread::JoinHandle;
 use bevy::prelude::*;
-use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderAdapter, RenderDevice};
 use bevy::render::Extract;
 use uot_gpu_compute::block_encode::{MobileBlockEncoder, BLOCK_ENCODER_COMPILES};
 use uot_gpu_compute::rife::{rife_compiles, RifePipelines};
@@ -21,6 +23,7 @@ use uot_gpu_compute::upscale::{upscale_compiles, UpscalePipelines};
 use uot_gpu_compute::warm_up::CompileReport;
 use uot_gpu_compute::{ConvUnits, PipelineCompile};
 use crate::render::shader_compiles::{shader_compile_ended, shader_compile_started};
+use super::bc7_encoding::{compile_encoder, MobileBc7Encoder, MobileBc7Quality};
 use super::frame_atlas::AtlasFormat;
 use super::MobileAnimPackages;
 
@@ -70,7 +73,8 @@ impl<T: Send + 'static> Compile<T> {
 pub struct ComputeWarmUp {
     rife: Compile<Option<RifePipelines>>,
     upscale: Compile<Option<UpscalePipelines>>,
-    block_encoder: Compile<Option<MobileBlockEncoder>>,
+    /// With the profile it encodes at.
+    block_encoder: Compile<Option<(MobileBc7Quality, MobileBlockEncoder)>>,
     /// Whether a loaded animation package is BC7, as extracted.
     block_encoder_wanted: bool,
 }
@@ -114,9 +118,9 @@ impl ComputeWarmUp {
         }
     }
 
-    /// The block encoder, once. It waits for its compile while a BC7 package is loaded, and is unavailable without
-    /// one.
-    pub fn take_block_encoder(&mut self) -> Warm<MobileBlockEncoder> {
+    /// The block encoder and its profile, once. It waits for its compile while a BC7 package is loaded, and is
+    /// unavailable without one.
+    pub fn take_block_encoder(&mut self) -> Warm<(MobileBc7Quality, MobileBlockEncoder)> {
         self.block_encoder.poll(BLOCK_ENCODER_THREAD_NAME);
         match &mut self.block_encoder {
             Compile::NotStarted if self.block_encoder_wanted => Warm::Compiling,
@@ -153,12 +157,12 @@ pub fn sys_extract_block_encoder_wanted(
 }
 
 /// Starts RIFE's and SPAN's warm-ups on the render device, once, and the block encoder's, once, as soon as it is
-/// wanted.
+/// wanted, at the profile chosen then.
 pub fn sys_start_compute_warm_up(
     mut warm_up: ResMut<ComputeWarmUp>,
+    bc7: Res<MobileBc7Encoder>,
     render_adapter: Res<RenderAdapter>,
     render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
 ) {
     let warm_up = &mut *warm_up;
     let device = render_device.wgpu_device();
@@ -188,14 +192,14 @@ pub fn sys_start_compute_warm_up(
     if let Compile::NotStarted = warm_up.block_encoder
         && warm_up.block_encoder_wanted {
         let device = device.clone();
-        let queue: &wgpu::Queue = &render_queue;
-        let queue = queue.clone();
+        let quality = bc7.chosen();
         warm_up.block_encoder.start(BLOCK_ENCODER_THREAD_NAME, move || {
             let started = std::time::Instant::now();
-            let encoder = MobileBlockEncoder::compile(&device, &queue,
+            let encoder = compile_encoder(&device, quality,
                 &mut CompileReport::new(BLOCK_ENCODER_COMPILES, compile_reporter()));
-            info!("The BC7 block encoder is compiled, in {:.1} s.", started.elapsed().as_secs_f32());
-            Some(encoder)
+            info!("The BC7 block encoder ({}) is compiled, in {:.1} s.", quality.label(),
+                started.elapsed().as_secs_f32());
+            Some((quality, encoder))
         });
     }
 }

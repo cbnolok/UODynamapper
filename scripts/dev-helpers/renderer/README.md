@@ -130,7 +130,7 @@ test mobile on the player's map, `clear-mobiles` removes them (see
 
 `set` takes a JSON value; a bare word is a string. Its keys are an allowlist:
 `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
-`enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames`, `mobile_upscale`, `mobile_outline_width`, `mobile_stop`, `mobile_walk_pace`, `cc_terrain_transitions`,
+`enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames`, `mobile_upscale`, `mobile_outline_width`, `mobile_bc7_quality`, `mobile_stop`, `mobile_walk_pace`, `cc_terrain_transitions`,
 `ec_terrain_transitions`, the active style's `light_cover`, `player_floor_rule`,
 `land_texture_variation` and `mobile_sharpening` (0 to 2, the multiplier of `runtime_specs/mobiles/Sharpening.kdl`'s
 per-body strengths; the edge options there take none), and `zoom` (not with the free perspective camera). Other

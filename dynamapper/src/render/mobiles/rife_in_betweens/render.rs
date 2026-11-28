@@ -26,8 +26,8 @@ use parking_lot::Mutex;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use crate::render::shader_compiles::begin_shader_compile;
 use super::super::clips::AtlasEntry;
-use super::super::bc7_encoding::{bc7_encode_ms, scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder, BC7_BOUNCE_BYTES,
-    BC7_SCRATCH_SIDE, MOBILE_BLOCK_FORMAT};
+use super::super::bc7_encoding::{scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder, MobileBc7Quality,
+    BC7_BOUNCE_BYTES, BC7_SCRATCH_SIDE, MOBILE_BLOCK_FORMAT};
 use super::super::compute_budget::{steps_within_budget, CostScale, GpuClock, MobileComputeBudget,
     MOBILE_COMPUTE_FRAME_BUDGET_MS};
 use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas};
@@ -230,8 +230,8 @@ fn rife_dispatch(workspace: &RifeWorkspace, step: PairStep) -> Option<&RifeDispa
     }
 }
 
-/// A step's estimated GPU time, in ms; with its BC7 encode, for an in-between of the BC7 atlas.
-fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f64 {
+/// A step's estimated GPU time, in ms; with its BC7 encode at `bc7`, for an in-between of the BC7 atlas.
+fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair, bc7: MobileBc7Quality) -> f64 {
     let pixels = match step {
         PairStep::Pack => workspace.size().0 * workspace.size().1,
         PairStep::CopyFirst => pair.first.width * pair.first.height,
@@ -242,7 +242,7 @@ fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f
     let encode = match step {
         PairStep::Store(generated) if pair.targets[generated + 1].format == AtlasFormat::Bc7 => {
             let (width, height) = pair.targets[generated + 1].padded_size();
-            bc7_encode_ms(width * height)
+            bc7.encode_ms(width * height)
         }
         _ => 0.0,
     };
@@ -332,7 +332,7 @@ pub fn sys_render_mobile_in_betweens(
     }
     let cost_scale = state.cost_scale.get();
     let bc7_listed = state.active && state.jobs.iter().any(|job| job_format(job) == AtlasFormat::Bc7);
-    bc7.poll(bc7_listed, &mut warm_up, device, &render_queue);
+    bc7.poll(bc7_listed, &mut warm_up, device);
 
     // Forget what the jobs no longer listed left, and the workspaces idle for long.
     let listed = state.jobs.iter().map(|job| job.id).collect::<HashSet<_>>();
@@ -360,6 +360,7 @@ pub fn sys_render_mobile_in_betweens(
     let mut bc7_full = false;
     let RenderInBetweens { jobs, workspaces, progress, holders, completed, .. } = &mut *state;
     let bc7_ready = bc7.ready().is_some();
+    let bc7_quality = bc7.quality();
     for job in jobs.iter() {
         if completed.contains(&job.id) || spent >= MOBILE_COMPUTE_FRAME_BUDGET_MS || bc7_full {
             continue;
@@ -394,7 +395,8 @@ pub fn sys_render_mobile_in_betweens(
         while at.pair < job.pairs.len() && spent < MOBILE_COMPUTE_FRAME_BUDGET_MS && !bc7_full {
             let pair = &job.pairs[at.pair];
             let plan = pair_steps(&workspace.rife, job.factor);
-            let costs = plan[at.step..].iter().map(|&step| step_ms(&workspace.rife, step, pair) * cost_scale)
+            let costs = plan[at.step..].iter()
+                .map(|&step| step_ms(&workspace.rife, step, pair, bc7_quality) * cost_scale)
                 .collect::<Vec<_>>();
             let (mut count, _) = steps_within_budget(costs.iter().copied(), spent);
             for (index, &step) in plan[at.step..at.step + count].iter().enumerate() {
@@ -548,10 +550,10 @@ pub fn sys_render_mobile_in_betweens(
     if !encodes.is_empty() {
         // The in-betweens of the BC7 atlas, encoded together: the encoder's one compress of the submission.
         let atlas = atlas_of(AtlasFormat::Bc7).expect("a step ran on it");
-        let Bc7Encoding { encoder: block_encoder, scratch_view, blocks, .. } =
+        let Bc7Encoding { encoder: block_encoder, quality, scratch_view, blocks, .. } =
             bc7.ready_mut().expect("a BC7 step ran");
         for &(target, y) in &encodes {
-            block_encoder.add_frame_at(MOBILE_BLOCK_FORMAT, scratch_view, y, target.width, target.height, blocks,
+            block_encoder.add_frame_at(quality.format(), scratch_view, y, target.width, target.height, blocks,
                 scratch_blocks_offset(y));
         }
         {

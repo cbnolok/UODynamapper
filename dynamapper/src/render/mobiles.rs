@@ -132,6 +132,7 @@ impl Plugin for MobileSpritesPlugin {
                 frame_atlas::sys_extract_mobile_frame_uploads::<clips::AtlasEntry>,
                 rife_in_betweens::render::sys_extract_mobile_in_betweens,
                 compute_warm_up::sys_extract_block_encoder_wanted,
+                bc7_encoding::sys_extract_mobile_bc7_quality,
                 upscales::render::sys_extract_mobile_upscales,
             ))
             .add_systems(bevy::render::Render, (

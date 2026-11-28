@@ -168,6 +168,10 @@ pub struct SectWorldRendering {
     /// frame (`one_texel`, half as wide on screen as at 1x) or one art pixel (`follows_upscale`, two texels of a 2x
     /// frame).
     pub mobile_outline_width: crate::render::mobiles::sharpening::MobileOutlineWidth,
+    /// The BC7 profile the GPU encodes the in-betweens and upscales of a BC7 frame atlas with
+    /// (render/mobiles/bc7_encoding.rs): `ultra_fast`, or `very_fast`, which compiles longer, takes 5 to 6 times the
+    /// GPU time a frame and comes closer on large Enhanced bodies.
+    pub mobile_bc7_quality: crate::render::mobiles::bc7_encoding::MobileBc7Quality,
     /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
     /// (world/mobile_motion.rs).
     pub mobile_stop: crate::world::mobile_motion::MobileStop,
@@ -1628,6 +1632,36 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.mobile_outline_width, MobileOutlineWidth::FollowsUpscale);
+    }
+
+    /// A cache copy written before the BC7 profile existed loads the bundled UltraFast, VeryFast round-trips, and a
+    /// profile this build does not know falls back to the bundled one with a warning.
+    #[test]
+    fn world_rendering_cache_without_mobile_bc7_quality_loads_ultra_fast() {
+        use crate::render::mobiles::bc7_encoding::MobileBc7Quality;
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        assert_eq!(bundled.mobile_bc7_quality, MobileBc7Quality::UltraFast);
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("mobile_bc7_quality"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.mobile_bc7_quality, MobileBc7Quality::UltraFast);
+
+        let mut picked = bundled.clone();
+        picked.mobile_bc7_quality = MobileBc7Quality::VeryFast;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("mobile_bc7_quality = \"very_fast\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.mobile_bc7_quality, MobileBc7Quality::VeryFast);
+
+        let unknown = written.replace("mobile_bc7_quality = \"very_fast\"", "mobile_bc7_quality = \"slow\"");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &unknown, &bundled).expect("lenient load");
+        assert!(!load.warnings.is_empty());
+        assert_eq!(load.value.mobile_bc7_quality, MobileBc7Quality::UltraFast);
     }
 
     /// A cache copy written before the mobiles' stop existed loads it half a step later, and at once round-trips.

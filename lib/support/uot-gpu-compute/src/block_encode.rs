@@ -1,5 +1,6 @@
 //! GPU block compression of frames and atlas pages, BC7 or BC1, for Dynamapper's mobiles' frame atlas (evaluated in
-//! `tests.rs`; Dynamapper's BC7 frame atlas encodes its RIFE in-betweens with it, at UltraFast) and for a converter's
+//! `tests.rs`; Dynamapper's BC7 frame atlas encodes its RIFE in-betweens and SPAN upscales with it, at UltraFast or
+//! VeryFast as its settings choose) and for a converter's
 //! pages. BC7 keeps soft alpha (Enhanced, KR); BC1 keeps one bit of it, which is all Classic art and its in-betweens
 //! have. The kernels are our copies of block_compression's (a WGSL port of Intel's ISPC Texture Compressor kernels,
 //! MIT; CREDITS.md):
@@ -14,7 +15,7 @@
 //! compresses better: a block of one colour is the CPU encoder's solid block, and an all-opaque block with alpha
 //! takes neither mode 4 nor 5 and keeps alpha 255 (p-bits 1 in modes 6 and 7). The opaque BC1 blocks are the crate's
 //! BC1 ones (`tests.rs`).
-//! [`MobileBlockEncoder::compile`] compiles BC7 UltraFast with alpha, Dynamapper's format, and
+//! [`MobileBlockEncoder::compile`] compiles BC7 UltraFast with alpha, Dynamapper's default format, and
 //! [`MobileBlockEncoder::lazy`] nothing; every other format compiles the first time a frame of it is added, or ahead
 //! with [`MobileBlockEncoder::compile_format`].
 //!
@@ -69,7 +70,8 @@ const KERNEL_CHECKS: wgpu::ShaderRuntimeChecks = wgpu::ShaderRuntimeChecks {
     task_shader_dispatch_tracking: false, mesh_shader_primitive_indices_clamp: false, int_div_checks: true,
 };
 
-/// The format [`MobileBlockEncoder::compile`] compiles: Dynamapper's frames'.
+/// The format [`MobileBlockEncoder::compile`] compiles: Dynamapper's frames' by default (it compiles the profile its
+/// settings choose with [`MobileBlockEncoder::lazy`] and [`MobileBlockEncoder::compile_format`]).
 pub const WARM_BLOCK_FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(Bc7Quality::UltraFast);
 /// The compiles [`MobileBlockEncoder::compile`] reports: [`WARM_BLOCK_FORMAT`]'s.
 pub const BLOCK_ENCODER_COMPILES: usize = 1;
