@@ -1,6 +1,8 @@
 // Classic Client paperdoll composition profiles.
 //
-// equipment_offset is added to tiledata/item tile anim_id to select the wearable gump of the Enhanced gump paperdoll.
+// equipment_offset is added to an item's number to select the wearable gump of the Enhanced gump paperdoll. The number
+// follows the Enhanced client: tileart's second Paperdoll, else second Appearance property, else the item's own id
+// (uocf::enhanced::paperdoll_gump). The client itself adds 50000, or 60000 first for a female body.
 // fallback_equipment_offset (optional) selects the gump drawn when that one is missing: the female profiles fall back to
 // the male gumps, as ClassicUO and the Enhanced Client's gump paperdoll do. A gump missing after that leaves out only its
 // layer, with a log line. The Classic gump paperdoll does not read either: it picks each gump by the Classic client's

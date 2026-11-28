@@ -27,6 +27,7 @@ use uocf::enhanced::mobile_body::DEFAULT_GENDER;
 use uocf::enhanced::paperdoll::{
     body_frame, item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME,
 };
+use uocf::enhanced::paperdoll_gump::legacy_gump_number;
 use uocf::enhanced::tileart::TaeFlag;
 
 #[derive(Resource)]
@@ -302,15 +303,25 @@ mod tests {
         ]
     }
 
-    /// The beard's `tileart.uop` record, which wears it on the facial hair layer.
-    fn beard_definition() -> TileMetaItemDefinitions {
+    /// The worn items' `tileart.uop` records: the second Appearance property the Enhanced gump paperdoll numbers them
+    /// by, equal to the tiledata anim as in the shipped data, and the beard's layer, the facial hair layer.
+    fn worn_definitions() -> TileMetaItemDefinitions {
         use uocf::enhanced::tileart::{PropertyKey, TaeProp, TileArtEntry};
-        let beard = TileArtEntry {
-            tile_id: BEARD,
-            prop_vector1: vec![TaeProp { id: PropertyKey::Layer as u8, val: FACIAL_HAIR_LAYER }],
-            ..TileArtEntry::default()
-        };
-        TileMetaItemDefinitions::from_tileart([(BEARD, &beard)]).unwrap()
+        let mut records: Vec<TileArtEntry> = worn_tiles()
+            .iter()
+            .map(|tile| TileArtEntry {
+                tile_id: tile.tile_id,
+                prop_vector1: if tile.tile_id == BEARD {
+                    vec![TaeProp { id: PropertyKey::Layer as u8, val: FACIAL_HAIR_LAYER }]
+                } else {
+                    Vec::new()
+                },
+                prop_vector2: vec![TaeProp { id: PropertyKey::Appearance as u8, val: u32::from(tile.anim_id) }],
+                ..TileArtEntry::default()
+            })
+            .collect();
+        records.sort_by_key(|record| record.tile_id);
+        TileMetaItemDefinitions::from_tileart(records.iter().map(|record| (record.tile_id, record))).unwrap()
     }
 
     fn any_gump(_: u32) -> bool {
@@ -340,7 +351,7 @@ mod tests {
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let none = StoredDressDecisions::none();
         let layers =
-            gump_paperdoll_layers(request, client, tile, &beard_definition(), every_classic_gump(), &bundled_order(), &none)?;
+            gump_paperdoll_layers(request, client, tile, &worn_definitions(), every_classic_gump(), &bundled_order(), &none)?;
         Ok(layers.iter().map(|layer| (layer.gump_id, layer.partial_hue)).collect())
     }
 
@@ -384,7 +395,7 @@ mod tests {
         let dressed = request(&[SHIRT, PLATE_CHEST, NECKLACE, ROBE]);
         let gumps = |stored: &StoredDressDecisions| -> Vec<u32> {
             gump_paperdoll_layers(
-                &dressed, GumpClient::Classic, tile, &beard_definition(), every_classic_gump(), &bundled_order(), stored,
+                &dressed, GumpClient::Classic, tile, &worn_definitions(), every_classic_gump(), &bundled_order(), stored,
             )
             .unwrap()
                 .iter()
@@ -404,6 +415,31 @@ mod tests {
         assert_eq!(gumps(&StoredDressDecisions::none()), [BODY_GUMP, gump(2), gump(6), gump(3)]);
     }
 
+    /// Enhanced gumps are numbered as the Enhanced client numbers them: by tileart's second Appearance property, not
+    /// the tiledata anim, and an item with no record by its own id.
+    #[test]
+    fn enhanced_gumps_take_the_enhanced_clients_number() {
+        use uocf::enhanced::tileart::{PropertyKey, TaeProp, TileArtEntry};
+        const SHIRT_APPEARANCE: u32 = 434;
+        let shirt = TileArtEntry {
+            tile_id: SHIRT,
+            prop_vector2: vec![TaeProp { id: PropertyKey::Appearance as u8, val: SHIRT_APPEARANCE }],
+            ..TileArtEntry::default()
+        };
+        let definitions = TileMetaItemDefinitions::from_tileart([(SHIRT, &shirt)]).unwrap();
+        let offset = bundled_profiles().profile("human_male").unwrap().equipment_offset;
+        let tiles = worn_tiles();
+        let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
+        let none = StoredDressDecisions::none();
+        let layers = gump_paperdoll_layers(
+            &request(&[SHIRT, NECKLACE]), GumpClient::Enhanced, tile, &definitions, every_classic_gump(), &bundled_order(),
+            &none,
+        )
+        .unwrap();
+        let gumps: Vec<u32> = layers.iter().map(|layer| layer.gump_id).collect();
+        assert_eq!(gumps, [BODY_GUMP, offset + SHIRT_APPEARANCE, offset + NECKLACE]);
+    }
+
     /// With Enhanced gumps, a female profile's item falls back to its male gump when its own is missing; a gump
     /// missing after that leaves out only its layer, while the body is never left out.
     #[test]
@@ -420,7 +456,7 @@ mod tests {
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let none = StoredDressDecisions::none();
         let layers = gump_paperdoll_layers(
-            &dressed, GumpClient::Enhanced, tile, &beard_definition(), every_classic_gump(), &bundled_order(), &none,
+            &dressed, GumpClient::Enhanced, tile, &worn_definitions(), every_classic_gump(), &bundled_order(), &none,
         )
         .unwrap();
         let (shirt, necklace) = (&layers[1], &layers[2]);
@@ -466,14 +502,14 @@ mod tests {
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let none = StoredDressDecisions::none();
         let layers =
-            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), classic, &bundled_order(), &none)
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &worn_definitions(), classic, &bundled_order(), &none)
                 .unwrap();
         let gumps: Vec<_> = layers[1..].iter().map(|layer| (layer.gump_id, layer.fallback_gump_id)).collect();
         assert_eq!(gumps, [(SHIRT_ANIM + GUMP_ITEM_BASE, None), (NECKLACE_GUMP, None)]);
         // With her own gump present, she takes it.
         let classic = ClassicGumpSources { tables: &tables, has_gump: &any_gump };
         let layers =
-            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), classic, &bundled_order(), &none)
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &worn_definitions(), classic, &bundled_order(), &none)
                 .unwrap();
         assert_eq!(layers[1].gump_id, SHIRT_ANIM + GUMP_ITEM_BASE + GUMP_FEMALE_OFFSET);
     }
@@ -1540,7 +1576,8 @@ impl<'a> StoredDressDecisions<'a> {
 /// record first. The overrides of the draw order follow the race of the profile's body.
 /// An item's gump: Classic gumps follow the Classic client's rule (`uocf::classic::paperdoll_gump`: the tiledata anim,
 /// or tileart's appearance, `Equipconv.def`, the female gump, `gump.def`) on the profile's body; Enhanced gumps take
-/// the profile's offsets on the tiledata anim.
+/// the profile's offsets on the Enhanced client's number (`uocf::enhanced::paperdoll_gump`: tileart's second Paperdoll
+/// or Appearance property, else the item's own id).
 /// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
 #[cfg(test)]
 fn gump_paperdoll_layers(
@@ -1605,7 +1642,7 @@ fn gump_paperdoll_layers_taking_off(
                 })?;
                 (item_anim(definitions, classic.tables, body.body, item.item_id, u32::from(tile.anim_id)), Some(body))
             }
-            GumpClient::Enhanced => (u32::from(tile.anim_id), None),
+            GumpClient::Enhanced => (legacy_gump_number(definitions, item.item_id), None),
         };
         if anim == 0 {
             color_eyre::eyre::bail!("Equipment item {} has no paperdoll anim_id.", item.item_id);
@@ -1631,7 +1668,7 @@ fn gump_paperdoll_layers_taking_off(
                 (gump_id, None, hue_id)
             }
             None => {
-                let (gump_id, fallback_gump_id) = profile.equipment_gumps(tile.anim_id);
+                let (gump_id, fallback_gump_id) = profile.equipment_gumps(anim);
                 (gump_id, fallback_gump_id, item.hue)
             }
         };

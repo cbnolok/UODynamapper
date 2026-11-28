@@ -29,8 +29,8 @@ pub struct PaperdollProfile {
     pub id: String,
     /// The name shown; the id when the file gives none.
     pub label: String,
-    /// Added to an item's tiledata anim id: the gump the item draws on the Enhanced gump paperdoll. The Classic one
-    /// follows the Classic client's rule instead (`classic::paperdoll_gump`).
+    /// Added to an item's number (`enhanced::paperdoll_gump::legacy_gump_number`): the gump the item draws on the
+    /// Enhanced gump paperdoll. The Classic one follows the Classic client's rule instead (`classic::paperdoll_gump`).
     pub equipment_offset: u32,
     /// The offset of the gump drawn when the one at `equipment_offset` is missing: the female profiles fall back to the
     /// male gumps, as ClassicUO and the Enhanced Client's gump paperdoll do. `None`: no fallback.
@@ -49,10 +49,9 @@ pub struct PaperdollProfile {
 }
 
 impl PaperdollProfile {
-    /// The gump an item whose tiledata anim id is `anim_id` draws, and the one drawn when that one is missing.
-    pub fn equipment_gumps(&self, anim_id: u16) -> (u32, Option<u32>) {
-        let anim_id = u32::from(anim_id);
-        (anim_id + self.equipment_offset, self.fallback_equipment_offset.map(|offset| anim_id + offset))
+    /// The gump an item numbered `number` draws, and the one drawn when that one is missing.
+    pub fn equipment_gumps(&self, number: u32) -> (u32, Option<u32>) {
+        (number + self.equipment_offset, self.fallback_equipment_offset.map(|offset| number + offset))
     }
 }
 

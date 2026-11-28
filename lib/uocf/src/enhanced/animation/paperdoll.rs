@@ -109,11 +109,14 @@ impl<'a> From<&'a TaeAppearanceFilter> for AppearanceFilter<'a> {
 }
 
 /// A definition record (`UOTileArt::GetObjectDefinition`) as the paperdoll reads it: its tile id, its
-/// `prop_vector1` values and its appearance filters.
+/// `prop_vector1` values, its `prop_vector2` Paperdoll and Appearance, and its appearance filters.
 pub trait PaperdollDefinition<'a>: Copy + 'a {
     fn tile_id(self) -> u32;
     /// The value of `key` in `prop_vector1`, as the client's definition getters read it.
     fn property(self, key: PropertyKey) -> Option<u32>;
+    /// The value of `key` in `prop_vector2`, which only the old-style gump paperdoll reads, for keys 11 and 8
+    /// ([`crate::enhanced::paperdoll_gump`]).
+    fn property2(self, key: PropertyKey) -> Option<u32>;
     /// The appearance filters, in record order.
     fn appearance_filters(self) -> impl Iterator<Item = AppearanceFilter<'a>> + 'a;
 }
@@ -125,6 +128,10 @@ impl<'a> PaperdollDefinition<'a> for &'a TileArtEntry {
 
     fn property(self, key: PropertyKey) -> Option<u32> {
         self.property1(key)
+    }
+
+    fn property2(self, key: PropertyKey) -> Option<u32> {
+        TileArtEntry::property2(self, key)
     }
 
     fn appearance_filters(self) -> impl Iterator<Item = AppearanceFilter<'a>> + 'a {

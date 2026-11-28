@@ -1163,7 +1163,7 @@ fn equipment_detail(
         })
         .unwrap_or_default();
 
-    let (gump_id, fallback_gump_id) = profile.equipment_gumps(item.anim_id);
+    let (gump_id, fallback_gump_id) = profile.equipment_gumps(u32::from(item.anim_id));
     let fallback = fallback_gump_id.map(|fallback| format!(" (else {fallback})")).unwrap_or_default();
     format!(
         "{} anim_id={} gump={gump_id}{fallback} layer={} partial_hue={}{}",
@@ -1335,7 +1335,7 @@ fn render_paperdoll(
             color_eyre::eyre::bail!("Equipment item {item_id} has no paperdoll anim_id.");
         }
 
-        let (gump_id, fallback_gump_id) = profile.equipment_gumps(item.anim_id);
+        let (gump_id, fallback_gump_id) = profile.equipment_gumps(u32::from(item.anim_id));
         layers.push(PaperdollLayer {
             gump_id,
             fallback_gump_id,

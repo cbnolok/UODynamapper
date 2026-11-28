@@ -301,11 +301,6 @@ impl<'a> TileMetaItemDefinition<'a> {
         let index = stored_index(list, key)?;
         (self.record.present & (1 << index) != 0).then_some(self.record.values[index])
     }
-
-    /// The value of `key` in `prop_vector2`, for keys 8 and 11.
-    pub fn property2(self, key: PropertyKey) -> Option<u32> {
-        self.value(PropertyList::Second, key)
-    }
 }
 
 impl<'a> PaperdollDefinition<'a> for TileMetaItemDefinition<'a> {
@@ -316,6 +311,11 @@ impl<'a> PaperdollDefinition<'a> for TileMetaItemDefinition<'a> {
 
     fn property(self, key: PropertyKey) -> Option<u32> {
         self.value(PropertyList::First, key)
+    }
+
+    /// Keys 8 and 11 only: the others are not stored.
+    fn property2(self, key: PropertyKey) -> Option<u32> {
+        self.value(PropertyList::Second, key)
     }
 
     fn appearance_filters(self) -> impl Iterator<Item = AppearanceFilter<'a>> + 'a {

@@ -1097,7 +1097,7 @@ impl TileArtEntry {
     }
 
     /// Value of `key` in `prop_vector2` only: the old-style gump paperdoll (`UOPaperdoll::BuildImage` 0x0050c790)
-    /// reads keys 11 and 8 there before `prop_vector1`.
+    /// numbers a worn item by keys 11 and 8 there (`enhanced::paperdoll_gump`).
     pub fn property2(&self, key: PropertyKey) -> Option<u32> {
         let key_id = key as u8;
         self.prop_vector2

@@ -299,9 +299,21 @@ These need a person at the GUI or in a running client; the code side is done.
   study](client_research/ghidra-cc-tileart/results/cc_tileart.md#31-paperdoll-and-equipment-gumps)).
 - Classic gump paperdoll, after the Classic client's rule (2026-11-27,
   [cc_tileart study](client_research/ghidra-cc-tileart/results/cc_tileart.md#6-consequences-for-the-converter)).
-  Open: the Enhanced gump paperdoll still takes the tiledata anim and the profile offsets, which the Enhanced client
-  may not (its `UOPaperdoll::BuildImage` reads tileart; not traced); `0x00515df0` in `DrawPaperdollGumpLayers` is
-  unread; a `gump.def` row of several targets gives the first, where the client picks one at random.
+  Open: `0x00515df0` in `DrawPaperdollGumpLayers` is unread; a `gump.def` row of several targets gives the first,
+  where the client picks one at random.
+- Enhanced gump paperdoll, numbered after the Enhanced client's rule (2026-11-28: props2 Paperdoll, else props2
+  Appearance, else the item's own id; [ec paperdoll gump
+  study](client_research/ghidra-ec-paperdoll-gump/results/uosa_paperdoll_gump.md#6-against-dynamappers-enhanced-gump-paperdoll)).
+  The gumps are the same on the shipped data. Open decisions, where the client draws worse paperdolls than the data
+  allows:
+  - It leaves out 45 items (EC fp 57) whose appearance record is missing.
+  - It hues every worn item fully: no appearance record carries the flags2 partial-hue bit.
+  - It crops the gargish two-handers to the 260x237 body gump.
+  - It draws its own hard-coded order (torso under legs, boots over legs, rings over arms) and takes nothing off,
+    where we draw `WearableRules.kdl` with the dress take-off decisions.
+  - It takes the body gump from a body table, not the dialog.
+  - It never reads the profile offsets (fixed 50,000 / 60,000, the same values). Dropping them from
+    `PaperdollProfiles.kdl` is a schema change.
 
 ### Export And Tooling
 
