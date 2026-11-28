@@ -142,6 +142,15 @@ Older captures apply to their recorded package revisions.
 - Keep predictive prefetch rings optional until telemetry proves they improve real movement behavior.
 - Keep live editing persistence and delta-merging deferred until editor and gameplay ownership is explicit.
 - Keep any EC extra-pass exploration behind explicit feature gates and diagnostics.
+- A risk-guided BC7 pack encode (the user, 2026-11-28): spend more search on the blocks most likely to lose quality,
+  as the 4x4 blocks across the Enhanced hooves' change from orange to grey that SPAN 2x shows washed
+  ([mobile_animation_motion.md](agent_notes/mobile_animation_motion.md), "Pale patches on the hooves at SPAN 2x").
+  The tried form does not pay: UltraFast, then Fast on the worst blocks, re-encodes 14-48 % of them and only matches
+  VeryFast everywhere. To try: Fast (or VeryFast) as the base, then the slowest partition search only on blocks
+  flagged before or after the base encode (two or three colour clusters off one line, the base's error above a
+  threshold), on the GPU page encoder and the CPU fallback alike; measure against the client's lossless frames with
+  `block_encode::tests::source_encodes::evaluate_source_frame_encodes` (shipped 1.87, Fast 0.94, floor 0.45 on the
+  daemon) and the pack time. The run-time SPAN/RIFE encode adds about 0.02 and needs none of it.
 
 ### EC Effects: Manual Checks
 
