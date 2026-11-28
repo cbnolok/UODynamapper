@@ -4,7 +4,9 @@
 //! BC7 page; the format and the readers do not change. The levels and their measurements are in
 //! `docs/agent_notes/bc7_anim_supercompression.md`, "Lossy conditioning" (sizes under the field split with Zstd 17,
 //! whole packages, Classic / Enhanced): `minimal` −9.6 / −6.6 %, `slight` −13.9 / −11.7 %, `moderate`
-//! −21.4 / −17.7 %. The user's choice of 2026-11-27 is `minimal` by default, the others and `lossless` as options.
+//! −21.4 / −17.7 %. The user chose `minimal` as the default on 2026-11-27, then `lossless` on 2026-11-28 (its extra
+//! loss is about a third of the washed BC7 blocks on the Enhanced hooves, docs/agent_notes/mobile_animation_motion.md,
+//! "Pale patches on the hooves at SPAN 2x"); the other levels stay options.
 //!
 //! The steps take each page alone, so the result depends on the page and not on the thread count; the temporal
 //! candidates come from the frames' clips ([`ClipNeighbours`]), as the study's harness reads them from a package.
@@ -45,10 +47,10 @@ const MODERATE_STEPS: [Step; 2] = [
 /// How much the BC7 mobile animation pages are conditioned after the encode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Bc7LossyLevel {
-    /// The blocks as encoded.
-    Lossless,
-    /// Decent compression and the best quality, with minimal loss: the default.
+    /// The blocks as encoded: the default.
     #[default]
+    Lossless,
+    /// Decent compression and the best quality, with minimal loss.
     Minimal,
     /// Slight quality loss.
     Slight,
@@ -56,8 +58,8 @@ pub enum Bc7LossyLevel {
     Moderate,
 }
 
-/// The level of the mobile animation packers unless they are asked for another (the user, 2026-11-27).
-pub const MOBILE_ANIM_BC7_LOSSY_LEVEL: Bc7LossyLevel = Bc7LossyLevel::Minimal;
+/// The level of the mobile animation packers unless they are asked for another (the user, 2026-11-28).
+pub const MOBILE_ANIM_BC7_LOSSY_LEVEL: Bc7LossyLevel = Bc7LossyLevel::Lossless;
 
 impl Bc7LossyLevel {
     pub const ALL: [Self; 4] = [Self::Lossless, Self::Minimal, Self::Slight, Self::Moderate];
@@ -160,7 +162,7 @@ mod tests {
     #[test]
     fn levels_are_the_study_chains() {
         assert_eq!(Bc7LossyLevel::default(), MOBILE_ANIM_BC7_LOSSY_LEVEL);
-        assert_eq!(MOBILE_ANIM_BC7_LOSSY_LEVEL, Bc7LossyLevel::Minimal);
+        assert_eq!(MOBILE_ANIM_BC7_LOSSY_LEVEL, Bc7LossyLevel::Lossless);
         assert!(Bc7LossyLevel::Lossless.steps().is_empty());
         assert_eq!(Bc7LossyLevel::Minimal.steps(), [Step::Fields { lambda: 30.0, rms: 3.0, coder: Coder::Zstd }]);
         assert_eq!(Bc7LossyLevel::Slight.steps(), [Step::Coarse { bits: 2, rms: 2.0 },

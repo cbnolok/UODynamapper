@@ -59,9 +59,9 @@ impl Default for MobilePageCoding {
 /// job writing RGBA8888 pages ignores it.
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MobileBc7Lossy {
-    /// The blocks as encoded.
+    /// The blocks as encoded: the default.
     Lossless,
-    /// Decent compression and the best quality, with minimal loss: the default.
+    /// Decent compression and the best quality, with minimal loss.
     Minimal,
     /// Slight quality loss.
     Slight,
@@ -569,8 +569,8 @@ mod tests {
         assert_eq!(settings.zstd_mobile_anim_ec, MOBILE_ANIM_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.page_coding_mobile_anim_cc, MobilePageCoding::FieldsZstd);
         assert_eq!(settings.page_coding_mobile_anim_ec, MobilePageCoding::FieldsZstd);
-        assert_eq!(settings.bc7_lossy_mobile_anim_cc, MobileBc7Lossy::Minimal);
-        assert_eq!(settings.bc7_lossy_mobile_anim_ec, MobileBc7Lossy::Minimal);
+        assert_eq!(settings.bc7_lossy_mobile_anim_cc, MobileBc7Lossy::Lossless);
+        assert_eq!(settings.bc7_lossy_mobile_anim_ec, MobileBc7Lossy::Lossless);
     }
 
     #[test]

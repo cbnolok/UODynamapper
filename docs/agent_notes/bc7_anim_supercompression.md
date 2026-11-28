@@ -7,8 +7,8 @@ measured against Zstd 9 as the packages store it, and against LZ4 HC. Nothing in
 changed: `udd-bc7-supercompress` (`tools/udd-devtools-cli/src/bin/bc7_supercompress/`) only reads packages. What
 changing the blocks would buy is the third study, [Lossy conditioning](#lossy-conditioning). Since 2026-11-26 the
 field split is the packers' default, joined per clip behind a 6-page cache: see [Adopted](#adopted-2026-11-26); since
-2026-11-27 the packers also condition the blocks at a lossy level, `minimal` by default: see
-[Adopted: lossy levels](#adopted-lossy-levels-2026-11-27).
+2026-11-27 the packers also condition the blocks at a lossy level, an option since 2026-11-28 (`lossless` by
+default): see [Adopted: lossy levels](#adopted-lossy-levels-2026-11-27).
 
 ## LZ4 HC on the animation pages
 
@@ -784,10 +784,14 @@ The user took three chains of the [lossy conditioning](#lossy-conditioning) as l
 packers, `minimal` the default: "decent compression and best quality with minimal loss (default, suggested)",
 "slight quality loss", "moderate quality loss", with lossless kept as an option and not the default.
 
+**Default changed to `lossless` (the user, 2026-11-28),** the levels kept as options: `minimal` was found to cause
+about a third of the washed blocks on the Enhanced hooves that SPAN 2x shows (the rest is the encoder's quality),
+see [mobile_animation_motion.md](mobile_animation_motion.md), "Pale patches on the hooves at SPAN 2x".
+
 | Level (`--bc7-lossy`) | Chain | Classic | Enhanced | Pack Classic | Pack Enhanced |
 |---|---|---:|---:|---:|---:|
-| `lossless` | none | 768.83 MiB | 1890.17 MiB | 117 s | 320 s |
-| `minimal` (default) | `fields:30:3` | 694.93 MiB (−9.61 %) | 1763.78 MiB (−6.69 %) | 233 s (+117) | 559 s (+239) |
+| `lossless` (default since 2026-11-28) | none | 768.83 MiB | 1890.17 MiB | 117 s | 320 s |
+| `minimal` (default until 2026-11-28) | `fields:30:3` | 694.93 MiB (−9.61 %) | 1763.78 MiB (−6.69 %) | 233 s (+117) | 559 s (+239) |
 | `slight` | `coarse:2:2+zrdo:30:3` | 661.69 MiB (−13.94 %) | 1667.17 MiB (−11.80 %) | 229 s (+112) | 573 s (+253) |
 | `moderate` | `coarse:2:4+zrdo:100:6` | 604.08 MiB (−21.43 %) | 1552.55 MiB (−17.86 %) | 236 s (+119) | 576 s (+255) |
 
@@ -810,7 +814,7 @@ level. On all 20 threads that would be about a minute (Classic) and two (Enhance
   conditioned.
 - **Choice.** `--bc7-lossy lossless|minimal|slight|moderate` on `pack-mobile-anims` and `pack-ec-mobile-anims`. In
   the GUI it is the cards' **BC7 Lossy**, saved as `bc7_lossy_mobile_anim_cc` and `bc7_lossy_mobile_anim_ec`. Quick
-  Convert packs `minimal`.
+  Convert packs the default, `lossless` (`minimal` until 2026-11-28).
 - **Unchanged.** The format and the readers: the pages decode as any BC7 page.
 
 The packer was checked against the harness on every page. `udd-bc7-supercompress lossy --store` conditioned every

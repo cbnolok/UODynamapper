@@ -121,7 +121,7 @@ const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), whic
 const MOBILE_ANIM_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are BC7 (no RDO) in the BC7 field split with Zstd 17; with --raw, --bc7 or --bc7-rdo, a file-level pass after that encoding (none without --zstd), coded as --page-coding says. A bare --zstd is level 17.";
 const MOBILE_ANIM_BC7_HELP: &str = "Write BC7 atlas pages without BC7 RDO and, without --zstd, uncompressed. The default is BC7 without RDO in the BC7 field split with Zstd 17.";
 const MOBILE_ANIM_PAGE_CODING_HELP: &str = "How the pages' compression pass codes them (the 2x pages of --prescale too): fields-zstd (the default) splits each BC7 page into its blocks' fields, then Zstd, about 8 % smaller than plain Zstd 9, and Dynamapper joins only a clip's blocks; fields-lz4hc splits them, then LZ4 HC, which takes no --zstd level: about 5 % larger than plain Zstd 9 and 2.4 times as fast to decode; zstd compresses the blocks as they are. RGBA8888 pages (--raw) aren't split: fields-zstd writes them with plain Zstd, fields-lz4hc with plain LZ4 HC. --bc7 or --raw without --zstd take no pass to code.";
-const MOBILE_ANIM_BC7_LOSSY_HELP: &str = "How much the BC7 pages are conditioned after the encode (and --bc7-rdo), before the page coding, so they code smaller: minimal (the default, suggested) gives decent compression and the best quality with minimal loss, the package about 10 % (Classic) and 7 % (Enhanced) smaller under fields-zstd; slight, a slight quality loss for about 14 % and 12 %; moderate, a moderate quality loss for about 21 % and 18 %; lossless keeps the blocks as encoded. Every level keeps each texel's alpha, so silhouettes stay exact, and the pages decode as any BC7 page. The 2x pages of --prescale are not conditioned. RGBA8888 pages (--raw) take only lossless.";
+const MOBILE_ANIM_BC7_LOSSY_HELP: &str = "How much the BC7 pages are conditioned after the encode (and --bc7-rdo), before the page coding, so they code smaller: lossless (the default) keeps the blocks as encoded; minimal gives decent compression and the best quality with minimal loss, the package about 10 % (Classic) and 7 % (Enhanced) smaller under fields-zstd; slight, a slight quality loss for about 14 % and 12 %; moderate, a moderate quality loss for about 21 % and 18 %. Every level keeps each texel's alpha, so silhouettes stay exact, and the pages decode as any BC7 page. The 2x pages of --prescale are not conditioned. RGBA8888 pages (--raw) take only lossless.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888 instead of the lossy default, with Zstd 7 unless --zstd=LEVEL.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1, the default: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
 const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, the default, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
@@ -3359,10 +3359,10 @@ mod tests {
         }
     }
 
-    /// Both mobile animation packers condition their BC7 pages at `minimal` unless `--bc7-lossy` says otherwise;
-    /// RGBA8888 pages take only lossless.
+    /// Both mobile animation packers keep their BC7 pages as encoded (`lossless`) unless `--bc7-lossy` says
+    /// otherwise; RGBA8888 pages take only lossless.
     #[test]
-    fn cli_defaults_mobile_animation_bc7_lossy_to_minimal() {
+    fn cli_defaults_mobile_animation_bc7_lossy_to_lossless() {
         let level = |command: [&str; 3], args: &[&str]| -> eyre::Result<Bc7LossyLevel> {
             let cli = Cli::try_parse_from(["uddpack"].iter().chain(&command).chain(args))?;
             let (Commands::PackMobileAnims { raw, zstd, bc7, bc7_rdo, page_coding, bc7_lossy, .. }
@@ -3374,10 +3374,10 @@ mod tests {
                 udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS)?;
             resolve_mobile_anim_bc7_lossy(bc7_lossy, format.pixel_format)
         };
-        assert_eq!(MOBILE_ANIM_BC7_LOSSY_LEVEL, Bc7LossyLevel::Minimal);
+        assert_eq!(MOBILE_ANIM_BC7_LOSSY_LEVEL, Bc7LossyLevel::Lossless);
         for command in [["pack-mobile-anims", "--ccdir", "/cc"], ["pack-ec-mobile-anims", "--ecdir", "/ec"]] {
-            assert_eq!(level(command, &[]).unwrap(), Bc7LossyLevel::Minimal, "{command:?}");
-            assert_eq!(level(command, &["--bc7-rdo"]).unwrap(), Bc7LossyLevel::Minimal, "{command:?}");
+            assert_eq!(level(command, &[]).unwrap(), Bc7LossyLevel::Lossless, "{command:?}");
+            assert_eq!(level(command, &["--bc7-rdo"]).unwrap(), Bc7LossyLevel::Lossless, "{command:?}");
             for (name, expected) in [("lossless", Bc7LossyLevel::Lossless), ("minimal", Bc7LossyLevel::Minimal),
                 ("slight", Bc7LossyLevel::Slight), ("moderate", Bc7LossyLevel::Moderate)] {
                 assert_eq!(level(command, &["--bc7-lossy", name]).unwrap(), expected, "{command:?}");

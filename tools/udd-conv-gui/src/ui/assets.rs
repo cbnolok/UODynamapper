@@ -789,10 +789,10 @@ fn draw_page_coding(ui: &mut egui::Ui, coding: &mut MobilePageCoding) {
 
 const BC7_LOSSY_CELL_WIDTH: f32 = 320.0;
 const BC7_LOSSY_TOOLTIP: &str = "How much the BC7 pages are conditioned after the encode, before the page coding \
-(--bc7-lossy), so they code smaller. Minimal, the default and suggested: decent compression and the best quality with \
-minimal loss, the package about 10 % (Classic) and 7 % (Enhanced) smaller under Split + Zstd. Slight: a slight quality \
-loss for about 14 % and 12 %. Moderate: a moderate quality loss for about 21 % and 18 %. Lossless: the blocks as \
-encoded. Every level keeps each texel's alpha, so silhouettes stay exact. Raw RGBA8 pages are not conditioned.";
+(--bc7-lossy), so they code smaller. Lossless, the default: the blocks as encoded. Minimal: decent compression and the \
+best quality with minimal loss, the package about 10 % (Classic) and 7 % (Enhanced) smaller under Split + Zstd. \
+Slight: a slight quality loss for about 14 % and 12 %. Moderate: a moderate quality loss for about 21 % and 18 %. \
+Every level keeps each texel's alpha, so silhouettes stay exact. Raw RGBA8 pages are not conditioned.";
 
 /// The BC7 conditioning of a mobile animation card.
 fn draw_bc7_lossy(ui: &mut egui::Ui, lossy: &mut MobileBc7Lossy) {
