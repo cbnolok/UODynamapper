@@ -150,7 +150,8 @@ Older captures apply to their recorded package revisions.
   flagged before or after the base encode (two or three colour clusters off one line, the base's error above a
   threshold), on the GPU page encoder and the CPU fallback alike; measure against the client's lossless frames with
   `block_encode::tests::source_encodes::evaluate_source_frame_encodes` (shipped 1.87, Fast 0.94, floor 0.45 on the
-  daemon) and the pack time. The run-time SPAN/RIFE encode adds about 0.02 and needs none of it.
+  daemon) and the pack time. The run-time SPAN/RIFE encode adds about 0.02 and needs none of it. Once it exists,
+  the converter GUI's Quick Convert defaults to it (the user, 2026-11-28).
 
 ### EC Effects: Manual Checks
 
